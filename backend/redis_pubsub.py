@@ -46,6 +46,8 @@ async def init_redis(handler: Callable[[str, dict], Awaitable[None]]) -> None:
         _redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
         _pubsub = _redis_client.pubsub()
         _message_handler = handler
+        # Subscribe to a worker-specific control channel to establish the connection
+        await _pubsub.subscribe(f"worker:{WORKER_ID}")
         _subscriber_task = asyncio.create_task(_subscribe_loop())
         logger.info("Redis pub/sub initialized (worker=%s): %s", WORKER_ID, REDIS_URL)
     except ImportError:
@@ -69,10 +71,14 @@ async def _subscribe_loop():
                     continue
                 if _message_handler:
                     await _message_handler(channel, data)
+            else:
+                # No message — yield to event loop briefly
+                await asyncio.sleep(0.01)
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error("Redis subscriber error: %s", e)
+            await asyncio.sleep(1)
             await asyncio.sleep(1)
 
 
