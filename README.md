@@ -132,6 +132,26 @@ az containerapp create --name skribbl-app ...
 
 Terraform config also available in `infra/main.tf`.
 
+## Docker
+
+Multi-stage Dockerfile builds both frontend and backend into a single image:
+
+```bash
+# Build
+docker build -t skribbl-app .
+
+# Run
+docker run -p 8000:8000 skribbl-app
+```
+
+Then open `http://localhost:8000` — the app serves the built React frontend and WebSocket API from a single container.
+
+**How it works:**
+1. Stage 1 (`node:20-alpine`): Installs npm deps, runs `npm run build` → produces `frontend/dist/`
+2. Stage 2 (`python:3.12-slim`): Installs Python deps, copies backend + built frontend, runs uvicorn
+
+Image size: ~150MB
+
 ## Project Structure
 
 ```
