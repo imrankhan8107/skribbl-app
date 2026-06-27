@@ -152,6 +152,39 @@ Then open `http://localhost:8000` — the app serves the built React frontend an
 
 Image size: ~150MB
 
+## Scaling with Redis (Multi-Worker)
+
+For handling 500–5000+ concurrent players, run multiple app workers with Redis pub/sub for cross-worker message relay:
+
+```bash
+# Start 3 workers + Redis + nginx load balancer
+docker compose up --build --scale app=3
+```
+
+Access at `http://localhost:8080` (nginx routes to workers).
+
+**Architecture:**
+```
+Browser → nginx (port 8080, sticky sessions) → Worker 1/2/3 (each with own rooms)
+                                                     ↕
+                                               Redis pub/sub
+                                          (cross-worker relay)
+```
+
+**How it works:**
+- Each worker holds rooms in-memory (fast local game logic)
+- Redis pub/sub relays broadcasts across workers when players in the same room are on different workers
+- Sticky session cookie (`worker_id`) ensures the same player reconnects to the same worker
+- nginx uses `ip_hash` for initial routing + respects the cookie for subsequent requests
+- Without `REDIS_URL` env var, the app runs in single-worker mode (no Redis needed)
+
+**Files involved:**
+| File | Purpose |
+|------|---------|
+| `backend/redis_pubsub.py` | Redis adapter (pub/sub, room registry, worker ID) |
+| `docker-compose.yml` | Multi-worker local setup (Redis + nginx + app×N) |
+| `nginx.conf` | Load balancer with WebSocket support + sticky sessions |
+
 ## Project Structure
 
 ```
