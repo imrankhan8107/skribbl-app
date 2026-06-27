@@ -1,0 +1,1152 @@
+/* ============================================================
+   Pictionary Game — Global Styles
+   Mobile-first responsive design with breakpoints at 768px, 1280px, 1920px
+   Requirements: 12.6, 12.7
+   ============================================================ */
+
+/* ---- CSS Custom Properties (Theme) ---- */
+:root {
+  --color-primary: #6c63ff;
+  --color-primary-hover: #5a52e0;
+  --color-secondary: #ff6584;
+  --color-bg: #f5f7fa;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f0f2f5;
+  --color-text: #2d3436;
+  --color-text-muted: #636e72;
+  --color-border: #dfe6e9;
+  --color-success: #00b894;
+  --color-warning: #fdcb6e;
+  --color-danger: #e17055;
+  --color-chat-system: #636e72;
+  --color-chat-correct: #00b894;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+/* ---- Reset & Base ---- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-family);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input,
+select {
+  font-family: inherit;
+  font-size: 1rem;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+/* ============================================================
+   Landing Page
+   ============================================================ */
+.landing-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 1.5rem;
+}
+
+.landing-page h1 {
+  font-size: 2.5rem;
+  color: var(--color-primary);
+  margin-bottom: 1.5rem;
+  font-weight: 700;
+}
+
+.landing-page form {
+  width: 100%;
+  max-width: 400px;
+  background: var(--color-surface);
+  padding: 2rem;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.landing-page label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.landing-page input[type="text"] {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 1rem;
+  transition: border-color 0.2s;
+}
+
+.landing-page input[type="text"]:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(108, 99, 255, 0.15);
+}
+
+.landing-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.landing-actions button {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 1rem;
+  font-weight: 600;
+  color: #fff;
+  background-color: var(--color-primary);
+  transition: background-color 0.2s, opacity 0.2s;
+}
+
+.landing-actions button:hover:not(:disabled) {
+  background-color: var(--color-primary-hover);
+}
+
+.landing-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.error-message {
+  background-color: #ffeef0;
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  width: 100%;
+  max-width: 400px;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+
+/* ============================================================
+   Lobby Page
+   ============================================================ */
+.lobby-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1.5rem;
+  min-height: 100vh;
+}
+
+.lobby-page h1 {
+  font-size: 2rem;
+  color: var(--color-primary);
+  margin-bottom: 1rem;
+}
+
+.room-code-display {
+  background: var(--color-surface);
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  font-size: 1.125rem;
+  margin-bottom: 1.5rem;
+}
+
+.room-code-display strong {
+  font-size: 1.5rem;
+  color: var(--color-primary);
+  letter-spacing: 0.1em;
+}
+
+.lobby-settings {
+  width: 100%;
+  max-width: 400px;
+  background: var(--color-surface);
+  padding: 1.5rem;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  margin-top: 1.5rem;
+}
+
+.lobby-settings h2 {
+  font-size: 1.25rem;
+  margin-bottom: 1rem;
+  color: var(--color-text);
+}
+
+.lobby-settings fieldset {
+  border: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.lobby-settings fieldset:disabled {
+  opacity: 0.6;
+}
+
+.lobby-settings label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.lobby-settings select {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.start-game-btn {
+  margin-top: 1.5rem;
+  padding: 0.875rem 2rem;
+  font-size: 1.125rem;
+  font-weight: 700;
+  border: none;
+  border-radius: var(--radius-md);
+  background-color: var(--color-success);
+  color: #fff;
+  transition: background-color 0.2s, opacity 0.2s;
+}
+
+.start-game-btn:hover:not(:disabled) {
+  background-color: #00a381;
+}
+
+.start-game-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---- Leave Room Button ---- */
+.leave-room-btn {
+  margin-top: 1rem;
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border: 2px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background-color: transparent;
+  color: var(--color-danger);
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.leave-room-btn:hover {
+  background-color: var(--color-danger);
+  color: #fff;
+}
+
+/* ---- Kick Player Button ---- */
+.kick-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background-color: var(--color-danger);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  transition: background-color 0.2s, transform 0.1s;
+  flex-shrink: 0;
+}
+
+.kick-btn:hover {
+  background-color: #d63031;
+  transform: scale(1.1);
+}
+
+/* ============================================================
+   Player List
+   ============================================================ */
+.player-list {
+  width: 100%;
+  max-width: 300px;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.player-item {
+  display: flex;
+  align-items: center;
+  padding: 0.625rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+  gap: 0.5rem;
+}
+
+.player-item:last-child {
+  border-bottom: none;
+}
+
+.player-item.player-disconnected {
+  opacity: 0.5;
+}
+
+.player-item.player-guessed {
+  background-color: rgba(0, 184, 148, 0.08);
+}
+
+.player-name {
+  flex: 1;
+  font-weight: 500;
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-badge {
+  font-size: 0.75rem;
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+.player-status {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.disconnected-indicator {
+  color: var(--color-warning);
+  font-size: 0.875rem;
+}
+
+.guessed-indicator {
+  color: var(--color-success);
+  font-weight: 700;
+  font-size: 0.875rem;
+}
+
+.player-score {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--color-primary);
+  min-width: 2.5rem;
+  text-align: right;
+}
+
+/* ============================================================
+   Game Page
+   ============================================================ */
+.game-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 0.75rem;
+  gap: 0.75rem;
+}
+
+.game-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.round-indicator {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+/* ---- Timer Bar ---- */
+.timer-bar {
+  position: relative;
+  flex: 1;
+  height: 24px;
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  max-width: 300px;
+}
+
+.timer-bar-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: var(--radius-sm);
+  transition: width 1s linear;
+}
+
+.timer-bar-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+/* ---- Hint Display ---- */
+.hint-display {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.hint-char {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 2rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  border-bottom: 2px solid var(--color-text);
+}
+
+.hint-char.hint-hidden {
+  color: var(--color-text-muted);
+}
+
+/* ---- Game Content (Main Layout) ---- */
+.game-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 0.75rem;
+}
+
+.game-left {
+  order: 3;
+}
+
+.game-center {
+  order: 1;
+}
+
+.game-right {
+  order: 2;
+}
+
+.game-left .player-list {
+  max-width: 100%;
+}
+
+/* ============================================================
+   Canvas
+   ============================================================ */
+.canvas-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.canvas-container canvas {
+  width: 100%;
+  max-width: 800px;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius-md);
+  background: #fff;
+}
+
+/* ---- Drawing Toolbar ---- */
+.drawing-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  width: 100%;
+  max-width: 800px;
+}
+
+.toolbar-section {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+/* ============================================================
+   Chat
+   ============================================================ */
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  height: 250px;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.chat-message {
+  font-size: 0.875rem;
+  padding: 0.25rem 0;
+  word-break: break-word;
+}
+
+.chat-system {
+  color: var(--color-chat-system);
+  font-style: italic;
+}
+
+.chat-correct-guess {
+  color: var(--color-chat-correct);
+  font-weight: 600;
+}
+
+.chat-sender {
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.chat-text {
+  color: var(--color-text);
+}
+
+.chat-input-form {
+  display: flex;
+  border-top: 1px solid var(--color-border);
+}
+
+.chat-input-form input {
+  flex: 1;
+  padding: 0.625rem 0.75rem;
+  border: none;
+  outline: none;
+  font-size: 0.875rem;
+}
+
+.chat-input-form input:disabled {
+  background: var(--color-surface-alt);
+  cursor: not-allowed;
+}
+
+.chat-input-form button {
+  padding: 0.625rem 1rem;
+  border: none;
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.875rem;
+  transition: background-color 0.2s;
+}
+
+.chat-input-form button:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.chat-input-form button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   Game Over Page
+   ============================================================ */
+.game-over-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 1.5rem;
+}
+
+.game-over-page h1 {
+  font-size: 2.5rem;
+  color: var(--color-primary);
+  margin-bottom: 2rem;
+}
+
+.leaderboard {
+  width: 100%;
+  max-width: 450px;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  counter-reset: rank;
+}
+
+.leaderboard-entry {
+  display: flex;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+  gap: 1rem;
+}
+
+.leaderboard-entry:last-child {
+  border-bottom: none;
+}
+
+.leaderboard-entry:first-child {
+  background: rgba(108, 99, 255, 0.06);
+}
+
+.leaderboard-rank {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  min-width: 2rem;
+  text-align: center;
+}
+
+.leaderboard-name {
+  flex: 1;
+  font-weight: 500;
+  font-size: 1.05rem;
+}
+
+.leaderboard-score {
+  font-weight: 700;
+  font-size: 1.125rem;
+  color: var(--color-primary);
+}
+
+.rematch-button {
+  margin-top: 2rem;
+  padding: 0.875rem 2.5rem;
+  font-size: 1.125rem;
+  font-weight: 700;
+  border: none;
+  border-radius: var(--radius-md);
+  background-color: var(--color-primary);
+  color: #fff;
+  transition: background-color 0.2s, opacity 0.2s;
+}
+
+.rematch-button:hover:not(:disabled) {
+  background-color: var(--color-primary-hover);
+}
+
+.rematch-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   Responsive Breakpoints — Tablet (768px)
+   Two-column layout: canvas + chat side by side, player list in sidebar
+   ============================================================ */
+@media (min-width: 768px) {
+  .game-page {
+    padding: 1rem;
+    gap: 1rem;
+  }
+
+  .game-content {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .game-left {
+    order: 1;
+    flex: 0 0 200px;
+  }
+
+  .game-center {
+    order: 2;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .game-right {
+    order: 3;
+    flex: 0 0 250px;
+  }
+
+  .game-left .player-list {
+    max-width: 200px;
+  }
+
+  .chat-container {
+    height: 400px;
+  }
+
+  .hint-char {
+    width: 2rem;
+    height: 2.25rem;
+    font-size: 1.5rem;
+  }
+}
+
+/* ============================================================
+   Responsive Breakpoints — Desktop (1280px)
+   Three-column layout: player list | canvas | chat
+   ============================================================ */
+@media (min-width: 1280px) {
+  .game-page {
+    padding: 1.5rem 2rem;
+  }
+
+  .game-content {
+    flex-wrap: nowrap;
+  }
+
+  .game-left {
+    flex: 0 0 220px;
+  }
+
+  .game-center {
+    flex: 1;
+  }
+
+  .game-right {
+    flex: 0 0 300px;
+  }
+
+  .game-left .player-list {
+    max-width: 220px;
+  }
+
+  .chat-container {
+    height: 500px;
+  }
+
+  .landing-page h1 {
+    font-size: 3rem;
+  }
+
+  .game-over-page h1 {
+    font-size: 3rem;
+  }
+}
+
+/* ============================================================
+   Responsive Breakpoints — Large Desktop (1920px)
+   Wider panels, more comfortable spacing
+   ============================================================ */
+@media (min-width: 1920px) {
+  .game-page {
+    padding: 2rem 3rem;
+    max-width: 1800px;
+    margin: 0 auto;
+  }
+
+  .game-left {
+    flex: 0 0 260px;
+  }
+
+  .game-right {
+    flex: 0 0 360px;
+  }
+
+  .game-left .player-list {
+    max-width: 260px;
+  }
+
+  .chat-container {
+    height: 560px;
+  }
+}
+
+/* ============================================================
+   Mobile-specific adjustments (below 768px)
+   Stack elements vertically
+   ============================================================ */
+@media (max-width: 767px) {
+  .game-content {
+    flex-direction: column;
+  }
+
+  .game-left {
+    order: 3;
+  }
+
+  .game-center {
+    order: 1;
+  }
+
+  .game-right {
+    order: 2;
+  }
+
+  .game-left .player-list {
+    max-width: 100%;
+    max-height: 150px;
+    overflow-y: auto;
+  }
+
+  .chat-container {
+    height: 200px;
+  }
+
+  .timer-bar {
+    max-width: 200px;
+  }
+
+  .lobby-page {
+    padding: 1rem;
+  }
+
+  .landing-page h1 {
+    font-size: 2rem;
+  }
+}
+
+/* ============================================================
+   Word Selection Phase
+   ============================================================ */
+.word-selection,
+.word-selection-waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  margin: 1rem auto;
+  max-width: 600px;
+}
+
+.word-selection h2,
+.word-selection-waiting h2 {
+  font-size: 1.5rem;
+  color: var(--color-text);
+  margin-bottom: 1.5rem;
+}
+
+.word-choices {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.word-choice-btn {
+  padding: 1rem 2rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  border: 2px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s, transform 0.1s;
+}
+
+.word-choice-btn:hover {
+  background: var(--color-primary);
+  color: #fff;
+  transform: scale(1.05);
+}
+
+/* ============================================================
+   Lobby Layout — Two Column (Players+Settings left, Chat right)
+   ============================================================ */
+.lobby-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.room-code-btn {
+  padding: 0.5rem 1.25rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  background: var(--color-surface);
+  border: 2px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  color: var(--color-primary);
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+.room-code-btn:hover {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.room-code-btn:active {
+  transform: scale(0.95);
+}
+
+.lobby-content {
+  display: flex;
+  gap: 1.5rem;
+  width: 100%;
+  max-width: 900px;
+}
+
+.lobby-left {
+  flex: 0 0 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.lobby-right {
+  flex: 1;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+}
+
+.lobby-right .chat-container {
+  flex: 1;
+  height: auto;
+  min-height: 300px;
+}
+
+.lobby-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.lobby-actions .start-game-btn,
+.lobby-actions .leave-room-btn {
+  flex: 1;
+}
+
+/* Snackbar */
+.snackbar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #333;
+  color: #fff;
+  padding: 12px 24px;
+  border-radius: var(--radius-md);
+  font-size: 0.9rem;
+  font-weight: 500;
+  box-shadow: var(--shadow-md);
+  z-index: 1000;
+  animation: snackbar-in 0.3s ease;
+}
+
+@keyframes snackbar-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@media (max-width: 767px) {
+  .lobby-content {
+    flex-direction: column;
+  }
+  .lobby-left {
+    flex: none;
+    width: 100%;
+  }
+  .lobby-right .chat-container {
+    height: 250px;
+    min-height: unset;
+  }
+}
+
+
+/* ============================================================
+   Emoji Reactions
+   ============================================================ */
+.emoji-reactions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.375rem 0.75rem;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-alt);
+}
+
+.emoji-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  font-size: 1.125rem;
+  cursor: pointer;
+  transition: background-color 0.15s, transform 0.1s;
+}
+
+.emoji-btn:hover {
+  background: var(--color-border);
+  transform: scale(1.2);
+}
+
+.emoji-btn:active {
+  transform: scale(0.95);
+}
+
+/* ============================================================
+   Ready Button & Badge
+   ============================================================ */
+.ready-btn {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  color: var(--color-text-muted);
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.ready-btn:hover {
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
+.ready-btn-active {
+  background-color: var(--color-success);
+  border-color: var(--color-success);
+  color: #fff;
+}
+
+.ready-btn-active:hover {
+  background-color: #00a381;
+  border-color: #00a381;
+  color: #fff;
+}
+
+.ready-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-success);
+  background: rgba(0, 184, 148, 0.1);
+  padding: 0.125rem 0.375rem;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* ============================================================
+   Chat Reaction Messages (smaller, muted)
+   ============================================================ */
+.chat-message.chat-system {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+/* ============================================================
+   Game Over Actions
+   ============================================================ */
+.game-over-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.game-over-actions .rematch-button,
+.game-over-actions .dashboard-button {
+  padding: 0.875rem 2.5rem;
+  font-size: 1.125rem;
+  font-weight: 700;
+  border-radius: var(--radius-md);
+  min-width: 180px;
+  text-align: center;
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s, opacity 0.2s;
+  margin-top: 0;
+}
+
+.game-over-actions .rematch-button {
+  border: none;
+  background-color: var(--color-primary);
+  color: #fff;
+}
+
+.game-over-actions .rematch-button:hover:not(:disabled) {
+  background-color: var(--color-primary-hover);
+}
+
+.game-over-actions .rematch-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.game-over-actions .dashboard-button {
+  border: 2px solid var(--color-text-muted);
+  background-color: transparent;
+  color: var(--color-text-muted);
+}
+
+.game-over-actions .dashboard-button:hover {
+  background-color: var(--color-text-muted);
+  color: #fff;
+}
