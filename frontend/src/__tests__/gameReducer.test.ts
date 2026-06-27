@@ -165,7 +165,6 @@ describe("gameReducer", () => {
         payload: {
           word: "apple",
           scores: { p1: 200, p2: 150 },
-          players: undefined,
         },
       };
       const next = gameReducer(state, action);

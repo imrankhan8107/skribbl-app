@@ -61,11 +61,11 @@ export interface ChatMessage {
 // ---------------------------------------------------------------------------
 
 export type Action =
-  | { type: "ROOM_CREATED"; payload: { roomCode: string; playerId: string } }
+  | { type: "ROOM_CREATED"; payload: { roomCode: string; playerId: string; config?: GameConfig } }
   | { type: "ROOM_JOINED"; payload: { roomCode: string; playerId: string; isHost: boolean } }
   | { type: "PLAYER_LIST"; payload: { players: PlayerInfo[] } }
   | { type: "SETTINGS_UPDATED"; payload: { config: GameConfig } }
-  | { type: "GAME_STARTED"; payload: { config: GameConfig } }
+  | { type: "GAME_STARTED"; payload: { config?: GameConfig; totalRounds?: number; round?: number; drawerId?: string } }
   | { type: "WORD_CHOICES"; payload: { choices: string[] } }
   | {
       type: "TURN_STARTED";
@@ -81,8 +81,8 @@ export type Action =
       type: "TURN_ENDED";
       payload: {
         word: string;
-        scores: { playerId: string; delta: number }[];
-        players: PlayerInfo[];
+        scores: Record<string, number>;
+        players?: PlayerInfo[];
       };
     }
   | { type: "GUESS_CORRECT"; payload: { playerId: string; playerName: string; score: number } }
@@ -95,5 +95,6 @@ export type Action =
   | { type: "ERROR"; payload: { code: string; message: string } }
   | { type: "KICKED"; payload: { message: string } }
   | { type: "LEFT_ROOM"; payload: Record<string, never> }
+  | { type: "REMATCH_STARTED"; payload: Record<string, unknown> }
   | { type: "TICK" }
   | { type: "RESET" };

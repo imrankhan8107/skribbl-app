@@ -62,7 +62,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
 
     case "PLAYER_LIST": {
       // Server doesn't always send isHost — preserve it from current state or use incoming if present
-      const incomingPlayers = action.payload.players as Array<Record<string, unknown>> ?? [];
+      const incomingPlayers = (action.payload.players ?? []) as unknown as Array<Record<string, unknown>>;
       const updatedPlayers = incomingPlayers.map((p) => ({
         id: (p.id as string) ?? "",
         name: (p.name as string) ?? "",
@@ -163,7 +163,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
     }
 
     case "CHAT_MESSAGE": {
-      const p = action.payload as Record<string, unknown>;
+      const p = action.payload as unknown as Record<string, unknown>;
       const message: ChatMessage = {
         id: String(Date.now()) + Math.random(),
         senderId: (p.playerId as string) ?? "",
@@ -189,6 +189,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
             isHost: state.players.find((pl) => pl.id === s.id)?.isHost ?? false,
             hasGuessed: false,
             isConnected: true,
+            isReady: false,
           }))
         : (p.players as typeof state.players) ?? state.players;
       return {

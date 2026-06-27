@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket";
+import type { Action } from "../types";
 import Canvas from "../components/Canvas";
 import Chat from "../components/Chat";
 import PlayerList from "../components/PlayerList";

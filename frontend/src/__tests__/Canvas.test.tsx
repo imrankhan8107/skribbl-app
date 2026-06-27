@@ -56,12 +56,18 @@ const defaultGameState: GameState = {
   players: [],
   config: { numRounds: 3, turnDuration: 80, maxPlayers: 8 },
   hint: [],
+  wordChoices: [],
+  drawingEvent: null,
+  currentWord: null,
+  drawerId: null,
   currentRound: 1,
   totalRounds: 3,
   timerSeconds: 60,
   hasGuessed: false,
   errorMessage: null,
   chatMessages: [],
+  waitingForReconnect: false,
+  reconnectCountdown: 0,
 };
 
 function renderCanvas(

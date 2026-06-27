@@ -72,12 +72,18 @@ const defaultGameState: GameState = {
   ],
   config: { numRounds: 3, turnDuration: 80, maxPlayers: 8 },
   hint: ["_", "e", "_", "_", "o"],
+  wordChoices: [],
+  drawingEvent: null,
+  currentWord: null,
+  drawerId: null,
   currentRound: 2,
   totalRounds: 3,
   timerSeconds: 45,
   hasGuessed: false,
   errorMessage: null,
   chatMessages: [],
+  waitingForReconnect: false,
+  reconnectCountdown: 0,
 };
 
 function renderGame(overrides: Partial<GameState> = {}) {

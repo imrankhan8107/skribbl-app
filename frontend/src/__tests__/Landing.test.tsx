@@ -20,12 +20,18 @@ const defaultGameState: GameState = {
   players: [],
   config: { numRounds: 3, turnDuration: 80, maxPlayers: 8 },
   hint: [],
+  wordChoices: [],
+  drawingEvent: null,
+  currentWord: null,
+  drawerId: null,
   currentRound: 0,
   totalRounds: 0,
   timerSeconds: 0,
   hasGuessed: false,
   errorMessage: null,
   chatMessages: [],
+  waitingForReconnect: false,
+  reconnectCountdown: 0,
 };
 
 function renderLanding(overrides: Partial<WebSocketContextValue> = {}) {
