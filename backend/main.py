@@ -78,7 +78,18 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # Mount static files for the built frontend
 # The frontend build output goes to frontend/dist
-# Serve at root "/" so the SPA works in production (must be LAST mount)
 static_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.isdir(static_dir):
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+    from fastapi.responses import FileResponse
+
+    # Serve static assets (JS, CSS, images) directly
+    app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
+
+    # Catch-all route: serve index.html for any path (SPA client-side routing)
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve the React SPA index.html for all non-API routes."""
+        file_path = os.path.join(static_dir, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(static_dir, "index.html"))
