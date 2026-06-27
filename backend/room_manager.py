@@ -7,16 +7,21 @@ Owns the in-memory registry of all active Room objects. Responsible for:
 - Broadcasting player-list updates
 - Disconnection handling with 120-second grace window
 - Reconnection handling within the grace window
+- Cross-worker message relay via Redis pub/sub (when REDIS_URL is set)
 """
 
 import asyncio
 import json
+import logging
 import random
 import string
 import time
 from uuid import uuid4
 
 from backend.models import GameConfig, Player, Room, RoomState
+from backend import redis_pubsub
+
+logger = logging.getLogger(__name__)
 
 
 # Hard cap on players per room regardless of config
@@ -40,6 +45,16 @@ class RoomManager:
             code = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
             if code not in self.rooms:
                 return code
+
+    async def _delete_room(self, room_code: str) -> None:
+        """Delete a room and clean up Redis registrations."""
+        self.rooms.pop(room_code, None)
+        if redis_pubsub.is_redis_enabled():
+            try:
+                await redis_pubsub.unsubscribe_room(room_code)
+                await redis_pubsub.remove_room_worker(room_code)
+            except Exception as e:
+                logger.error("Failed to clean up Redis for room %s: %s", room_code, e)
 
     def _validate_name(self, name: str) -> str | None:
         """Validate display name. Returns error message or None if valid."""
@@ -98,6 +113,11 @@ class RoomManager:
         room.add_player(host)
         self.rooms[room_code] = room
         self._player_to_room[player_id] = room_code
+
+        # Register room ownership and subscribe in Redis (no-op if not configured)
+        if redis_pubsub.is_redis_enabled():
+            await redis_pubsub.register_room_worker(room_code)
+            await redis_pubsub.subscribe_room(room_code)
 
         return {
             "type": "room_created",
@@ -197,7 +217,7 @@ class RoomManager:
 
         # If no players remain, delete the room
         if not room.players:
-            del self.rooms[room.code]
+            await self._delete_room(room.code)
             return
 
         # If the removed player was the host, reassign host
@@ -248,7 +268,7 @@ class RoomManager:
                 else:
                     # No connected players remain — delete room
                     # Cancel the cleanup task since we're removing everything
-                    del self.rooms[room.code]
+                    await self._delete_room(room.code)
                     return
 
         # Schedule cleanup task (120 seconds)
@@ -404,7 +424,7 @@ class RoomManager:
 
         # If no players remain, delete the room
         if not room.players:
-            del self.rooms[room.code]
+            await self._delete_room(room.code)
             return
 
         # If the removed player was the host, reassign host
@@ -494,6 +514,9 @@ class RoomManager:
     async def broadcast(self, room_code: str, message: dict) -> None:
         """Send a JSON message to all connected players in a room.
 
+        First sends to all LOCAL connected players, then publishes to Redis
+        so other workers can relay the message to their local clients.
+
         Args:
             room_code: The room code to broadcast to.
             message: The message dict to serialize and send.
@@ -502,6 +525,7 @@ class RoomManager:
         if room is None:
             return
 
+        # Step 1: Send to all local connected players
         data = json.dumps(message)
         for player in room.players:
             if player.is_connected and player.websocket is not None:
@@ -510,6 +534,43 @@ class RoomManager:
                 except Exception:
                     # If sending fails, mark player as disconnected but don't
                     # remove them here to avoid modifying the list during iteration
+                    pass
+
+        # Step 2: Publish to Redis for cross-worker relay (no-op if Redis not configured)
+        if redis_pubsub.is_redis_enabled():
+            try:
+                await redis_pubsub.publish_to_room(room_code, message)
+            except Exception as e:
+                logger.error("Failed to publish to Redis for room %s: %s", room_code, e)
+
+    async def handle_redis_message(self, channel: str, data: dict) -> None:
+        """Handle a message received from Redis pub/sub (from another worker).
+
+        Forwards the message to local clients connected to the room.
+        This is the callback passed to redis_pubsub.init_redis().
+
+        Args:
+            channel: The Redis channel (format: "room:<room_code>")
+            data: The message payload containing 'source_worker' and 'message'.
+        """
+        # Extract room code from channel name (e.g., "room:ABC123" -> "ABC123")
+        room_code = channel.replace("room:", "", 1)
+
+        message = data.get("message")
+        if message is None:
+            return
+
+        # Find the room locally and forward to connected players
+        room = self.rooms.get(room_code)
+        if room is None:
+            return
+
+        json_data = json.dumps(message)
+        for player in room.players:
+            if player.is_connected and player.websocket is not None:
+                try:
+                    await player.websocket.send_text(json_data)
+                except Exception:
                     pass
 
     def _find_room_by_player(self, player_id: str) -> Room | None:
@@ -801,7 +862,7 @@ class RoomManager:
 
         # If no players remain, delete the room
         if not room.players:
-            del self.rooms[room.code]
+            await self._delete_room(room.code)
             return {
                 "type": "left_room",
                 "payload": {},

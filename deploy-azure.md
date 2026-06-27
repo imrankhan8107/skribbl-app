@@ -91,6 +91,72 @@ az group delete --name skribbl-rg --yes --no-wait
 - **Heartbeat** (ping every 30s) keeps connections alive within Azure's idle timeout
 - Terraform config is also available in `infra/main.tf` as an alternative
 
+## Scaling with Multiple Replicas (Redis Pub/Sub)
+
+To scale beyond a single replica, you need Azure Cache for Redis to synchronize broadcasts across workers.
+
+### Step 1: Create Azure Cache for Redis
+```bash
+az redis create \
+  --name skribbl-redis \
+  --resource-group skribbl-rg \
+  --location eastus \
+  --sku Basic \
+  --vm-size C0
+```
+
+### Step 2: Get the Redis Connection String
+```bash
+az redis show \
+  --name skribbl-redis \
+  --resource-group skribbl-rg \
+  --query hostName \
+  --output tsv
+
+az redis list-keys \
+  --name skribbl-redis \
+  --resource-group skribbl-rg \
+  --query primaryKey \
+  --output tsv
+```
+
+### Step 3: Deploy with Redis and Multiple Replicas
+```bash
+az containerapp create \
+  --name skribbl-app \
+  --resource-group skribbl-rg \
+  --environment skribbl-env \
+  --image skribblacr.azurecr.io/skribbl-app:latest \
+  --registry-server skribblacr.azurecr.io \
+  --target-port 8000 \
+  --ingress external \
+  --min-replicas 2 \
+  --max-replicas 4 \
+  --cpu 1 \
+  --memory 2Gi \
+  --transport http \
+  --env-vars "REDIS_URL=rediss://:<primaryKey>@skribbl-redis.redis.cache.windows.net:6380"
+```
+
+### Step 4: Enable Session Affinity
+```bash
+az containerapp ingress sticky-sessions set \
+  --name skribbl-app \
+  --resource-group skribbl-rg \
+  --affinity sticky
+```
+
+> **Note:** Azure Container Apps session affinity uses the `worker_id` cookie set by the app.
+> The `rediss://` scheme (with double s) enables TLS, required by Azure Cache for Redis.
+
+### Cost with Redis
+| Resource | Cost |
+|----------|------|
+| Container Apps (consumption, 2-4 vCPU) | ~$0.40–$0.80/day |
+| Container Registry (Basic) | ~$5/month |
+| Azure Cache for Redis (Basic C0) | ~$16/month |
+| **Total** | **~$33–$45/month** |
+
 ## Alternative: Terraform
 If you prefer IaC, see `infra/main.tf` for the equivalent Terraform configuration.
 ```bash
