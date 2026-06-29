@@ -2,6 +2,7 @@ import { useRef, useEffect } from "react";
 import { useCanvas } from "../hooks/useCanvas";
 import { useWebSocket } from "../hooks/useWebSocket";
 import type { BrushSize } from "../hooks/useCanvas";
+import RoundTransition from "./RoundTransition";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -9,6 +10,9 @@ import type { BrushSize } from "../hooks/useCanvas";
 
 export interface CanvasProps {
   isDrawer: boolean;
+  showRoundTransition?: boolean;
+  roundInfo?: { round: number; totalRounds: number };
+  onTransitionComplete?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -38,7 +42,12 @@ const BRUSH_SIZE_OPTIONS: { label: string; value: BrushSize }[] = [
 // Component
 // ---------------------------------------------------------------------------
 
-export default function Canvas({ isDrawer }: CanvasProps) {
+export default function Canvas({
+  isDrawer,
+  showRoundTransition,
+  roundInfo,
+  onTransitionComplete,
+}: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { send, gameState } = useWebSocket();
   const {
@@ -103,19 +112,48 @@ export default function Canvas({ isDrawer }: CanvasProps) {
 
   return (
     <div className="canvas-container" data-testid="canvas-container">
-      <canvas
-        ref={canvasRef}
-        width={800}
-        height={600}
-        data-testid="drawing-canvas"
+      <div
+        className="canvas-wrapper"
         style={{
-          border: "2px solid #333",
-          cursor: isDrawer ? "crosshair" : "default",
-          touchAction: "none",
+          position: "relative",
+          overflow: "hidden",
+          display: "inline-block",
+          width: "100%",
+          maxWidth: 800,
         }}
-      />
+      >
+        <canvas
+          ref={canvasRef}
+          width={800}
+          height={600}
+          data-testid="drawing-canvas"
+          style={{
+            display: "block",
+            width: "100%",
+            height: "auto",
+            aspectRatio: "4 / 3",
+            border: "2px solid #333",
+            borderRadius: "var(--radius-md, 8px)",
+            cursor: isDrawer ? "crosshair" : "default",
+            touchAction: "none",
+          }}
+        />
+        {showRoundTransition && roundInfo && (
+          <RoundTransition
+            round={roundInfo.round}
+            totalRounds={roundInfo.totalRounds}
+            show={showRoundTransition}
+            onComplete={onTransitionComplete ?? (() => {})}
+          />
+        )}
+      </div>
       {isDrawer && (
-        <div className="drawing-toolbar" data-testid="drawing-toolbar" role="toolbar" aria-label="Drawing tools">
+        <div
+          className="drawing-toolbar"
+          data-testid="drawing-toolbar"
+          role="toolbar"
+          aria-label="Drawing tools"
+        >
           {/* Color Picker */}
           <div className="toolbar-section" data-testid="color-picker">
             {COLOR_PALETTE.map((c) => (

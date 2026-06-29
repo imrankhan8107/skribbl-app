@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket";
 import type { Action } from "../types";
@@ -16,6 +16,38 @@ export default function Game() {
   const navigate = useNavigate();
   const { gameState, send, dispatch } = useWebSocket();
   const [countdown, setCountdown] = useState(0);
+  const [showRoundTransition, setShowRoundTransition] = useState(false);
+  const prevRoundRef = useRef(0);
+  const shownForRoundRef = useRef(0);
+
+  // Track when the round number changes
+  useEffect(() => {
+    if (gameState.currentRound > 0 && gameState.currentRound !== prevRoundRef.current) {
+      prevRoundRef.current = gameState.currentRound;
+      // If the canvas is visible (playing phase), show immediately
+      if (gameState.phase === "playing") {
+        shownForRoundRef.current = gameState.currentRound;
+        setShowRoundTransition(true);
+      }
+      // Otherwise (word_selection for drawer), we'll trigger when phase becomes "playing"
+    }
+  }, [gameState.currentRound, gameState.phase]);
+
+  // For the drawer: show animation when entering "playing" phase if not yet shown for this round
+  useEffect(() => {
+    if (
+      gameState.phase === "playing" &&
+      gameState.currentRound > 0 &&
+      shownForRoundRef.current !== gameState.currentRound
+    ) {
+      shownForRoundRef.current = gameState.currentRound;
+      setShowRoundTransition(true);
+    }
+  }, [gameState.phase, gameState.currentRound]);
+
+  const handleTransitionComplete = useCallback(() => {
+    setShowRoundTransition(false);
+  }, []);
 
   // Drive the countdown timer: dispatch TICK every second while playing
   useEffect(() => {
@@ -53,7 +85,8 @@ export default function Game() {
   }, [gameState.waitingForReconnect, gameState.reconnectCountdown]);
 
   // Word selection phase — show choices to drawer, waiting message to guessers
-  const drawerName = gameState.players.find((p) => p.id === gameState.drawerId)?.name ?? "The drawer";
+  const drawerName =
+    gameState.players.find((p) => p.id === gameState.drawerId)?.name ?? "The drawer";
 
   // Show loading state while reconnecting
   if (gameState.phase === "idle" || gameState.phase === "lobby") {
@@ -67,20 +100,22 @@ export default function Game() {
 
   // Reconnection banner component
   const reconnectBanner = gameState.waitingForReconnect ? (
-    <div className="reconnect-banner" data-testid="reconnect-banner" style={{
-      background: "#fff3cd",
-      border: "1px solid #ffc107",
-      borderRadius: "8px",
-      padding: "12px 16px",
-      margin: "8px 0",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: "12px",
-    }}>
-      <span>
-        Player disconnected — waiting for reconnection ({countdown}s remaining)...
-      </span>
+    <div
+      className="reconnect-banner"
+      data-testid="reconnect-banner"
+      style={{
+        background: "#fff3cd",
+        border: "1px solid #ffc107",
+        borderRadius: "8px",
+        padding: "12px 16px",
+        margin: "8px 0",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "12px",
+      }}
+    >
+      <span>Player disconnected — waiting for reconnection ({countdown}s remaining)...</span>
       {gameState.isHost && (
         <button
           className="end-game-now-btn"
@@ -107,7 +142,8 @@ export default function Game() {
         {reconnectBanner}
         <div className="game-header" data-testid="game-header">
           <span className="round-indicator" data-testid="round-indicator">
-            Round {gameState.currentRound || 1} / {gameState.totalRounds || gameState.config?.numRounds || 3}
+            Round {gameState.currentRound || 1} /{" "}
+            {gameState.totalRounds || gameState.config?.numRounds || 3}
           </span>
         </div>
         {gameState.isDrawer && gameState.wordChoices.length > 0 ? (
@@ -146,15 +182,13 @@ export default function Game() {
   return (
     <div className="game-page" data-testid="game-page">
       {reconnectBanner}
+
       {/* Round and turn indicators */}
       <div className="game-header" data-testid="game-header">
         <span className="round-indicator" data-testid="round-indicator">
           Round {gameState.currentRound} / {gameState.totalRounds}
         </span>
-        <TimerBar
-          seconds={gameState.timerSeconds}
-          total={gameState.config?.turnDuration ?? 80}
-        />
+        <TimerBar seconds={gameState.timerSeconds} total={gameState.config?.turnDuration ?? 80} />
       </div>
 
       {/* Hint display — drawer sees the actual word */}
@@ -183,7 +217,12 @@ export default function Game() {
           <PlayerList players={gameState.players} />
         </div>
         <div className="game-center">
-          <Canvas isDrawer={gameState.isDrawer} />
+          <Canvas
+            isDrawer={gameState.isDrawer}
+            showRoundTransition={showRoundTransition}
+            roundInfo={{ round: gameState.currentRound, totalRounds: gameState.totalRounds }}
+            onTransitionComplete={handleTransitionComplete}
+          />
         </div>
         <div className="game-right">
           <Chat />

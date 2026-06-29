@@ -25,7 +25,7 @@
   --radius-lg: 12px;
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
-  --font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 
 /* ---- Reset & Base ---- */
@@ -141,7 +141,9 @@ ol {
   font-weight: 600;
   color: #fff;
   background-color: var(--color-primary);
-  transition: background-color 0.2s, opacity 0.2s;
+  transition:
+    background-color 0.2s,
+    opacity 0.2s;
 }
 
 .landing-actions button:hover:not(:disabled) {
@@ -250,7 +252,9 @@ ol {
   border-radius: var(--radius-md);
   background-color: var(--color-success);
   color: #fff;
-  transition: background-color 0.2s, opacity 0.2s;
+  transition:
+    background-color 0.2s,
+    opacity 0.2s;
 }
 
 .start-game-btn:hover:not(:disabled) {
@@ -272,7 +276,9 @@ ol {
   border-radius: var(--radius-md);
   background-color: transparent;
   color: var(--color-danger);
-  transition: background-color 0.2s, color 0.2s;
+  transition:
+    background-color 0.2s,
+    color 0.2s;
 }
 
 .leave-room-btn:hover {
@@ -295,7 +301,9 @@ ol {
   font-size: 0.75rem;
   font-weight: 700;
   line-height: 1;
-  transition: background-color 0.2s, transform 0.1s;
+  transition:
+    background-color 0.2s,
+    transform 0.1s;
   flex-shrink: 0;
 }
 
@@ -621,22 +629,171 @@ ol {
   justify-content: center;
   min-height: 100vh;
   padding: 1.5rem;
+  background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Shooting stars are rendered via <canvas> in GameOver.tsx */
+
+/* Subtle ambient bokeh circles */
+.game-over-page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(circle 150px at 15% 25%, rgba(255, 107, 107, 0.25) 0%, transparent 70%),
+    radial-gradient(circle 180px at 75% 15%, rgba(72, 219, 251, 0.2) 0%, transparent 70%),
+    radial-gradient(circle 120px at 85% 70%, rgba(254, 202, 87, 0.2) 0%, transparent 70%),
+    radial-gradient(circle 160px at 25% 80%, rgba(95, 39, 205, 0.2) 0%, transparent 70%),
+    radial-gradient(circle 100px at 50% 45%, rgba(255, 159, 243, 0.15) 0%, transparent 70%);
+  animation: bokeh-drift 8s ease-in-out infinite alternate;
+  pointer-events: none;
+  z-index: 0;
+}
+
+@keyframes bokeh-drift {
+  from {
+    transform: scale(1) translate(0, 0);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(1.1) translate(-10px, 5px);
+    opacity: 1;
+  }
 }
 
 .game-over-page h1 {
-  font-size: 2.5rem;
-  color: var(--color-primary);
-  margin-bottom: 2rem;
+  font-size: 3rem;
+  color: #fff;
+  margin-bottom: 1.5rem;
+  font-weight: 800;
+  text-shadow:
+    0 0 20px rgba(255, 215, 0, 0.5),
+    0 2px 8px rgba(0, 0, 0, 0.3);
+  position: relative;
+  z-index: 1;
+  animation: title-glow 2s ease-in-out infinite alternate;
 }
 
+@keyframes title-glow {
+  from {
+    text-shadow:
+      0 0 20px rgba(255, 215, 0, 0.5),
+      0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+  to {
+    text-shadow:
+      0 0 40px rgba(255, 215, 0, 0.8),
+      0 0 60px rgba(108, 99, 255, 0.4),
+      0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+}
+
+/* ---- Winner Card ---- */
+.winner-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2.5rem 3.5rem;
+  background: linear-gradient(145deg, #ffffff 0%, #f8f6ff 100%);
+  border-radius: 20px;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.25),
+    0 0 60px rgba(255, 215, 0, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  margin-bottom: 1.5rem;
+  animation: winner-pop 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  position: relative;
+  z-index: 1;
+  border: 2px solid rgba(255, 215, 0, 0.3);
+}
+
+.winner-trophy {
+  font-size: 5rem;
+  line-height: 1;
+  animation: trophy-bounce 1.5s ease infinite;
+  filter: drop-shadow(0 4px 8px rgba(255, 215, 0, 0.4));
+}
+
+.winner-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: #b8860b;
+  background: linear-gradient(135deg, #ffd700, #b8860b);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.winner-name {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--color-text);
+  text-align: center;
+}
+
+.winner-score {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  background: linear-gradient(135deg, var(--color-primary), #a855f7);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+@keyframes winner-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.5) rotate(-5deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes trophy-bounce {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-8px) rotate(-3deg);
+  }
+  75% {
+    transform: translateY(-4px) rotate(3deg);
+  }
+}
+
+/* ---- Leaderboard ---- */
 .leaderboard {
   width: 100%;
   max-width: 450px;
-  background: var(--color-surface);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 16px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
   overflow: hidden;
   counter-reset: rank;
+  position: relative;
+  z-index: 1;
+  animation: leaderboard-slide 0.5s ease-out 0.3s both;
+}
+
+@keyframes leaderboard-slide {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .leaderboard-entry {
@@ -645,33 +802,51 @@ ol {
   padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--color-border);
   gap: 1rem;
+  transition:
+    background-color 0.2s,
+    transform 0.2s;
 }
 
 .leaderboard-entry:last-child {
   border-bottom: none;
 }
 
-.leaderboard-entry:first-child {
-  background: rgba(108, 99, 255, 0.06);
+.leaderboard-entry:hover {
+  background-color: rgba(108, 99, 255, 0.04);
+  transform: translateX(4px);
+}
+
+.leaderboard-rank-2 {
+  background: linear-gradient(90deg, rgba(192, 192, 192, 0.1) 0%, transparent 100%);
+}
+
+.leaderboard-rank-3 {
+  background: linear-gradient(90deg, rgba(205, 127, 50, 0.08) 0%, transparent 100%);
 }
 
 .leaderboard-rank {
   font-size: 1.25rem;
   font-weight: 700;
-  color: var(--color-primary);
-  min-width: 2rem;
+  min-width: 1.5rem;
   text-align: center;
+  color: var(--color-text-muted);
+}
+
+.leaderboard-medal {
+  font-size: 1.25rem;
+  min-width: 1.5rem;
 }
 
 .leaderboard-name {
   flex: 1;
-  font-weight: 500;
+  font-weight: 600;
   font-size: 1.05rem;
+  color: var(--color-text);
 }
 
 .leaderboard-score {
   font-weight: 700;
-  font-size: 1.125rem;
+  font-size: 1rem;
   color: var(--color-primary);
 }
 
@@ -682,13 +857,18 @@ ol {
   font-weight: 700;
   border: none;
   border-radius: var(--radius-md);
-  background-color: var(--color-primary);
-  color: #fff;
-  transition: background-color 0.2s, opacity 0.2s;
+  background-color: #fff;
+  color: var(--color-primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition:
+    background-color 0.2s,
+    opacity 0.2s,
+    transform 0.1s;
 }
 
 .rematch-button:hover:not(:disabled) {
-  background-color: var(--color-primary-hover);
+  background-color: #f0f0f0;
+  transform: translateY(-1px);
 }
 
 .rematch-button:disabled {
@@ -896,7 +1076,10 @@ ol {
   background: var(--color-surface);
   color: var(--color-primary);
   cursor: pointer;
-  transition: background-color 0.2s, color 0.2s, transform 0.1s;
+  transition:
+    background-color 0.2s,
+    color 0.2s,
+    transform 0.1s;
 }
 
 .word-choice-btn:hover {
@@ -927,7 +1110,9 @@ ol {
   border-radius: var(--radius-md);
   color: var(--color-primary);
   cursor: pointer;
-  transition: background-color 0.2s, transform 0.1s;
+  transition:
+    background-color 0.2s,
+    transform 0.1s;
 }
 
 .room-code-btn:hover {
@@ -1018,7 +1203,6 @@ ol {
   }
 }
 
-
 /* ============================================================
    Emoji Reactions
    ============================================================ */
@@ -1043,7 +1227,9 @@ ol {
   background: transparent;
   font-size: 1.125rem;
   cursor: pointer;
-  transition: background-color 0.15s, transform 0.1s;
+  transition:
+    background-color 0.15s,
+    transform 0.1s;
 }
 
 .emoji-btn:hover {
@@ -1066,7 +1252,10 @@ ol {
   border-radius: var(--radius-md);
   background-color: var(--color-surface);
   color: var(--color-text-muted);
-  transition: background-color 0.2s, border-color 0.2s, color 0.2s;
+  transition:
+    background-color 0.2s,
+    border-color 0.2s,
+    color 0.2s;
 }
 
 .ready-btn:hover {
@@ -1111,6 +1300,8 @@ ol {
   display: flex;
   gap: 1rem;
   margin-top: 2rem;
+  position: relative;
+  z-index: 1;
 }
 
 .game-over-actions .rematch-button,
@@ -1121,18 +1312,26 @@ ol {
   border-radius: var(--radius-md);
   min-width: 180px;
   text-align: center;
-  transition: background-color 0.2s, color 0.2s, border-color 0.2s, opacity 0.2s;
+  transition:
+    background-color 0.2s,
+    color 0.2s,
+    border-color 0.2s,
+    opacity 0.2s,
+    transform 0.15s;
   margin-top: 0;
 }
 
 .game-over-actions .rematch-button {
   border: none;
-  background-color: var(--color-primary);
-  color: #fff;
+  background-color: #fff;
+  color: var(--color-primary);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
 }
 
 .game-over-actions .rematch-button:hover:not(:disabled) {
-  background-color: var(--color-primary-hover);
+  background-color: #f0f0f0;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
 
 .game-over-actions .rematch-button:disabled {
@@ -1141,12 +1340,90 @@ ol {
 }
 
 .game-over-actions .dashboard-button {
-  border: 2px solid var(--color-text-muted);
-  background-color: transparent;
-  color: var(--color-text-muted);
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  background-color: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(4px);
+  color: #fff;
 }
 
 .game-over-actions .dashboard-button:hover {
-  background-color: var(--color-text-muted);
-  color: #fff;
+  background-color: rgba(255, 255, 255, 0.2);
+  border-color: #fff;
+  transform: translateY(-2px);
+}
+
+/* ============================================================
+   Round Transition Animation
+   Slides up from bottom → pauses in center → slides up and out
+   ============================================================ */
+.round-transition-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  border-radius: var(--radius-md);
+}
+
+.round-transition-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 1.5rem 3rem;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.round-transition-label {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.round-transition-number {
+  font-size: 3rem;
+  font-weight: 800;
+  color: var(--color-primary);
+}
+
+/* Animation stages */
+.round-transition-entering {
+  animation: rt-slide-to-center 0.4s ease-out forwards;
+}
+
+.round-transition-paused {
+  /* Already at center, just hold */
+}
+
+.round-transition-exiting {
+  animation: rt-slide-to-top 0.4s ease-in forwards;
+}
+
+@keyframes rt-slide-to-center {
+  from {
+    opacity: 0;
+    transform: translateY(150%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rt-slide-to-top {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-150%);
+  }
 }

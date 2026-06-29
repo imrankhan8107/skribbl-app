@@ -1,0 +1,42 @@
+#!/bin/bash
+# Cloud-init: installs Docker and deploys the Skribbl app
+set -e
+
+exec > /var/log/skribbl-deploy.log 2>&1
+echo "=== Skribbl deployment started at $(date) ==="
+
+# Install Docker
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg git
+
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+systemctl enable docker
+systemctl start docker
+
+# Clone and deploy
+cd /home/ubuntu
+git clone -b ${git_branch} ${git_repo_url}
+cd skribbl-app
+
+# Build and run with docker compose
+docker compose up -d --build
+
+# Configure iptables (OCI uses iptables alongside security lists)
+iptables -I INPUT -p tcp --dport 80 -j ACCEPT
+iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+iptables -I INPUT -p tcp --dport 8000 -j ACCEPT
+iptables -I INPUT -p tcp --dport 8080 -j ACCEPT
+
+# Persist iptables rules
+apt-get install -y iptables-persistent
+netfilter-persistent save
+
+echo "=== Skribbl deployment completed at $(date) ==="
