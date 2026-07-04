@@ -42,8 +42,8 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 | Frontend | React 18, TypeScript, Vite, React Router v6 |
 | Communication | WebSocket (JSON protocol) |
 | Testing | pytest + Hypothesis (backend), Vitest + Testing Library (frontend) |
-| Deployment | Docker, Azure Container Apps |
-| IaC | Terraform (optional) |
+| Deployment | Docker, nginx, Oracle Cloud / Azure |
+| IaC | Terraform (OCI + Azure) |
 
 ## Architecture
 
@@ -118,19 +118,36 @@ python scripts/perf_test.py --clients 100
 | Concurrent connections | 500/500 established |
 | Message throughput | 6,781 msgs/sec |
 
-## Deployment (Azure)
+## Deployment
 
-See [deploy-azure.md](deploy-azure.md) for full instructions.
+### Oracle Cloud (Always Free Tier)
+
+Deploy on OCI A1.Flex (ARM) with Docker Compose — $0/month:
 
 ```bash
-# Quick deploy with Docker + Azure CLI
-az login
-docker build -t skribblacr.azurecr.io/skribbl-app:latest .
-docker push skribblacr.azurecr.io/skribbl-app:latest
-az containerapp create --name skribbl-app ...
+cd infra/oci
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars with your OCI credentials
+terraform init
+terraform plan
+terraform apply
 ```
 
-Terraform config also available in `infra/main.tf`.
+App is live at `http://<public-ip>` after ~5 minutes (cloud-init builds from source).
+
+See [infra/oci/README.md](infra/oci/README.md) for full instructions.
+
+### Azure Container Apps
+
+```bash
+cd infra/azure
+terraform init
+terraform apply
+```
+
+Or use the PowerShell deploy script: `.\infra\azure\deploy.ps1`
+
+See [infra/azure/README.md](infra/azure/README.md) for full instructions.
 
 ## Docker
 
@@ -140,11 +157,11 @@ Multi-stage Dockerfile builds both frontend and backend into a single image:
 # Build
 docker build -t skribbl-app .
 
-# Run
-docker run -p 8000:8000 skribbl-app
+# Run (single worker, no Redis)
+docker run -p 80:8000 skribbl-app
 ```
 
-Then open `http://localhost:8000` — the app serves the built React frontend and WebSocket API from a single container.
+Then open `http://localhost` — the app serves the built React frontend and WebSocket API from a single container.
 
 **How it works:**
 1. Stage 1 (`node:20-alpine`): Installs npm deps, runs `npm run build` → produces `frontend/dist/`
@@ -161,11 +178,11 @@ For handling 500–5000+ concurrent players, run multiple app workers with Redis
 docker compose up --build --scale app=3
 ```
 
-Access at `http://localhost:8080` (nginx routes to workers).
+Access at `http://localhost` (nginx on port 80 routes to workers).
 
 **Architecture:**
 ```
-Browser → nginx (port 8080, sticky sessions) → Worker 1/2/3 (each with own rooms)
+Browser → nginx (port 80, sticky sessions) → Worker 1/2/3 (each with own rooms)
                                                      ↕
                                                Redis pub/sub
                                           (cross-worker relay)
@@ -196,22 +213,34 @@ skribbl-app/
 │   ├── game_engine.py       # Turn logic, scoring, hints, close-guess
 │   ├── models.py            # Dataclasses (Player, Room, TurnState)
 │   ├── heartbeat.py         # Ping/pong connection health
+│   ├── redis_pubsub.py      # Redis adapter (pub/sub, room registry)
 │   ├── words.py             # 200+ word list
 │   └── tests/               # 212 tests (unit + property + integration)
 ├── frontend/
 │   ├── src/
 │   │   ├── context/         # WebSocketContext + gameReducer
 │   │   ├── pages/           # Landing, Lobby, Game, GameOver
-│   │   ├── components/      # Canvas, Chat, PlayerList, TimerBar
+│   │   ├── components/      # Canvas, Chat, PlayerList, TimerBar, RoundTransition
 │   │   ├── hooks/           # useCanvas, useWebSocket
 │   │   └── types/           # TypeScript interfaces
 │   └── __tests__/           # 62 component + reducer tests
-├── scripts/
-│   └── perf_test.py         # WebSocket performance benchmark
 ├── infra/
-│   └── main.tf             # Terraform (Azure Container Apps)
+│   ├── oci/                 # Oracle Cloud terraform (Always Free)
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   ├── outputs.tf
+│   │   ├── cloud-init.tftpl
+│   │   └── README.md
+│   └── azure/               # Azure Container Apps terraform
+│       ├── main.tf
+│       ├── deploy.ps1
+│       └── README.md
+├── scripts/
+│   ├── perf_test.py         # WebSocket performance benchmark
+│   └── perf_test_sticky.py  # Sticky session performance test
 ├── Dockerfile               # Multi-stage build
-├── deploy-azure.md          # Deployment guide
+├── docker-compose.yml       # Multi-worker local setup (Redis + nginx)
+├── nginx.conf               # Load balancer with WebSocket + sticky sessions
 └── .husky/pre-commit        # Smart pre-commit (only checks changed files)
 ```
 

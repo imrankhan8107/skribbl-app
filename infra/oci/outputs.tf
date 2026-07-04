@@ -4,13 +4,8 @@ output "instance_public_ip" {
 }
 
 output "app_url" {
-  description = "URL to access the app (via nginx)"
-  value       = "http://${oci_core_instance.app.public_ip}:8080"
-}
-
-output "app_direct_url" {
-  description = "Direct URL to the app (single worker, no nginx)"
-  value       = "http://${oci_core_instance.app.public_ip}:8000"
+  description = "URL to access the app"
+  value       = "http://${oci_core_instance.app.public_ip}"
 }
 
 output "ssh_command" {
