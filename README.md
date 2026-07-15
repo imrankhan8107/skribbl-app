@@ -6,32 +6,34 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 ![React](https://img.shields.io/badge/React-18-61DAFB)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
 ![WebSocket](https://img.shields.io/badge/WebSocket-Real--time-green)
-![Tests](https://img.shields.io/badge/Tests-274%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-275%20passing-brightgreen)
 
 ## Features
 
 **Game Mechanics**
 - 🎨 Real-time collaborative canvas with pen, eraser, fill tool, and color picker
-- 💬 Live chat with guessing — incorrect guesses visible to all, close guesses hidden
+- 💬 Live chat with guessing — incorrect guesses visible to all, correct guesses hidden
 - 🏆 Exponential scoring with position multiplier (first guesser earns most)
 - 🔄 Turn rotation — every player gets to draw each round
 - ⏱️ Configurable turn duration (30–180 seconds) with hint reveals at 40% and 70%
-- 🎯 "Almost!" indicator when guesses are within 2 characters of the word
+- 🎯 Word selection — drawer picks from 3 word choices (auto-selects after 15s)
+- 🔁 Round transition animations between rounds
 
 **Room Management**
-- 🚪 Create/join rooms with 6-character codes (click to copy)
+- 🚪 Create/join rooms with 6-character codes
 - 👑 Host controls: kick players, configure settings, start game
 - ✅ Ready check system in lobby
 - 👋 Leave room voluntarily
+- 💬 Lobby chat before game starts
 
 **Resilience**
 - 🔌 Auto-reconnect on page refresh (120-second grace window)
 - ⏳ 20-second countdown before ending game on disconnect (with "End Now" option for host)
 - 🏠 Host reassignment on disconnect
+- 🔄 Sticky session support for multi-worker deployments
 
 **Social**
 - 😂 Emoji reactions (👍 😂 🔥 ❤️ 👏 😮)
-- 💬 Lobby chat before game starts
 - 🏅 Final leaderboard with rematch option
 
 ## Tech Stack
@@ -42,6 +44,7 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 | Frontend | React 18, TypeScript, Vite, React Router v6 |
 | Communication | WebSocket (JSON protocol) |
 | Testing | pytest + Hypothesis (backend), Vitest + Testing Library (frontend) |
+| Multi-worker | Redis pub/sub, nginx sticky sessions |
 | Deployment | Docker, nginx, Oracle Cloud / Azure |
 | IaC | Terraform (OCI + Azure) |
 
@@ -54,7 +57,8 @@ Browser (React SPA)          Server (FastAPI)
 │  gameReducer     │         │  ├── room_manager.py  │
 │  useCanvas hook  │         │  ├── game_engine.py   │
 │  Pages/Components│         │  ├── heartbeat.py     │
-└─────────────────┘         │  └── models.py        │
+└─────────────────┘         │  ├── redis_pubsub.py  │
+                             │  └── models.py        │
                              └──────────────────────┘
 ```
 
@@ -62,6 +66,7 @@ Browser (React SPA)          Server (FastAPI)
 - Frontend is a thin rendering layer — server enforces all rules
 - O(1) player lookups via `players_by_id` dict and `_player_to_room` index
 - Guess ordering tracked via insertion-order list (no sorting at turn end)
+- Multi-worker support via Redis pub/sub with sticky sessions
 
 ## Quick Start
 
@@ -73,7 +78,7 @@ Browser (React SPA)          Server (FastAPI)
 
 ```bash
 # Backend
-pip install fastapi uvicorn websockets
+pip install -r requirements.txt
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 # Frontend (separate terminal)
@@ -98,7 +103,7 @@ Access from other devices: `http://<your-ip>:5173`
 ## Testing
 
 ```bash
-# Backend (212 tests — unit + property-based + integration)
+# Backend (213 tests — unit + property-based + integration)
 python -m pytest backend/tests/ -v
 
 # Frontend (62 tests — component + reducer)
@@ -106,6 +111,9 @@ cd frontend && npx vitest run
 
 # Performance test (simulates concurrent WebSocket clients)
 python scripts/perf_test.py --clients 100
+
+# Performance test with sticky sessions (multi-worker)
+python scripts/perf_test_sticky.py --host localhost --port 8080 --clients 10
 ```
 
 ### Performance Results (100 clients)
@@ -126,8 +134,11 @@ Deploy on OCI A1.Flex (ARM) with Docker Compose — $0/month:
 
 ```bash
 cd infra/oci
+
+# Copy and edit variables
 cp terraform.tfvars.example terraform.tfvars
 # Edit terraform.tfvars with your OCI credentials
+
 terraform init
 terraform plan
 terraform apply
@@ -146,6 +157,8 @@ terraform apply
 ```
 
 Or use the PowerShell deploy script: `.\infra\azure\deploy.ps1`
+
+Supports scaling to multiple replicas with Azure Cache for Redis for cross-worker synchronization.
 
 See [infra/azure/README.md](infra/azure/README.md) for full instructions.
 
@@ -207,15 +220,15 @@ Browser → nginx (port 80, sticky sessions) → Worker 1/2/3 (each with own roo
 ```
 skribbl-app/
 ├── backend/
-│   ├── main.py              # FastAPI app + WebSocket route
+│   ├── main.py              # FastAPI app + WebSocket route + sticky session middleware
 │   ├── ws_handler.py        # Message dispatch + connection lifecycle
-│   ├── room_manager.py      # Room CRUD, player management, kick/leave
-│   ├── game_engine.py       # Turn logic, scoring, hints, close-guess
-│   ├── models.py            # Dataclasses (Player, Room, TurnState)
+│   ├── room_manager.py      # Room CRUD, player management, kick/leave/ready
+│   ├── game_engine.py       # Turn logic, scoring, hints, word selection
+│   ├── models.py            # Dataclasses (Player, Room, TurnState, GameConfig)
 │   ├── heartbeat.py         # Ping/pong connection health
 │   ├── redis_pubsub.py      # Redis adapter (pub/sub, room registry)
 │   ├── words.py             # 200+ word list
-│   └── tests/               # 212 tests (unit + property + integration)
+│   └── tests/               # 213 tests (unit + property + integration)
 ├── frontend/
 │   ├── src/
 │   │   ├── context/         # WebSocketContext + gameReducer
@@ -241,6 +254,7 @@ skribbl-app/
 ├── Dockerfile               # Multi-stage build
 ├── docker-compose.yml       # Multi-worker local setup (Redis + nginx)
 ├── nginx.conf               # Load balancer with WebSocket + sticky sessions
+├── requirements.txt         # Python dependencies
 └── .husky/pre-commit        # Smart pre-commit (only checks changed files)
 ```
 
@@ -265,16 +279,56 @@ All messages are JSON: `{ type: "...", payload: {...} }`
 |----------------|-------------|
 | `create_room` | Create a new room |
 | `join_room` | Join existing room |
+| `reconnect` | Reconnect to room after page refresh |
 | `start_game` | Host starts game |
-| `select_word` | Drawer picks word |
+| `select_word` | Drawer picks word from 3 choices |
 | `stroke` | Drawing data (real-time) |
+| `fill` | Flood fill operation |
+| `clear_canvas` | Clear the canvas |
 | `guess` | Submit a guess |
-| `chat` | Send chat message |
+| `chat` | Send chat message (lobby or in-game for drawer) |
 | `reaction` | Emoji reaction |
-| `toggle_ready` | Ready status |
+| `toggle_ready` | Ready status in lobby |
 | `kick_player` | Host kicks player |
 | `leave_room` | Leave voluntarily |
-| `rematch` | Start new game |
+| `rematch` | Host starts new game |
+| `end_game_now` | Host ends game immediately during disconnect countdown |
+| `update_settings` | Host changes game config |
+
+| Server → Client | Description |
+|-----------------|-------------|
+| `room_created` | Confirms room creation |
+| `room_joined` | Confirms join with full state |
+| `reconnected` | Confirms reconnection with restored state |
+| `error` | Error response with code + message |
+| `player_list` | Updated player list broadcast |
+| `settings_updated` | Config change broadcast |
+| `game_started` | Game begins |
+| `word_choices` | Sent only to Drawer (3 words) |
+| `drawer_selecting` | Broadcast: drawer is choosing a word |
+| `word_assigned` | Sent to drawer on auto-select |
+| `turn_started` | Turn begins with hint + duration |
+| `hint_update` | Partial reveal broadcast to Guessers |
+| `stroke` / `fill` / `clear_canvas` | Drawing broadcasts |
+| `guess_correct` | A guesser guessed correctly |
+| `chat_message` | Chat message broadcast |
+| `turn_ended` | Turn over; word revealed, scores updated |
+| `game_over` | Final ranked scores |
+| `player_reconnected` | Reconnected player restored |
+| `waiting_for_reconnect` | Countdown before ending game on disconnect |
+| `reconnect_resumed` | Player reconnected, countdown cancelled |
+| `rematch_started` | New game starting |
+| `kicked` | Player was kicked |
+| `left_room` | Player left confirmation |
+| `reaction` | Emoji reaction broadcast |
+| `game_ended_insufficient_players` | Game ended (< 2 players) |
+
+## Pre-commit Hooks
+
+Smart pre-commit hook that only checks files you've actually changed:
+- **Frontend changes**: Prettier → TypeScript → Build → Related tests
+- **Backend changes**: Full pytest suite (if source changed) or just changed test files
+- **No changes in a layer**: Skips that layer entirely
 
 ## License
 
