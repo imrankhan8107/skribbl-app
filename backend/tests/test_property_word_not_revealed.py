@@ -132,6 +132,9 @@ async def test_drawer_chat_does_not_reveal_word(word: str, guess_text: str):
     **Validates: Requirements 6.6**
     """
     assume(len(word.strip()) > 0 and any(c != ' ' for c in word))
+    # Exclude words made entirely of masking characters ('*') — they'd trivially
+    # appear in masked output and aren't realistic game words.
+    assume(not all(c in '*' for c in word))
 
     room = _make_room_with_turn(word)
     room_manager = _make_room_manager()
