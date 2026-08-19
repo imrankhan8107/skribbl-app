@@ -1,0 +1,2 @@
+@echo off
+jmeter -n -t "c:\Users\imran.am.khan\OneDrive - Accenture\Documents\python\skribbl-app\jmeter\skribbl_e2e_game_flow.jmx" -JHOST=skribbl-app.duckdns.org -JPORT=80 -JGAME_SESSIONS=500 -JPLAYERS_PER_GAME=10 -JNUM_ROUNDS=2 -JTURN_DURATION=30 -JCONNECT_TIMEOUT=10000 -JREAD_TIMEOUT=15000 -JGAME_READ_TIMEOUT=30000 -l "c:\Users\imran.am.khan\OneDrive - Accenture\Documents\python\skribbl-app\jmeter\results\5000users.jtl"

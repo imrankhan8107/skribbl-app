@@ -1,0 +1,1393 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Skribbl E2E Game Flow Performance Test" enabled="true">
+      <stringProp name="TestPlan.comments">End-to-end game lifecycle: create room → join → ready → start game → word selection → drawing → guessing → turn end → game over → rematch. Uses coordinated thread groups to simulate realistic multi-player game sessions.</stringProp>
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
+      <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments">
+        <collectionProp name="Arguments.arguments">
+          <elementProp name="HOST" elementType="Argument">
+            <stringProp name="Argument.name">HOST</stringProp>
+            <stringProp name="Argument.value">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="PORT" elementType="Argument">
+            <stringProp name="Argument.name">PORT</stringProp>
+            <stringProp name="Argument.value">${__P(PORT,8000)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="WS_PATH" elementType="Argument">
+            <stringProp name="Argument.name">WS_PATH</stringProp>
+            <stringProp name="Argument.value">${__P(WS_PATH,/ws)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="GAME_SESSIONS" elementType="Argument">
+            <stringProp name="Argument.name">GAME_SESSIONS</stringProp>
+            <stringProp name="Argument.value">${__P(GAME_SESSIONS,5)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="PLAYERS_PER_GAME" elementType="Argument">
+            <stringProp name="Argument.name">PLAYERS_PER_GAME</stringProp>
+            <stringProp name="Argument.value">${__P(PLAYERS_PER_GAME,3)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="NUM_ROUNDS" elementType="Argument">
+            <stringProp name="Argument.name">NUM_ROUNDS</stringProp>
+            <stringProp name="Argument.value">${__P(NUM_ROUNDS,2)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="TURN_DURATION" elementType="Argument">
+            <stringProp name="Argument.name">TURN_DURATION</stringProp>
+            <stringProp name="Argument.value">${__P(TURN_DURATION,30)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="CONNECT_TIMEOUT" elementType="Argument">
+            <stringProp name="Argument.name">CONNECT_TIMEOUT</stringProp>
+            <stringProp name="Argument.value">${__P(CONNECT_TIMEOUT,5000)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="READ_TIMEOUT" elementType="Argument">
+            <stringProp name="Argument.name">READ_TIMEOUT</stringProp>
+            <stringProp name="Argument.value">${__P(READ_TIMEOUT,10000)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="GAME_READ_TIMEOUT" elementType="Argument">
+            <stringProp name="Argument.name">GAME_READ_TIMEOUT</stringProp>
+            <stringProp name="Argument.value">${__P(GAME_READ_TIMEOUT,20000)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="ERROR_THRESHOLD_PCT" elementType="Argument">
+            <stringProp name="Argument.name">ERROR_THRESHOLD_PCT</stringProp>
+            <stringProp name="Argument.value">${__P(ERROR_THRESHOLD_PCT,25)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+        </collectionProp>
+      </elementProp>
+    </TestPlan>
+    <hashTree>
+
+      <!-- ================================================================ -->
+      <!-- TG1 (Sequential): Host - Creates room, waits for joins, starts   -->
+      <!-- game, plays drawer role, handles full game lifecycle              -->
+      <!-- ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="TG1 - Game Host (Create + Start + Draw)" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">startnextloop</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">1</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${GAME_SESSIONS}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__jexl3(${GAME_SESSIONS} / 10 + 10)}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">false</boolProp>
+      </ThreadGroup>
+      <hashTree>
+
+        <!-- ===== Phase 1: Connect and Create Room ===== -->
+        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="TC - Host: Create Room" enabled="true">
+          <boolProp name="TransactionController.includeTimers">false</boolProp>
+          <boolProp name="TransactionController.parent">true</boolProp>
+        </TransactionController>
+        <hashTree>
+
+          <eu.luminis.jmeter.wssampler.OpenWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.OpenWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.OpenWebSocketSampler" testname="WS Open (Host)" enabled="true">
+            <stringProp name="server">${HOST}</stringProp>
+            <stringProp name="port">${PORT}</stringProp>
+            <stringProp name="path">${WS_PATH}</stringProp>
+            <stringProp name="connectTimeout">${CONNECT_TIMEOUT}</stringProp>
+            <stringProp name="readTimeout">${READ_TIMEOUT}</stringProp>
+          </eu.luminis.jmeter.wssampler.OpenWebSocketSampler>
+          <hashTree>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Assert Handshake &lt; 10s" enabled="true">
+              <stringProp name="DurationAssertion.duration">10000</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+          </hashTree>
+
+          <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - create_room" enabled="true">
+            <boolProp name="createNewConnection">false</boolProp>
+            <stringProp name="requestData">{"type":"create_room","payload":{"name":"Host_${__threadNum}"}}</stringProp>
+            <stringProp name="dataType">Text</stringProp>
+          </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+          <hashTree/>
+
+          <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - room_created" enabled="true">
+            <boolProp name="createNewConnection">false</boolProp>
+            <stringProp name="dataType">Text</stringProp>
+            <stringProp name="readTimeout">5000</stringProp>
+          </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+          <hashTree>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract room_code" enabled="true">
+              <stringProp name="JSONPostProcessor.referenceNames">room_code</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.payload.room_code</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">FAILED</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract player_id" enabled="true">
+              <stringProp name="JSONPostProcessor.referenceNames">host_player_id</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.payload.player_id</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">FAILED</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert room_created" enabled="true">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">room_created</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message">Expected room_created response</stringProp>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <intProp name="Assertion.test_type">2</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+          </hashTree>
+
+        </hashTree>
+
+        <!-- Store room code for joiners to pick up -->
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Share Room Code (Prop)" enabled="true">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="script">
+def roomCode = vars.get("room_code")
+def threadNum = ctx.getThreadNum()
+if (roomCode != null &amp;&amp; roomCode != "FAILED") {
+    // Store per-session room code so joiners can target specific rooms
+    props.put("E2E_ROOM_${threadNum}", roomCode)
+    // Also publish in a shared list for round-robin
+    def existing = props.get("E2E_ROOM_CODES") ?: ""
+    def updated = existing ? "${existing},${roomCode}" : roomCode
+    props.put("E2E_ROOM_CODES", updated)
+    // Track readiness: how many joiners have joined this room
+    props.put("E2E_JOINED_${roomCode}", "0")
+    log.info("E2E Host ${threadNum}: Created room ${roomCode}")
+} else {
+    log.error("E2E Host ${threadNum}: Room creation FAILED")
+    prev.setSuccessful(false)
+}
+          </stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+
+        <!-- Guard: stop this thread if create failed -->
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If Room Created" enabled="true">
+          <stringProp name="IfController.condition">${__groovy(vars.get("room_code") != "FAILED")}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+
+          <!-- ===== Phase 2: Configure Settings ===== -->
+          <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - update_settings" enabled="true">
+            <boolProp name="createNewConnection">false</boolProp>
+            <stringProp name="requestData">{"type":"update_settings","payload":{"num_rounds":${NUM_ROUNDS},"turn_duration":${TURN_DURATION},"max_players":8}}</stringProp>
+            <stringProp name="dataType">Text</stringProp>
+          </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+          <hashTree/>
+
+          <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - settings_updated" enabled="true">
+            <boolProp name="createNewConnection">false</boolProp>
+            <stringProp name="dataType">Text</stringProp>
+            <stringProp name="readTimeout">5000</stringProp>
+          </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+          <hashTree>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert settings_updated" enabled="true">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">settings_updated</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <intProp name="Assertion.test_type">2</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+          </hashTree>
+
+          <!-- ===== Phase 3: Wait for joiners to arrive ===== -->
+          <!-- Poll property until enough joiners have joined -->
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Wait for Joiners (Poll)" enabled="true">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+import org.apache.jmeter.util.JMeterUtils
+
+def roomCode = vars.get("room_code")
+def requiredJoiners = (vars.get("PLAYERS_PER_GAME") ?: "3").toInteger() - 1  // minus host
+def maxWaitMs = 60000
+def pollInterval = 500
+def waited = 0
+
+log.info("E2E Host: Waiting for ${requiredJoiners} joiners to room ${roomCode}...")
+
+while (waited &lt; maxWaitMs) {
+    def joinedStr = props.get("E2E_JOINED_${roomCode}") ?: "0"
+    def joined = joinedStr.toInteger()
+    if (joined &gt;= requiredJoiners) {
+        log.info("E2E Host: All ${joined} joiners arrived in room ${roomCode}")
+        vars.put("joiners_ready", "true")
+        break
+    }
+    Thread.sleep(pollInterval)
+    waited += pollInterval
+}
+
+if (vars.get("joiners_ready") != "true") {
+    log.warn("E2E Host: Timeout waiting for joiners in room ${roomCode}")
+    vars.put("joiners_ready", "false")
+}
+            </stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+
+          <!-- Read player_list messages that arrived while joiners connected -->
+          <!-- We need to drain the incoming messages (player_list broadcasts) -->
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Drain Join Notifications" enabled="true">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+// Simply mark that we'll read and discard pending messages in next reads
+vars.put("drain_count", (vars.get("PLAYERS_PER_GAME") ?: "3"))
+            </stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+
+          <!-- Read/drain player_list notifications from joins (one per joiner) -->
+          <LoopController guiclass="LoopControlPanel" testclass="LoopController" testname="Drain player_list msgs" enabled="true">
+            <boolProp name="LoopController.continue_forever">false</boolProp>
+            <stringProp name="LoopController.loops">${__groovy(Math.max(1, (vars.get("PLAYERS_PER_GAME") ?: "3").toInteger() - 1))}</stringProp>
+          </LoopController>
+          <hashTree>
+            <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - player_list (drain)" enabled="true">
+              <boolProp name="createNewConnection">false</boolProp>
+              <stringProp name="dataType">Text</stringProp>
+              <stringProp name="readTimeout">5000</stringProp>
+            </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+            <hashTree/>
+          </hashTree>
+
+          <!-- ===== Phase 4: Start Game ===== -->
+          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If Joiners Ready" enabled="true">
+            <stringProp name="IfController.condition">${__groovy(vars.get("joiners_ready") == "true")}</stringProp>
+            <boolProp name="IfController.evaluateAll">false</boolProp>
+            <boolProp name="IfController.useExpression">true</boolProp>
+          </IfController>
+          <hashTree>
+
+            <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="TC - Host: Start Game" enabled="true">
+              <boolProp name="TransactionController.includeTimers">false</boolProp>
+              <boolProp name="TransactionController.parent">true</boolProp>
+            </TransactionController>
+            <hashTree>
+
+              <!-- Signal joiners that game is about to start -->
+              <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Signal Game Starting" enabled="true">
+                <stringProp name="scriptLanguage">groovy</stringProp>
+                <stringProp name="script">
+def roomCode = vars.get("room_code")
+props.put("E2E_GAME_STARTING_${roomCode}", "true")
+log.info("E2E Host: Signaling game start for room ${roomCode}")
+                </stringProp>
+              </JSR223Sampler>
+              <hashTree/>
+
+              <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - start_game" enabled="true">
+                <boolProp name="createNewConnection">false</boolProp>
+                <stringProp name="requestData">{"type":"start_game","payload":{}}</stringProp>
+                <stringProp name="dataType">Text</stringProp>
+              </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+              <hashTree/>
+
+              <!-- Read game_started broadcast -->
+              <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - game_started" enabled="true">
+                <boolProp name="createNewConnection">false</boolProp>
+                <stringProp name="dataType">Text</stringProp>
+                <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+              </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+              <hashTree>
+                <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert game_started" enabled="true">
+                  <collectionProp name="Asserion.test_strings">
+                    <stringProp name="0">game_started</stringProp>
+                  </collectionProp>
+                  <stringProp name="Assertion.custom_message">Expected game_started response</stringProp>
+                  <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+                  <intProp name="Assertion.test_type">2</intProp>
+                </ResponseAssertion>
+                <hashTree/>
+                <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract drawer_id" enabled="true">
+                  <stringProp name="JSONPostProcessor.referenceNames">first_drawer_id</stringProp>
+                  <stringProp name="JSONPostProcessor.jsonPathExprs">$.payload.drawer_id</stringProp>
+                  <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                  <stringProp name="JSONPostProcessor.defaultValues">UNKNOWN</stringProp>
+                </JSONPostProcessor>
+                <hashTree/>
+              </hashTree>
+
+            </hashTree>
+
+            <!-- ===== Phase 5: Game Turn Loop ===== -->
+            <!-- Total turns = NUM_ROUNDS * PLAYERS_PER_GAME -->
+            <LoopController guiclass="LoopControlPanel" testclass="LoopController" testname="Turn Loop (rounds × players)" enabled="true">
+              <boolProp name="LoopController.continue_forever">false</boolProp>
+              <stringProp name="LoopController.loops">${__groovy((vars.get("NUM_ROUNDS") ?: "2").toInteger() * (vars.get("PLAYERS_PER_GAME") ?: "3").toInteger())}</stringProp>
+            </LoopController>
+            <hashTree>
+
+              <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="TC - Host: Play Turn" enabled="true">
+                <boolProp name="TransactionController.includeTimers">false</boolProp>
+                <boolProp name="TransactionController.parent">true</boolProp>
+              </TransactionController>
+              <hashTree>
+
+                <!-- Read until we get drawer_selecting or word_choices (host may be drawer) -->
+                <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - drawer_selecting or word_choices" enabled="true">
+                  <boolProp name="createNewConnection">false</boolProp>
+                  <stringProp name="dataType">Text</stringProp>
+                  <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+                </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                <hashTree>
+                  <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract msg type" enabled="true">
+                    <stringProp name="JSONPostProcessor.referenceNames">turn_msg_type</stringProp>
+                    <stringProp name="JSONPostProcessor.jsonPathExprs">$.type</stringProp>
+                    <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                    <stringProp name="JSONPostProcessor.defaultValues">unknown</stringProp>
+                  </JSONPostProcessor>
+                  <hashTree/>
+                  <!-- Try to extract word choices if this IS the word_choices message -->
+                  <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract first choice" enabled="true">
+                    <stringProp name="JSONPostProcessor.referenceNames">word_choice_1</stringProp>
+                    <stringProp name="JSONPostProcessor.jsonPathExprs">$.payload.choices[0]</stringProp>
+                    <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                    <stringProp name="JSONPostProcessor.defaultValues">NONE</stringProp>
+                  </JSONPostProcessor>
+                  <hashTree/>
+                </hashTree>
+
+                <!-- If we got drawer_selecting, we might get word_choices next (if we are drawer) -->
+                <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If drawer_selecting (read word_choices next)" enabled="true">
+                  <stringProp name="IfController.condition">${__groovy(vars.get("turn_msg_type") == "drawer_selecting")}</stringProp>
+                  <boolProp name="IfController.evaluateAll">false</boolProp>
+                  <boolProp name="IfController.useExpression">true</boolProp>
+                </IfController>
+                <hashTree>
+                  <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - word_choices (if drawer)" enabled="true">
+                    <boolProp name="createNewConnection">false</boolProp>
+                    <stringProp name="dataType">Text</stringProp>
+                    <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+                  </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                  <hashTree>
+                    <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract msg type 2" enabled="true">
+                      <stringProp name="JSONPostProcessor.referenceNames">turn_msg_type_2</stringProp>
+                      <stringProp name="JSONPostProcessor.jsonPathExprs">$.type</stringProp>
+                      <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                      <stringProp name="JSONPostProcessor.defaultValues">unknown</stringProp>
+                    </JSONPostProcessor>
+                    <hashTree/>
+                    <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract word choice" enabled="true">
+                      <stringProp name="JSONPostProcessor.referenceNames">word_choice_1</stringProp>
+                      <stringProp name="JSONPostProcessor.jsonPathExprs">$.payload.choices[0]</stringProp>
+                      <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                      <stringProp name="JSONPostProcessor.defaultValues">NONE</stringProp>
+                    </JSONPostProcessor>
+                    <hashTree/>
+                  </hashTree>
+                </hashTree>
+
+                <!-- If we received word_choices, we are the drawer — select a word -->
+                <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If I Am Drawer (select word)" enabled="true">
+                  <stringProp name="IfController.condition">${__groovy(vars.get("word_choice_1") != "NONE")}</stringProp>
+                  <boolProp name="IfController.evaluateAll">false</boolProp>
+                  <boolProp name="IfController.useExpression">true</boolProp>
+                </IfController>
+                <hashTree>
+
+                  <!-- Small think time before selecting (realistic) -->
+                  <ConstantTimer guiclass="ConstantTimerGui" testclass="ConstantTimer" testname="Word Selection Think (2s)" enabled="true">
+                    <stringProp name="ConstantTimer.delay">2000</stringProp>
+                  </ConstantTimer>
+                  <hashTree/>
+
+                  <!-- Select the first word -->
+                  <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - select_word" enabled="true">
+                    <boolProp name="createNewConnection">false</boolProp>
+                    <stringProp name="requestData">{"type":"select_word","payload":{"word":"${word_choice_1}"}}</stringProp>
+                    <stringProp name="dataType">Text</stringProp>
+                  </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+                  <hashTree/>
+
+                  <!-- Read turn_started -->
+                  <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - turn_started" enabled="true">
+                    <boolProp name="createNewConnection">false</boolProp>
+                    <stringProp name="dataType">Text</stringProp>
+                    <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+                  </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                  <hashTree>
+                    <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert turn_started" enabled="true">
+                      <collectionProp name="Asserion.test_strings">
+                        <stringProp name="0">turn_started</stringProp>
+                      </collectionProp>
+                      <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+                      <intProp name="Assertion.test_type">2</intProp>
+                    </ResponseAssertion>
+                    <hashTree/>
+                  </hashTree>
+
+                  <!-- Read word_assigned (private to drawer) -->
+                  <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - word_assigned" enabled="true">
+                    <boolProp name="createNewConnection">false</boolProp>
+                    <stringProp name="dataType">Text</stringProp>
+                    <stringProp name="readTimeout">5000</stringProp>
+                  </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                  <hashTree/>
+
+                  <!-- Read clear_canvas -->
+                  <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - clear_canvas" enabled="true">
+                    <boolProp name="createNewConnection">false</boolProp>
+                    <stringProp name="dataType">Text</stringProp>
+                    <stringProp name="readTimeout">5000</stringProp>
+                  </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                  <hashTree/>
+
+                  <!-- Simulate drawing: send strokes while waiting for turn to end -->
+                  <WhileController guiclass="WhileControllerGui" testclass="WhileController" testname="Draw Until Turn Ends" enabled="true">
+                    <stringProp name="WhileController.condition">${__groovy(vars.get("turn_ended_flag") != "true")}</stringProp>
+                  </WhileController>
+                  <hashTree>
+                    <!-- Send a stroke -->
+                    <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - stroke" enabled="true">
+                      <boolProp name="createNewConnection">false</boolProp>
+                      <stringProp name="requestData">{"type":"stroke","payload":{"points":[[${__Random(0,800)},${__Random(0,600)}],[${__Random(0,800)},${__Random(0,600)}],[${__Random(0,800)},${__Random(0,600)}]],"color":"#${__RandomString(6,0123456789abcdef)}","size":${__Random(2,8)}}}</stringProp>
+                      <stringProp name="dataType">Text</stringProp>
+                    </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+                    <hashTree/>
+
+                    <!-- Try to read a message (might be guess_correct, turn_ended, hint_update, etc.) -->
+                    <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - game events (drawer)" enabled="true">
+                      <boolProp name="createNewConnection">false</boolProp>
+                      <stringProp name="dataType">Text</stringProp>
+                      <stringProp name="readTimeout">3000</stringProp>
+                    </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                    <hashTree>
+                      <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Check for turn_ended" enabled="true">
+                        <stringProp name="scriptLanguage">groovy</stringProp>
+                        <stringProp name="script">
+def response = prev.getResponseDataAsString()
+if (response != null &amp;&amp; response.contains("turn_ended")) {
+    vars.put("turn_ended_flag", "true")
+} else if (response != null &amp;&amp; response.contains("game_over")) {
+    vars.put("turn_ended_flag", "true")
+    vars.put("game_over_flag", "true")
+}
+                        </stringProp>
+                      </JSR223PostProcessor>
+                      <hashTree/>
+                    </hashTree>
+
+                    <!-- Drawing pace -->
+                    <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="Draw Pace (50-150ms)" enabled="true">
+                      <stringProp name="ConstantTimer.delay">50</stringProp>
+                      <stringProp name="RandomTimer.range">100</stringProp>
+                    </UniformRandomTimer>
+                    <hashTree/>
+                  </hashTree>
+
+                </hashTree>
+                <!-- End If I Am Drawer -->
+
+                <!-- If we are NOT the drawer, we are a guesser this turn -->
+                <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If I Am Guesser (wait for turn_started then guess)" enabled="true">
+                  <stringProp name="IfController.condition">${__groovy(vars.get("word_choice_1") == "NONE")}</stringProp>
+                  <boolProp name="IfController.evaluateAll">false</boolProp>
+                  <boolProp name="IfController.useExpression">true</boolProp>
+                </IfController>
+                <hashTree>
+
+                  <!-- Read turn_started (already received drawer_selecting) -->
+                  <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - turn_started (guesser)" enabled="true">
+                    <boolProp name="createNewConnection">false</boolProp>
+                    <stringProp name="dataType">Text</stringProp>
+                    <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+                  </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                  <hashTree>
+                    <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert turn_started (guesser)" enabled="true">
+                      <collectionProp name="Asserion.test_strings">
+                        <stringProp name="0">turn_started</stringProp>
+                      </collectionProp>
+                      <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+                      <intProp name="Assertion.test_type">2</intProp>
+                    </ResponseAssertion>
+                    <hashTree/>
+                  </hashTree>
+
+                  <!-- Read clear_canvas -->
+                  <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - clear_canvas (guesser)" enabled="true">
+                    <boolProp name="createNewConnection">false</boolProp>
+                    <stringProp name="dataType">Text</stringProp>
+                    <stringProp name="readTimeout">5000</stringProp>
+                  </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                  <hashTree/>
+
+                  <!-- Send guesses and read responses until turn ends -->
+                  <WhileController guiclass="WhileControllerGui" testclass="WhileController" testname="Guess Until Turn Ends" enabled="true">
+                    <stringProp name="WhileController.condition">${__groovy(vars.get("turn_ended_flag") != "true")}</stringProp>
+                  </WhileController>
+                  <hashTree>
+                    <!-- Send a guess -->
+                    <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - guess" enabled="true">
+                      <boolProp name="createNewConnection">false</boolProp>
+                      <stringProp name="requestData">{"type":"guess","payload":{"text":"${__RandomString(${__Random(3,8)},abcdefghijklmnopqrstuvwxyz)}"}}</stringProp>
+                      <stringProp name="dataType">Text</stringProp>
+                    </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+                    <hashTree/>
+
+                    <!-- Read response (could be chat_message, stroke, guess_correct, hint_update, turn_ended) -->
+                    <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - game events (guesser)" enabled="true">
+                      <boolProp name="createNewConnection">false</boolProp>
+                      <stringProp name="dataType">Text</stringProp>
+                      <stringProp name="readTimeout">5000</stringProp>
+                    </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                    <hashTree>
+                      <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Check for turn_ended (guesser)" enabled="true">
+                        <stringProp name="scriptLanguage">groovy</stringProp>
+                        <stringProp name="script">
+def response = prev.getResponseDataAsString()
+if (response != null &amp;&amp; response.contains("turn_ended")) {
+    vars.put("turn_ended_flag", "true")
+} else if (response != null &amp;&amp; response.contains("game_over")) {
+    vars.put("turn_ended_flag", "true")
+    vars.put("game_over_flag", "true")
+}
+                        </stringProp>
+                      </JSR223PostProcessor>
+                      <hashTree/>
+                    </hashTree>
+
+                    <!-- Think time between guesses -->
+                    <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="Guess Pace (2-5s)" enabled="true">
+                      <stringProp name="ConstantTimer.delay">2000</stringProp>
+                      <stringProp name="RandomTimer.range">3000</stringProp>
+                    </UniformRandomTimer>
+                    <hashTree/>
+                  </hashTree>
+
+                </hashTree>
+                <!-- End If I Am Guesser -->
+
+                <!-- Reset turn flag for next iteration -->
+                <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Reset Turn Flags" enabled="true">
+                  <stringProp name="scriptLanguage">groovy</stringProp>
+                  <stringProp name="script">
+vars.put("turn_ended_flag", "false")
+vars.put("word_choice_1", "NONE")
+vars.put("turn_msg_type", "unknown")
+vars.put("turn_msg_type_2", "unknown")
+                  </stringProp>
+                </JSR223Sampler>
+                <hashTree/>
+
+              </hashTree>
+              <!-- End TC Play Turn -->
+
+            </hashTree>
+            <!-- End Turn Loop -->
+
+            <!-- ===== Phase 6: Game Over - Read final scores ===== -->
+            <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If Game Over Not Already Received" enabled="true">
+              <stringProp name="IfController.condition">${__groovy(vars.get("game_over_flag") != "true")}</stringProp>
+              <boolProp name="IfController.evaluateAll">false</boolProp>
+              <boolProp name="IfController.useExpression">true</boolProp>
+            </IfController>
+            <hashTree>
+              <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - game_over" enabled="true">
+                <boolProp name="createNewConnection">false</boolProp>
+                <stringProp name="dataType">Text</stringProp>
+                <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+              </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+              <hashTree>
+                <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert game_over" enabled="true">
+                  <collectionProp name="Asserion.test_strings">
+                    <stringProp name="0">game_over</stringProp>
+                  </collectionProp>
+                  <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+                  <intProp name="Assertion.test_type">2</intProp>
+                </ResponseAssertion>
+                <hashTree/>
+              </hashTree>
+            </hashTree>
+
+            <!-- ===== Phase 7: Rematch ===== -->
+            <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="TC - Host: Rematch" enabled="true">
+              <boolProp name="TransactionController.includeTimers">false</boolProp>
+              <boolProp name="TransactionController.parent">true</boolProp>
+            </TransactionController>
+            <hashTree>
+
+              <ConstantTimer guiclass="ConstantTimerGui" testclass="ConstantTimer" testname="Pause Before Rematch (3s)" enabled="true">
+                <stringProp name="ConstantTimer.delay">3000</stringProp>
+              </ConstantTimer>
+              <hashTree/>
+
+              <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - rematch" enabled="true">
+                <boolProp name="createNewConnection">false</boolProp>
+                <stringProp name="requestData">{"type":"rematch","payload":{}}</stringProp>
+                <stringProp name="dataType">Text</stringProp>
+              </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+              <hashTree/>
+
+              <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - rematch_started" enabled="true">
+                <boolProp name="createNewConnection">false</boolProp>
+                <stringProp name="dataType">Text</stringProp>
+                <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+              </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+              <hashTree>
+                <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert rematch_started" enabled="true">
+                  <collectionProp name="Asserion.test_strings">
+                    <stringProp name="0">rematch_started</stringProp>
+                  </collectionProp>
+                  <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+                  <intProp name="Assertion.test_type">2</intProp>
+                </ResponseAssertion>
+                <hashTree/>
+              </hashTree>
+
+            </hashTree>
+
+          </hashTree>
+          <!-- End If Joiners Ready -->
+
+          <!-- ===== Phase 8: Leave and Close ===== -->
+          <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - leave_room (Host)" enabled="true">
+            <boolProp name="createNewConnection">false</boolProp>
+            <stringProp name="requestData">{"type":"leave_room","payload":{}}</stringProp>
+            <stringProp name="dataType">Text</stringProp>
+          </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+          <hashTree/>
+
+        </hashTree>
+        <!-- End If Room Created -->
+
+        <!-- Close connection -->
+        <eu.luminis.jmeter.wssampler.CloseWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.CloseWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.CloseWebSocketSampler" testname="WS Close (Host)" enabled="true">
+          <stringProp name="statusCode">1000</stringProp>
+          <stringProp name="readTimeout">3000</stringProp>
+        </eu.luminis.jmeter.wssampler.CloseWebSocketSampler>
+        <hashTree/>
+
+      </hashTree>
+
+      <!-- ================================================================ -->
+      <!-- TG2 (Sequential after TG1 starts): Joiners                      -->
+      <!-- Joins rooms created by TG1, plays guesser role through game      -->
+      <!-- ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="TG2 - Joiners (Join + Guess + Game)" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">startnextloop</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">1</stringProp>
+        </elementProp>
+        <!-- Total joiners = GAME_SESSIONS * (PLAYERS_PER_GAME - 1) -->
+        <stringProp name="ThreadGroup.num_threads">${__jexl3(${GAME_SESSIONS} * (${PLAYERS_PER_GAME} - 1))}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__jexl3(${GAME_SESSIONS} / 10 + 30)}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">900</stringProp>
+        <stringProp name="ThreadGroup.delay">15</stringProp>
+      </ThreadGroup>
+      <hashTree>
+
+        <!-- Determine which room to join (round-robin by thread index) -->
+        <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Pick Room Code" enabled="true">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="script">
+// Wait briefly for TG1 setUp to complete
+def maxWait = 30000
+def waited = 0
+while (waited &lt; maxWait) {
+    def codes = props.get("E2E_ROOM_CODES")
+    if (codes != null &amp;&amp; !codes.isEmpty()) {
+        def codeArray = codes.split(",")
+        def playersPerGame = (vars.get("PLAYERS_PER_GAME") ?: "3").toInteger()
+        def threadIdx = ctx.getThreadNum()
+        // Map thread to a room: threads 0,1 → room 0; threads 2,3 → room 1 (for 3 players/game = 2 joiners/room)
+        def joinersPerRoom = playersPerGame - 1
+        def roomIdx = (threadIdx / joinersPerRoom).intValue() % codeArray.length
+        def roomCode = codeArray[roomIdx]
+        vars.put("target_room_code", roomCode)
+        log.info("E2E Joiner ${threadIdx}: Targeting room ${roomCode} (roomIdx=${roomIdx})")
+        return
+    }
+    Thread.sleep(500)
+    waited += 500
+}
+vars.put("target_room_code", "NO_ROOMS")
+log.error("E2E Joiner: No rooms available after ${maxWait}ms wait")
+          </stringProp>
+        </JSR223PreProcessor>
+        <hashTree/>
+
+        <!-- Guard: skip if no room available -->
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If Room Available" enabled="true">
+          <stringProp name="IfController.condition">${__groovy(vars.get("target_room_code") != "NO_ROOMS")}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+
+          <!-- ===== Phase 1: Connect and Join ===== -->
+          <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="TC - Joiner: Connect + Join" enabled="true">
+            <boolProp name="TransactionController.includeTimers">false</boolProp>
+            <boolProp name="TransactionController.parent">true</boolProp>
+          </TransactionController>
+          <hashTree>
+
+            <!-- Random stagger to avoid thundering herd on WS connect -->
+            <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="Connection Stagger (0-5s)" enabled="true">
+              <stringProp name="ConstantTimer.delay">0</stringProp>
+              <stringProp name="RandomTimer.range">5000</stringProp>
+            </UniformRandomTimer>
+            <hashTree/>
+
+            <eu.luminis.jmeter.wssampler.OpenWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.OpenWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.OpenWebSocketSampler" testname="WS Open (Joiner)" enabled="true">
+              <stringProp name="server">${HOST}</stringProp>
+              <stringProp name="port">${PORT}</stringProp>
+              <stringProp name="path">${WS_PATH}</stringProp>
+              <stringProp name="connectTimeout">${CONNECT_TIMEOUT}</stringProp>
+              <stringProp name="readTimeout">${READ_TIMEOUT}</stringProp>
+            </eu.luminis.jmeter.wssampler.OpenWebSocketSampler>
+            <hashTree>
+              <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Assert Handshake &lt; 10s" enabled="true">
+                <stringProp name="DurationAssertion.duration">10000</stringProp>
+              </DurationAssertion>
+              <hashTree/>
+            </hashTree>
+
+            <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - join_room" enabled="true">
+              <boolProp name="createNewConnection">false</boolProp>
+              <stringProp name="requestData">{"type":"join_room","payload":{"name":"Player_${__threadNum}_${__RandomString(3,abc)}","room_code":"${target_room_code}"}}</stringProp>
+              <stringProp name="dataType">Text</stringProp>
+            </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+            <hashTree/>
+
+            <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - room_joined" enabled="true">
+              <boolProp name="createNewConnection">false</boolProp>
+              <stringProp name="dataType">Text</stringProp>
+              <stringProp name="readTimeout">5000</stringProp>
+            </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+            <hashTree>
+              <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract join response type" enabled="true">
+                <stringProp name="JSONPostProcessor.referenceNames">join_response_type</stringProp>
+                <stringProp name="JSONPostProcessor.jsonPathExprs">$.type</stringProp>
+                <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                <stringProp name="JSONPostProcessor.defaultValues">error</stringProp>
+              </JSONPostProcessor>
+              <hashTree/>
+              <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract player_id" enabled="true">
+                <stringProp name="JSONPostProcessor.referenceNames">my_player_id</stringProp>
+                <stringProp name="JSONPostProcessor.jsonPathExprs">$.payload.player_id</stringProp>
+                <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                <stringProp name="JSONPostProcessor.defaultValues">UNKNOWN</stringProp>
+              </JSONPostProcessor>
+              <hashTree/>
+              <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert valid response (room_joined or player_list)" enabled="true">
+                <collectionProp name="Asserion.test_strings">
+                  <stringProp name="0">"type"</stringProp>
+                </collectionProp>
+                <stringProp name="Assertion.custom_message">Expected valid JSON with type field</stringProp>
+                <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+                <intProp name="Assertion.test_type">2</intProp>
+              </ResponseAssertion>
+              <hashTree/>
+              <!-- Classify join result via PostProcessor -->
+              <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Classify Join Result" enabled="true">
+                <stringProp name="scriptLanguage">groovy</stringProp>
+                <stringProp name="script">
+def response = prev.getResponseDataAsString()
+if (response?.contains('"room_joined"')) {
+    vars.put("join_response_type", "room_joined")
+} else if (response?.contains('"player_list"')) {
+    // Got a player_list first — room_joined will come next or was already processed
+    vars.put("join_response_type", "room_joined")
+} else if (response?.contains('"error"')) {
+    vars.put("join_response_type", "error")
+} else {
+    vars.put("join_response_type", "unknown")
+}
+                </stringProp>
+              </JSR223PostProcessor>
+              <hashTree/>
+            </hashTree>
+
+          </hashTree>
+
+          <!-- Signal host that we joined -->
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Signal Join Complete" enabled="true">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+def roomCode = vars.get("target_room_code")
+def joinResponse = vars.get("join_response_type")
+if (joinResponse == "room_joined") {
+    synchronized(props) {
+        def current = (props.get("E2E_JOINED_${roomCode}") ?: "0").toInteger()
+        props.put("E2E_JOINED_${roomCode}", (current + 1).toString())
+        log.info("E2E Joiner: Joined room ${roomCode} (total joined: ${current + 1})")
+    }
+} else {
+    log.error("E2E Joiner: Failed to join room ${roomCode}: ${joinResponse}")
+}
+            </stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+
+          <!-- Guard: Only continue if join succeeded -->
+          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If Join Succeeded" enabled="true">
+            <stringProp name="IfController.condition">${__groovy(vars.get("join_response_type") == "room_joined")}</stringProp>
+            <boolProp name="IfController.evaluateAll">false</boolProp>
+            <boolProp name="IfController.useExpression">true</boolProp>
+          </IfController>
+          <hashTree>
+
+            <!-- ===== Phase 2: Wait for game_started ===== -->
+            <!-- Host will start game once all joiners have connected -->
+            <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="TC - Joiner: Wait for Game Start" enabled="true">
+              <boolProp name="TransactionController.includeTimers">false</boolProp>
+              <boolProp name="TransactionController.parent">true</boolProp>
+            </TransactionController>
+            <hashTree>
+
+              <!-- Read messages until we see game_started (may see player_list, settings_updated first) -->
+              <WhileController guiclass="WhileControllerGui" testclass="WhileController" testname="Wait for game_started" enabled="true">
+                <stringProp name="WhileController.condition">${__groovy(vars.get("game_started_received") != "true")}</stringProp>
+              </WhileController>
+              <hashTree>
+                <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - pre-game msgs" enabled="true">
+                  <boolProp name="createNewConnection">false</boolProp>
+                  <stringProp name="dataType">Text</stringProp>
+                  <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+                </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                <hashTree>
+                  <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Check game_started" enabled="true">
+                    <stringProp name="scriptLanguage">groovy</stringProp>
+                    <stringProp name="script">
+def response = prev.getResponseDataAsString()
+if (response != null &amp;&amp; response.contains("game_started")) {
+    vars.put("game_started_received", "true")
+    log.info("E2E Joiner: game_started received")
+}
+                    </stringProp>
+                  </JSR223PostProcessor>
+                  <hashTree/>
+                </hashTree>
+              </hashTree>
+
+            </hashTree>
+
+            <!-- ===== Phase 3: Play game turns ===== -->
+            <LoopController guiclass="LoopControlPanel" testclass="LoopController" testname="Turn Loop (joiner)" enabled="true">
+              <boolProp name="LoopController.continue_forever">false</boolProp>
+              <stringProp name="LoopController.loops">${__groovy((vars.get("NUM_ROUNDS") ?: "2").toInteger() * (vars.get("PLAYERS_PER_GAME") ?: "3").toInteger())}</stringProp>
+            </LoopController>
+            <hashTree>
+
+              <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="TC - Joiner: Play Turn" enabled="true">
+                <boolProp name="TransactionController.includeTimers">false</boolProp>
+                <boolProp name="TransactionController.parent">true</boolProp>
+              </TransactionController>
+              <hashTree>
+
+                <!-- Read drawer_selecting or word_choices (if I'm the drawer this turn) -->
+                <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - turn start msg" enabled="true">
+                  <boolProp name="createNewConnection">false</boolProp>
+                  <stringProp name="dataType">Text</stringProp>
+                  <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+                </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                <hashTree>
+                  <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract msg type" enabled="true">
+                    <stringProp name="JSONPostProcessor.referenceNames">joiner_turn_msg</stringProp>
+                    <stringProp name="JSONPostProcessor.jsonPathExprs">$.type</stringProp>
+                    <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                    <stringProp name="JSONPostProcessor.defaultValues">unknown</stringProp>
+                  </JSONPostProcessor>
+                  <hashTree/>
+                  <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract word choices" enabled="true">
+                    <stringProp name="JSONPostProcessor.referenceNames">joiner_word_choice</stringProp>
+                    <stringProp name="JSONPostProcessor.jsonPathExprs">$.payload.choices[0]</stringProp>
+                    <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                    <stringProp name="JSONPostProcessor.defaultValues">NONE</stringProp>
+                  </JSONPostProcessor>
+                  <hashTree/>
+                </hashTree>
+
+                <!-- If drawer_selecting, read next message -->
+                <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If drawer_selecting" enabled="true">
+                  <stringProp name="IfController.condition">${__groovy(vars.get("joiner_turn_msg") == "drawer_selecting")}</stringProp>
+                  <boolProp name="IfController.evaluateAll">false</boolProp>
+                  <boolProp name="IfController.useExpression">true</boolProp>
+                </IfController>
+                <hashTree>
+                  <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - next (word_choices or turn_started)" enabled="true">
+                    <boolProp name="createNewConnection">false</boolProp>
+                    <stringProp name="dataType">Text</stringProp>
+                    <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+                  </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                  <hashTree>
+                    <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract msg type" enabled="true">
+                      <stringProp name="JSONPostProcessor.referenceNames">joiner_turn_msg</stringProp>
+                      <stringProp name="JSONPostProcessor.jsonPathExprs">$.type</stringProp>
+                      <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                      <stringProp name="JSONPostProcessor.defaultValues">unknown</stringProp>
+                    </JSONPostProcessor>
+                    <hashTree/>
+                    <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract word choices (2)" enabled="true">
+                      <stringProp name="JSONPostProcessor.referenceNames">joiner_word_choice</stringProp>
+                      <stringProp name="JSONPostProcessor.jsonPathExprs">$.payload.choices[0]</stringProp>
+                      <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                      <stringProp name="JSONPostProcessor.defaultValues">NONE</stringProp>
+                    </JSONPostProcessor>
+                    <hashTree/>
+                  </hashTree>
+                </hashTree>
+
+                <!-- BRANCH A: I am the drawer this turn -->
+                <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If I Am Drawer" enabled="true">
+                  <stringProp name="IfController.condition">${__groovy(vars.get("joiner_word_choice") != "NONE" &amp;&amp; vars.get("joiner_turn_msg") == "word_choices")}</stringProp>
+                  <boolProp name="IfController.evaluateAll">false</boolProp>
+                  <boolProp name="IfController.useExpression">true</boolProp>
+                </IfController>
+                <hashTree>
+
+                  <ConstantTimer guiclass="ConstantTimerGui" testclass="ConstantTimer" testname="Word Pick Delay (2s)" enabled="true">
+                    <stringProp name="ConstantTimer.delay">2000</stringProp>
+                  </ConstantTimer>
+                  <hashTree/>
+
+                  <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - select_word (Joiner-Drawer)" enabled="true">
+                    <boolProp name="createNewConnection">false</boolProp>
+                    <stringProp name="requestData">{"type":"select_word","payload":{"word":"${joiner_word_choice}"}}</stringProp>
+                    <stringProp name="dataType">Text</stringProp>
+                  </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+                  <hashTree/>
+
+                  <!-- Read turn_started + word_assigned + clear_canvas -->
+                  <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - turn_started (drawer)" enabled="true">
+                    <boolProp name="createNewConnection">false</boolProp>
+                    <stringProp name="dataType">Text</stringProp>
+                    <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+                  </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                  <hashTree/>
+                  <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - word_assigned (drawer)" enabled="true">
+                    <boolProp name="createNewConnection">false</boolProp>
+                    <stringProp name="dataType">Text</stringProp>
+                    <stringProp name="readTimeout">5000</stringProp>
+                  </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                  <hashTree/>
+                  <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - clear_canvas (drawer)" enabled="true">
+                    <boolProp name="createNewConnection">false</boolProp>
+                    <stringProp name="dataType">Text</stringProp>
+                    <stringProp name="readTimeout">5000</stringProp>
+                  </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                  <hashTree/>
+
+                  <!-- Draw strokes until turn ends -->
+                  <WhileController guiclass="WhileControllerGui" testclass="WhileController" testname="Draw Loop" enabled="true">
+                    <stringProp name="WhileController.condition">${__groovy(vars.get("joiner_turn_ended") != "true")}</stringProp>
+                  </WhileController>
+                  <hashTree>
+                    <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - stroke (Joiner-Drawer)" enabled="true">
+                      <boolProp name="createNewConnection">false</boolProp>
+                      <stringProp name="requestData">{"type":"stroke","payload":{"points":[[${__Random(0,800)},${__Random(0,600)}],[${__Random(0,800)},${__Random(0,600)}]],"color":"#${__RandomString(6,0123456789abcdef)}","size":${__Random(2,8)}}}</stringProp>
+                      <stringProp name="dataType">Text</stringProp>
+                    </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+                    <hashTree/>
+                    <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - events (drawer)" enabled="true">
+                      <boolProp name="createNewConnection">false</boolProp>
+                      <stringProp name="dataType">Text</stringProp>
+                      <stringProp name="readTimeout">3000</stringProp>
+                    </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                    <hashTree>
+                      <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Check turn_ended" enabled="true">
+                        <stringProp name="scriptLanguage">groovy</stringProp>
+                        <stringProp name="script">
+def response = prev.getResponseDataAsString()
+if (response?.contains("turn_ended") || response?.contains("game_over")) {
+    vars.put("joiner_turn_ended", "true")
+    if (response?.contains("game_over")) vars.put("joiner_game_over", "true")
+}
+                        </stringProp>
+                      </JSR223PostProcessor>
+                      <hashTree/>
+                    </hashTree>
+                    <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="Draw Pace (50-150ms)" enabled="true">
+                      <stringProp name="ConstantTimer.delay">50</stringProp>
+                      <stringProp name="RandomTimer.range">100</stringProp>
+                    </UniformRandomTimer>
+                    <hashTree/>
+                  </hashTree>
+
+                </hashTree>
+                <!-- End If I Am Drawer -->
+
+                <!-- BRANCH B: I am a guesser this turn -->
+                <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If I Am Guesser" enabled="true">
+                  <stringProp name="IfController.condition">${__groovy(vars.get("joiner_word_choice") == "NONE" || vars.get("joiner_turn_msg") == "turn_started")}</stringProp>
+                  <boolProp name="IfController.evaluateAll">false</boolProp>
+                  <boolProp name="IfController.useExpression">true</boolProp>
+                </IfController>
+                <hashTree>
+
+                  <!-- If we haven't yet received turn_started, wait for it -->
+                  <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If Need turn_started" enabled="true">
+                    <stringProp name="IfController.condition">${__groovy(vars.get("joiner_turn_msg") != "turn_started")}</stringProp>
+                    <boolProp name="IfController.evaluateAll">false</boolProp>
+                    <boolProp name="IfController.useExpression">true</boolProp>
+                  </IfController>
+                  <hashTree>
+                    <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - turn_started (guesser)" enabled="true">
+                      <boolProp name="createNewConnection">false</boolProp>
+                      <stringProp name="dataType">Text</stringProp>
+                      <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+                    </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                    <hashTree/>
+                  </hashTree>
+
+                  <!-- Read clear_canvas -->
+                  <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - clear_canvas (guesser)" enabled="true">
+                    <boolProp name="createNewConnection">false</boolProp>
+                    <stringProp name="dataType">Text</stringProp>
+                    <stringProp name="readTimeout">5000</stringProp>
+                  </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                  <hashTree/>
+
+                  <!-- Guess loop -->
+                  <WhileController guiclass="WhileControllerGui" testclass="WhileController" testname="Guess Loop" enabled="true">
+                    <stringProp name="WhileController.condition">${__groovy(vars.get("joiner_turn_ended") != "true")}</stringProp>
+                  </WhileController>
+                  <hashTree>
+                    <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - guess" enabled="true">
+                      <boolProp name="createNewConnection">false</boolProp>
+                      <stringProp name="requestData">{"type":"guess","payload":{"text":"${__RandomString(${__Random(3,8)},abcdefghijklmnopqrstuvwxyz)}"}}</stringProp>
+                      <stringProp name="dataType">Text</stringProp>
+                    </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+                    <hashTree/>
+                    <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - events (guesser)" enabled="true">
+                      <boolProp name="createNewConnection">false</boolProp>
+                      <stringProp name="dataType">Text</stringProp>
+                      <stringProp name="readTimeout">5000</stringProp>
+                    </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                    <hashTree>
+                      <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Check turn_ended (guesser)" enabled="true">
+                        <stringProp name="scriptLanguage">groovy</stringProp>
+                        <stringProp name="script">
+def response = prev.getResponseDataAsString()
+if (response?.contains("turn_ended") || response?.contains("game_over")) {
+    vars.put("joiner_turn_ended", "true")
+    if (response?.contains("game_over")) vars.put("joiner_game_over", "true")
+}
+                        </stringProp>
+                      </JSR223PostProcessor>
+                      <hashTree/>
+                    </hashTree>
+                    <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="Guess Pace (2-4s)" enabled="true">
+                      <stringProp name="ConstantTimer.delay">2000</stringProp>
+                      <stringProp name="RandomTimer.range">2000</stringProp>
+                    </UniformRandomTimer>
+                    <hashTree/>
+                  </hashTree>
+
+                </hashTree>
+                <!-- End If I Am Guesser -->
+
+                <!-- Reset per-turn flags -->
+                <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Reset Turn Flags" enabled="true">
+                  <stringProp name="scriptLanguage">groovy</stringProp>
+                  <stringProp name="script">
+vars.put("joiner_turn_ended", "false")
+vars.put("joiner_word_choice", "NONE")
+vars.put("joiner_turn_msg", "unknown")
+                  </stringProp>
+                </JSR223Sampler>
+                <hashTree/>
+
+              </hashTree>
+              <!-- End TC Joiner Play Turn -->
+
+            </hashTree>
+            <!-- End Turn Loop -->
+
+            <!-- ===== Phase 4: Game Over ===== -->
+            <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If game_over not yet received" enabled="true">
+              <stringProp name="IfController.condition">${__groovy(vars.get("joiner_game_over") != "true")}</stringProp>
+              <boolProp name="IfController.evaluateAll">false</boolProp>
+              <boolProp name="IfController.useExpression">true</boolProp>
+            </IfController>
+            <hashTree>
+              <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - game_over (Joiner)" enabled="true">
+                <boolProp name="createNewConnection">false</boolProp>
+                <stringProp name="dataType">Text</stringProp>
+                <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+              </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+              <hashTree>
+                <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert game_over" enabled="true">
+                  <collectionProp name="Asserion.test_strings">
+                    <stringProp name="0">game_over</stringProp>
+                  </collectionProp>
+                  <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+                  <intProp name="Assertion.test_type">2</intProp>
+                </ResponseAssertion>
+                <hashTree/>
+              </hashTree>
+            </hashTree>
+
+            <!-- ===== Phase 5: Receive rematch_started (host sends rematch) ===== -->
+            <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - rematch_started (Joiner)" enabled="true">
+              <boolProp name="createNewConnection">false</boolProp>
+              <stringProp name="dataType">Text</stringProp>
+              <stringProp name="readTimeout">${GAME_READ_TIMEOUT}</stringProp>
+            </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+            <hashTree>
+              <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert rematch_started (Joiner)" enabled="true">
+                <collectionProp name="Asserion.test_strings">
+                  <stringProp name="0">rematch_started</stringProp>
+                </collectionProp>
+                <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+                <intProp name="Assertion.test_type">2</intProp>
+              </ResponseAssertion>
+              <hashTree/>
+            </hashTree>
+
+          </hashTree>
+          <!-- End If Join Succeeded -->
+
+          <!-- Close connection -->
+          <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - leave_room (Joiner)" enabled="true">
+            <boolProp name="createNewConnection">false</boolProp>
+            <stringProp name="requestData">{"type":"leave_room","payload":{}}</stringProp>
+            <stringProp name="dataType">Text</stringProp>
+          </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+          <hashTree/>
+
+          <eu.luminis.jmeter.wssampler.CloseWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.CloseWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.CloseWebSocketSampler" testname="WS Close (Joiner)" enabled="true">
+            <stringProp name="statusCode">1000</stringProp>
+            <stringProp name="readTimeout">3000</stringProp>
+          </eu.luminis.jmeter.wssampler.CloseWebSocketSampler>
+          <hashTree/>
+
+        </hashTree>
+        <!-- End If Room Available -->
+
+      </hashTree>
+
+      <!-- ================================================================ -->
+      <!-- TEARDOWN: Clean shared properties                                -->
+      <!-- ================================================================ -->
+      <PostThreadGroup guiclass="PostThreadGroupGui" testclass="PostThreadGroup" testname="tearDown - Cleanup Properties" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">1</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">1</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">1</stringProp>
+        <boolProp name="ThreadGroup.scheduler">false</boolProp>
+      </PostThreadGroup>
+      <hashTree>
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Cleanup E2E Properties" enabled="true">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="script">
+// Print error classification summary
+def total = (props.get("TOTAL_SAMPLES") ?: "0").toInteger()
+def infraErrors = (props.get("INFRA_ERRORS") ?: "0").toInteger()
+def assertionMismatches = (props.get("ASSERTION_MISMATCHES") ?: "0").toInteger()
+def samplerErrors = (props.get("SAMPLER_ERRORS") ?: "0").toInteger()
+def appErrors = (props.get("APP_ERRORS") ?: "0").toInteger()
+def realErrors = infraErrors + appErrors
+
+log.info("=" * 60)
+log.info("  PERFORMANCE TEST - ERROR CLASSIFICATION SUMMARY")
+log.info("=" * 60)
+log.info("  Total Samples:           ${total}")
+log.info("  Infrastructure Errors:   ${infraErrors} (${total > 0 ? (infraErrors*100.0/total).round(2) : 0}%)")
+log.info("  Application Errors:      ${appErrors} (${total > 0 ? (appErrors*100.0/total).round(2) : 0}%)")
+log.info("  Sampler/Config Errors:   ${samplerErrors}")
+log.info("  Assertion Mismatches:    ${assertionMismatches} (not real errors)")
+log.info("-" * 60)
+log.info("  REAL Error Rate:         ${total > 0 ? (realErrors*100.0/total).round(2) : 0}% (infra + app)")
+log.info("  Reported Error Rate:     ${total > 0 ? ((infraErrors+appErrors+assertionMismatches+samplerErrors)*100.0/total).round(2) : 0}% (includes assertion mismatches)")
+log.info("=" * 60)
+
+// Clean up all E2E properties
+props.remove("E2E_ROOM_CODES")
+props.remove("TOTAL_SAMPLES")
+props.remove("INFRA_ERRORS")
+props.remove("ASSERTION_MISMATCHES")
+props.remove("SAMPLER_ERRORS")
+props.remove("APP_ERRORS")
+def sessions = (vars.get("GAME_SESSIONS") ?: "5").toInteger()
+for (int i = 0; i &lt; sessions; i++) {
+    props.remove("E2E_ROOM_${i}")
+}
+log.info("Teardown: All properties cleaned")
+          </stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+      </hashTree>
+
+      <!-- ================================================================ -->
+      <!-- ERROR CLASSIFICATION & AUTO-STOP                                 -->
+      <!-- Tracks real errors vs assertion mismatches separately.           -->
+      <!-- Stops the test if infrastructure error rate exceeds threshold.   -->
+      <!-- ================================================================ -->
+
+      <!-- Global JSR223 Listener: Classify errors and track metrics -->
+      <JSR223Listener guiclass="TestBeanGUI" testclass="JSR223Listener" testname="Error Classifier &amp; Metrics Tracker" enabled="true">
+        <stringProp name="scriptLanguage">groovy</stringProp>
+        <stringProp name="script">
+// Classify each sample result into error categories
+def label = prev.getSampleLabel()
+def responseCode = prev.getResponseCode()
+def responseMessage = prev.getResponseMessage() ?: ""
+def success = prev.isSuccessful()
+
+if (!success) {
+    // Classify the error type
+    if (responseCode == "Websocket I/O error" || responseMessage.contains("Connect timed out") || responseMessage.contains("Connection refused")) {
+        // Infrastructure error: connection failure
+        def count = (props.get("INFRA_ERRORS") ?: "0").toInteger() + 1
+        props.put("INFRA_ERRORS", count.toString())
+    } else if (responseMessage.contains("Assertion") || prev.getAssertionResults()?.length > 0) {
+        // Assertion mismatch: response received but didn't match expected pattern
+        def count = (props.get("ASSERTION_MISMATCHES") ?: "0").toInteger() + 1
+        props.put("ASSERTION_MISMATCHES", count.toString())
+    } else if (responseCode == "Sampler error") {
+        // Sampler configuration/protocol error
+        def count = (props.get("SAMPLER_ERRORS") ?: "0").toInteger() + 1
+        props.put("SAMPLER_ERRORS", count.toString())
+    } else {
+        // Application error (server returned error response)
+        def count = (props.get("APP_ERRORS") ?: "0").toInteger() + 1
+        props.put("APP_ERRORS", count.toString())
+    }
+}
+
+// Track total samples for error rate calculation
+def total = (props.get("TOTAL_SAMPLES") ?: "0").toInteger() + 1
+props.put("TOTAL_SAMPLES", total.toString())
+
+// Auto-stop: check infrastructure error rate every 100 samples
+if (total % 100 == 0) {
+    def infraErrors = (props.get("INFRA_ERRORS") ?: "0").toInteger()
+    def threshold = (vars.get("ERROR_THRESHOLD_PCT") ?: "25").toInteger()
+    def errorPct = (infraErrors * 100.0) / total
+    if (errorPct > threshold &amp;&amp; total > 200) {
+        log.error("AUTO-STOP: Infrastructure error rate ${errorPct.round(1)}% exceeds threshold ${threshold}%. Stopping test.")
+        ctx.getEngine().stopTest(false)  // graceful stop
+    }
+}
+        </stringProp>
+      </JSR223Listener>
+      <hashTree/>
+
+      <!-- ================================================================ -->
+      <!-- LISTENERS                                                        -->
+      <!-- ================================================================ -->
+
+      <!-- Summary Report -->
+      <ResultCollector guiclass="SummaryReport" testclass="ResultCollector" testname="Summary Report" enabled="true">
+        <boolProp name="ResultCollector.error_logging">false</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <threadName>true</threadName>
+            <dataType>true</dataType>
+            <encoding>false</encoding>
+            <assertions>true</assertions>
+            <subresults>true</subresults>
+            <responseData>false</responseData>
+            <samplerData>false</samplerData>
+            <xml>false</xml>
+            <fieldNames>true</fieldNames>
+            <responseHeaders>false</responseHeaders>
+            <requestHeaders>false</requestHeaders>
+            <responseDataOnError>true</responseDataOnError>
+            <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+            <assertionsResultsToSave>0</assertionsResultsToSave>
+            <bytes>true</bytes>
+            <sentBytes>true</sentBytes>
+            <url>true</url>
+            <threadCounts>true</threadCounts>
+            <idleTime>true</idleTime>
+            <connectTime>true</connectTime>
+          </value>
+        </objProp>
+        <stringProp name="filename">jmeter/results/e2e_summary.csv</stringProp>
+      </ResultCollector>
+      <hashTree/>
+
+      <!-- Aggregate Report -->
+      <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector" testname="Aggregate Report" enabled="true">
+        <boolProp name="ResultCollector.error_logging">false</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <threadName>true</threadName>
+            <dataType>true</dataType>
+            <encoding>false</encoding>
+            <assertions>true</assertions>
+            <subresults>true</subresults>
+            <responseData>false</responseData>
+            <samplerData>false</samplerData>
+            <xml>false</xml>
+            <fieldNames>true</fieldNames>
+            <responseHeaders>false</responseHeaders>
+            <requestHeaders>false</requestHeaders>
+            <responseDataOnError>true</responseDataOnError>
+            <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+            <assertionsResultsToSave>0</assertionsResultsToSave>
+            <bytes>true</bytes>
+            <sentBytes>true</sentBytes>
+            <url>true</url>
+            <threadCounts>true</threadCounts>
+            <idleTime>true</idleTime>
+            <connectTime>true</connectTime>
+          </value>
+        </objProp>
+        <stringProp name="filename">jmeter/results/e2e_aggregate.csv</stringProp>
+      </ResultCollector>
+      <hashTree/>
+
+      <!-- Debug listener (disabled by default) -->
+      <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree (DEBUG)" enabled="false">
+        <boolProp name="ResultCollector.error_logging">false</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <threadName>true</threadName>
+            <dataType>true</dataType>
+            <assertions>true</assertions>
+            <responseData>true</responseData>
+            <samplerData>true</samplerData>
+            <responseHeaders>true</responseHeaders>
+            <requestHeaders>true</requestHeaders>
+          </value>
+        </objProp>
+        <stringProp name="filename"></stringProp>
+      </ResultCollector>
+      <hashTree/>
+
+    </hashTree>
+  </hashTree>
+</jmeterTestPlan>

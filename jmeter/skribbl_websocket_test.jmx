@@ -1,0 +1,885 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="Skribbl WebSocket Performance Test" enabled="true">
+      <stringProp name="TestPlan.comments">Production-grade performance test for Skribbl multiplayer drawing game. Covers connection, room lifecycle, game flow, and sustained connections.</stringProp>
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
+      <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments">
+        <collectionProp name="Arguments.arguments">
+          <elementProp name="HOST" elementType="Argument">
+            <stringProp name="Argument.name">HOST</stringProp>
+            <stringProp name="Argument.value">${__P(HOST,localhost)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="PORT" elementType="Argument">
+            <stringProp name="Argument.name">PORT</stringProp>
+            <stringProp name="Argument.value">${__P(PORT,8000)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="WS_PATH" elementType="Argument">
+            <stringProp name="Argument.name">WS_PATH</stringProp>
+            <stringProp name="Argument.value">${__P(WS_PATH,/ws)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="PROTOCOL" elementType="Argument">
+            <stringProp name="Argument.name">PROTOCOL</stringProp>
+            <stringProp name="Argument.value">${__P(PROTOCOL,ws)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="ROOMS" elementType="Argument">
+            <stringProp name="Argument.name">ROOMS</stringProp>
+            <stringProp name="Argument.value">${__P(ROOMS,10)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="PLAYERS_PER_ROOM" elementType="Argument">
+            <stringProp name="Argument.name">PLAYERS_PER_ROOM</stringProp>
+            <stringProp name="Argument.value">${__P(PLAYERS_PER_ROOM,4)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="RAMP_UP" elementType="Argument">
+            <stringProp name="Argument.name">RAMP_UP</stringProp>
+            <stringProp name="Argument.value">${__P(RAMP_UP,30)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="DURATION" elementType="Argument">
+            <stringProp name="Argument.name">DURATION</stringProp>
+            <stringProp name="Argument.value">${__P(DURATION,180)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="RAMP_DOWN" elementType="Argument">
+            <stringProp name="Argument.name">RAMP_DOWN</stringProp>
+            <stringProp name="Argument.value">${__P(RAMP_DOWN,10)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="SUSTAINED_THREADS" elementType="Argument">
+            <stringProp name="Argument.name">SUSTAINED_THREADS</stringProp>
+            <stringProp name="Argument.value">${__P(SUSTAINED_THREADS,20)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="CONNECT_TIMEOUT" elementType="Argument">
+            <stringProp name="Argument.name">CONNECT_TIMEOUT</stringProp>
+            <stringProp name="Argument.value">${__P(CONNECT_TIMEOUT,5000)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="READ_TIMEOUT" elementType="Argument">
+            <stringProp name="Argument.name">READ_TIMEOUT</stringProp>
+            <stringProp name="Argument.value">${__P(READ_TIMEOUT,10000)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+        </collectionProp>
+      </elementProp>
+    </TestPlan>
+    <hashTree>
+
+      <!-- ================================================================ -->
+      <!-- SETUP: Thread Group to create rooms and share codes via property -->
+      <!-- ================================================================ -->
+      <SetupThreadGroup guiclass="SetupThreadGroupGui" testclass="SetupThreadGroup" testname="setUp - Create Rooms" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">startnextloop</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">1</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${ROOMS}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">5</stringProp>
+        <boolProp name="ThreadGroup.scheduler">false</boolProp>
+      </SetupThreadGroup>
+      <hashTree>
+
+        <!-- Open WebSocket -->
+        <eu.luminis.jmeter.wssampler.OpenWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.OpenWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.OpenWebSocketSampler" testname="WS Open (Setup)" enabled="true">
+          <stringProp name="server">${HOST}</stringProp>
+          <stringProp name="port">${PORT}</stringProp>
+          <stringProp name="path">${WS_PATH}</stringProp>
+          <stringProp name="connectTimeout">${CONNECT_TIMEOUT}</stringProp>
+          <stringProp name="readTimeout">${READ_TIMEOUT}</stringProp>
+        </eu.luminis.jmeter.wssampler.OpenWebSocketSampler>
+        <hashTree>
+          <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Assert Connect &lt; 3s" enabled="true">
+            <stringProp name="DurationAssertion.duration">3000</stringProp>
+          </DurationAssertion>
+          <hashTree/>
+        </hashTree>
+
+        <!-- Create room -->
+        <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Create Room (Setup)" enabled="true">
+          <boolProp name="createNewConnection">false</boolProp>
+          <stringProp name="requestData">{"type":"create_room","payload":{"name":"Host_${__threadNum}"}}</stringProp>
+          <stringProp name="dataType">Text</stringProp>
+        </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+        <hashTree/>
+
+        <!-- Read response and extract room_code -->
+        <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - Room Created (Setup)" enabled="true">
+          <boolProp name="createNewConnection">false</boolProp>
+          <stringProp name="dataType">Text</stringProp>
+          <stringProp name="readTimeout">5000</stringProp>
+        </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+        <hashTree>
+          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract room_code" enabled="true">
+            <stringProp name="JSONPostProcessor.referenceNames">setup_room_code</stringProp>
+            <stringProp name="JSONPostProcessor.jsonPathExprs">$.payload.room_code</stringProp>
+            <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+            <stringProp name="JSONPostProcessor.defaultValues">SETUP_FAILED</stringProp>
+          </JSONPostProcessor>
+          <hashTree/>
+          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert room_created" enabled="true">
+            <collectionProp name="Asserion.test_strings">
+              <stringProp name="0">room_created</stringProp>
+            </collectionProp>
+            <stringProp name="Assertion.custom_message">Setup: Expected room_created response</stringProp>
+            <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+            <intProp name="Assertion.test_type">2</intProp>
+          </ResponseAssertion>
+          <hashTree/>
+        </hashTree>
+
+        <!-- Store room_code into a global property so joiners can consume it -->
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Store Room Code in Property" enabled="true">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="script">
+import org.apache.jmeter.util.JMeterUtils
+
+def roomCode = vars.get("setup_room_code")
+if (roomCode != null &amp;&amp; roomCode != "SETUP_FAILED") {
+    // Append to comma-separated list of room codes
+    def existing = props.get("ROOM_CODES") ?: ""
+    def updated = existing ? "${existing},${roomCode}" : roomCode
+    props.put("ROOM_CODES", updated)
+    log.info("Setup: Stored room code ${roomCode}. All codes: ${updated}")
+} else {
+    log.error("Setup: Failed to create room for thread ${vars.get('__jm__setUp - Create Rooms__idx')}")
+}
+          </stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+
+        <!-- Keep connection open (host stays in room for joiners) -->
+        <!-- The setup host connections will be closed in teardown -->
+
+      </hashTree>
+
+      <!-- ================================================================ -->
+      <!-- TG1: Room Creators - Full lifecycle testing                      -->
+      <!-- ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="TG1 - Room Creators (Full Lifecycle)" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">startnextloop</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">-1</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${ROOMS}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
+        <stringProp name="ThreadGroup.delay">5</stringProp>
+      </ThreadGroup>
+      <hashTree>
+
+        <!-- Transaction Controller for Room Create Lifecycle -->
+        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="TC - Room Create Lifecycle" enabled="true">
+          <boolProp name="TransactionController.includeTimers">false</boolProp>
+          <boolProp name="TransactionController.parent">true</boolProp>
+        </TransactionController>
+        <hashTree>
+
+          <!-- Step 1: Open WebSocket -->
+          <eu.luminis.jmeter.wssampler.OpenWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.OpenWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.OpenWebSocketSampler" testname="WS Open Connection" enabled="true">
+            <stringProp name="server">${HOST}</stringProp>
+            <stringProp name="port">${PORT}</stringProp>
+            <stringProp name="path">${WS_PATH}</stringProp>
+            <stringProp name="connectTimeout">${CONNECT_TIMEOUT}</stringProp>
+            <stringProp name="readTimeout">${READ_TIMEOUT}</stringProp>
+          </eu.luminis.jmeter.wssampler.OpenWebSocketSampler>
+          <hashTree>
+            <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Assert WS Handshake &lt; 3s" enabled="true">
+              <stringProp name="DurationAssertion.duration">3000</stringProp>
+            </DurationAssertion>
+            <hashTree/>
+          </hashTree>
+
+          <!-- Step 2: Create Room -->
+          <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Create Room" enabled="true">
+            <boolProp name="createNewConnection">false</boolProp>
+            <stringProp name="requestData">{"type":"create_room","payload":{"name":"Creator_${__threadNum}_${__RandomString(4,abcdefghijklmnop)}"}}</stringProp>
+            <stringProp name="dataType">Text</stringProp>
+          </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+          <hashTree/>
+
+          <!-- Step 3: Read response -->
+          <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - Room Created" enabled="true">
+            <boolProp name="createNewConnection">false</boolProp>
+            <stringProp name="dataType">Text</stringProp>
+            <stringProp name="readTimeout">5000</stringProp>
+          </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+          <hashTree>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract room_code" enabled="true">
+              <stringProp name="JSONPostProcessor.referenceNames">room_code</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.payload.room_code</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+            <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract player_id" enabled="true">
+              <stringProp name="JSONPostProcessor.referenceNames">player_id</stringProp>
+              <stringProp name="JSONPostProcessor.jsonPathExprs">$.payload.player_id</stringProp>
+              <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+              <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+            </JSONPostProcessor>
+            <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert room_created" enabled="true">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">room_created</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message">Expected room_created response</stringProp>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <intProp name="Assertion.test_type">2</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+          </hashTree>
+
+          <!-- Guard: Skip rest if room creation failed -->
+          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If Room Created Successfully" enabled="true">
+            <stringProp name="IfController.condition">${__groovy(vars.get("room_code") != "NOT_FOUND")}</stringProp>
+            <boolProp name="IfController.evaluateAll">false</boolProp>
+            <boolProp name="IfController.useExpression">true</boolProp>
+          </IfController>
+          <hashTree>
+
+            <!-- Step 4: Update Settings (host action) -->
+            <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Update Settings" enabled="true">
+              <boolProp name="createNewConnection">false</boolProp>
+              <stringProp name="requestData">{"type":"update_settings","payload":{"num_rounds":2,"turn_duration":60,"max_players":8}}</stringProp>
+              <stringProp name="dataType">Text</stringProp>
+            </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+            <hashTree/>
+
+            <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - Settings Updated" enabled="true">
+              <boolProp name="createNewConnection">false</boolProp>
+              <stringProp name="dataType">Text</stringProp>
+              <stringProp name="readTimeout">5000</stringProp>
+            </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+            <hashTree>
+              <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert settings_updated" enabled="true">
+                <collectionProp name="Asserion.test_strings">
+                  <stringProp name="0">settings_updated</stringProp>
+                </collectionProp>
+                <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+                <intProp name="Assertion.test_type">2</intProp>
+              </ResponseAssertion>
+              <hashTree/>
+            </hashTree>
+
+            <!-- Step 5: Lobby chat (5 messages) -->
+            <LoopController guiclass="LoopControlPanel" testclass="LoopController" testname="Lobby Chat Loop (5 msgs)" enabled="true">
+              <boolProp name="LoopController.continue_forever">false</boolProp>
+              <stringProp name="LoopController.loops">5</stringProp>
+            </LoopController>
+            <hashTree>
+              <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Chat" enabled="true">
+                <boolProp name="createNewConnection">false</boolProp>
+                <stringProp name="requestData">{"type":"chat","payload":{"text":"Hello from host thread ${__threadNum} msg ${__counter(FALSE)}"}}</stringProp>
+                <stringProp name="dataType">Text</stringProp>
+              </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+              <hashTree/>
+              <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - Chat Broadcast" enabled="true">
+                <boolProp name="createNewConnection">false</boolProp>
+                <stringProp name="dataType">Text</stringProp>
+                <stringProp name="readTimeout">5000</stringProp>
+              </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+              <hashTree>
+                <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert chat_message" enabled="true">
+                  <collectionProp name="Asserion.test_strings">
+                    <stringProp name="0">chat_message</stringProp>
+                  </collectionProp>
+                  <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+                  <intProp name="Assertion.test_type">2</intProp>
+                </ResponseAssertion>
+                <hashTree/>
+              </hashTree>
+              <GaussianRandomTimer guiclass="GaussianRandomTimerGui" testclass="GaussianRandomTimer" testname="Think Time (300-700ms)" enabled="true">
+                <stringProp name="ConstantTimer.delay">300</stringProp>
+                <stringProp name="RandomTimer.range">400</stringProp>
+              </GaussianRandomTimer>
+              <hashTree/>
+            </hashTree>
+
+            <!-- Step 6: Drawing simulation (20 strokes) -->
+            <LoopController guiclass="LoopControlPanel" testclass="LoopController" testname="Drawing Strokes Loop (20)" enabled="true">
+              <boolProp name="LoopController.continue_forever">false</boolProp>
+              <stringProp name="LoopController.loops">20</stringProp>
+            </LoopController>
+            <hashTree>
+              <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Stroke" enabled="true">
+                <boolProp name="createNewConnection">false</boolProp>
+                <stringProp name="requestData">{"type":"stroke","payload":{"points":[[${__Random(0,800)},${__Random(0,600)}],[${__Random(0,800)},${__Random(0,600)}],[${__Random(0,800)},${__Random(0,600)}],[${__Random(0,800)},${__Random(0,600)}]],"color":"#${__RandomString(6,0123456789abcdef)}","size":${__Random(2,10)}}}</stringProp>
+                <stringProp name="dataType">Text</stringProp>
+              </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+              <hashTree/>
+              <!-- No read expected here since host is alone in room during this test -->
+              <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="Drawing Pace (30-100ms)" enabled="true">
+                <stringProp name="ConstantTimer.delay">30</stringProp>
+                <stringProp name="RandomTimer.range">70</stringProp>
+              </UniformRandomTimer>
+              <hashTree/>
+            </hashTree>
+
+            <!-- Step 7: Send reactions -->
+            <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Reaction" enabled="true">
+              <boolProp name="createNewConnection">false</boolProp>
+              <stringProp name="requestData">${__groovy(def emojis = ["\ud83d\udc4d"\, "\ud83d\ude02"\, "\ud83d\udd25"\, "\u2764\ufe0f"\, "\ud83d\udc4f"\, "\ud83d\ude2e"]; return '{"type":"reaction"\,"payload":{"emoji":"' + emojis[new Random().nextInt(emojis.size())] + '"}}')}</stringProp>
+              <stringProp name="dataType">Text</stringProp>
+            </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+            <hashTree/>
+
+            <!-- Step 8: Leave room -->
+            <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Leave Room" enabled="true">
+              <boolProp name="createNewConnection">false</boolProp>
+              <stringProp name="requestData">{"type":"leave_room","payload":{}}</stringProp>
+              <stringProp name="dataType">Text</stringProp>
+            </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+            <hashTree/>
+
+          </hashTree>
+          <!-- End If room created -->
+
+          <!-- Step 9: Close WebSocket -->
+          <eu.luminis.jmeter.wssampler.CloseWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.CloseWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.CloseWebSocketSampler" testname="WS Close Connection" enabled="true">
+            <stringProp name="statusCode">1000</stringProp>
+            <stringProp name="readTimeout">3000</stringProp>
+          </eu.luminis.jmeter.wssampler.CloseWebSocketSampler>
+          <hashTree/>
+
+        </hashTree>
+        <!-- End Transaction Controller -->
+
+        <!-- Pacing: ensure each iteration takes at least 10 seconds -->
+        <ConstantThroughputTimer guiclass="TestBeanGUI" testclass="ConstantThroughputTimer" testname="Pacing - 6 iterations/min per thread" enabled="true">
+          <intProp name="calcMode">1</intProp>
+          <doubleProp>
+            <name>throughput</name>
+            <value>6.0</value>
+          </doubleProp>
+        </ConstantThroughputTimer>
+        <hashTree/>
+
+      </hashTree>
+
+      <!-- ================================================================ -->
+      <!-- TG2: Room Joiners - Consume room codes from setUp TG             -->
+      <!-- ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="TG2 - Room Joiners (Join + Guess)" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">startnextloop</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">-1</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${__jexl3(${ROOMS} * ${PLAYERS_PER_ROOM})}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
+        <stringProp name="ThreadGroup.delay">8</stringProp>
+      </ThreadGroup>
+      <hashTree>
+
+        <!-- Pick a room code from the global property (round-robin) -->
+        <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Pick Room Code (Round-Robin)" enabled="true">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="script">
+def roomCodes = props.get("ROOM_CODES")
+if (roomCodes == null || roomCodes.isEmpty()) {
+    vars.put("target_room_code", "NO_ROOMS_AVAILABLE")
+    log.warn("TG2: No room codes available from setUp")
+    return
+}
+def codes = roomCodes.split(",")
+def threadNum = (ctx.getThreadNum() as int) % codes.length
+vars.put("target_room_code", codes[threadNum])
+          </stringProp>
+        </JSR223PreProcessor>
+        <hashTree/>
+
+        <!-- Guard: Skip if no rooms available -->
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If Room Code Available" enabled="true">
+          <stringProp name="IfController.condition">${__groovy(vars.get("target_room_code") != "NO_ROOMS_AVAILABLE")}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+
+          <!-- Transaction Controller for Join Flow -->
+          <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="TC - Join Room Flow" enabled="true">
+            <boolProp name="TransactionController.includeTimers">false</boolProp>
+            <boolProp name="TransactionController.parent">true</boolProp>
+          </TransactionController>
+          <hashTree>
+
+            <!-- Step 1: Open WebSocket -->
+            <eu.luminis.jmeter.wssampler.OpenWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.OpenWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.OpenWebSocketSampler" testname="WS Open (Joiner)" enabled="true">
+              <stringProp name="server">${HOST}</stringProp>
+              <stringProp name="port">${PORT}</stringProp>
+              <stringProp name="path">${WS_PATH}</stringProp>
+              <stringProp name="connectTimeout">${CONNECT_TIMEOUT}</stringProp>
+              <stringProp name="readTimeout">${READ_TIMEOUT}</stringProp>
+            </eu.luminis.jmeter.wssampler.OpenWebSocketSampler>
+            <hashTree>
+              <DurationAssertion guiclass="DurationAssertionGui" testclass="DurationAssertion" testname="Assert Connect &lt; 3s" enabled="true">
+                <stringProp name="DurationAssertion.duration">3000</stringProp>
+              </DurationAssertion>
+              <hashTree/>
+            </hashTree>
+
+            <!-- Step 2: Join Room -->
+            <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Join Room" enabled="true">
+              <boolProp name="createNewConnection">false</boolProp>
+              <stringProp name="requestData">{"type":"join_room","payload":{"name":"Guesser_${__threadNum}_${__RandomString(3,abcdefghij)}","room_code":"${target_room_code}"}}</stringProp>
+              <stringProp name="dataType">Text</stringProp>
+            </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+            <hashTree/>
+
+            <!-- Step 3: Read join response -->
+            <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - Join Response" enabled="true">
+              <boolProp name="createNewConnection">false</boolProp>
+              <stringProp name="dataType">Text</stringProp>
+              <stringProp name="readTimeout">5000</stringProp>
+            </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+            <hashTree>
+              <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract join status" enabled="true">
+                <stringProp name="JSONPostProcessor.referenceNames">join_type</stringProp>
+                <stringProp name="JSONPostProcessor.jsonPathExprs">$.type</stringProp>
+                <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                <stringProp name="JSONPostProcessor.defaultValues">unknown</stringProp>
+              </JSONPostProcessor>
+              <hashTree/>
+              <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract player_id" enabled="true">
+                <stringProp name="JSONPostProcessor.referenceNames">joiner_player_id</stringProp>
+                <stringProp name="JSONPostProcessor.jsonPathExprs">$.payload.player_id</stringProp>
+                <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
+                <stringProp name="JSONPostProcessor.defaultValues">NOT_FOUND</stringProp>
+              </JSONPostProcessor>
+              <hashTree/>
+            </hashTree>
+
+            <!-- Guard: Only proceed if join was successful -->
+            <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If Join Successful" enabled="true">
+              <stringProp name="IfController.condition">${__groovy(vars.get("join_type") == "room_joined")}</stringProp>
+              <boolProp name="IfController.evaluateAll">false</boolProp>
+              <boolProp name="IfController.useExpression">true</boolProp>
+            </IfController>
+            <hashTree>
+
+              <!-- Step 4: Toggle ready -->
+              <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Toggle Ready" enabled="true">
+                <boolProp name="createNewConnection">false</boolProp>
+                <stringProp name="requestData">{"type":"toggle_ready","payload":{}}</stringProp>
+                <stringProp name="dataType">Text</stringProp>
+              </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+              <hashTree/>
+
+              <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - Player List Update" enabled="true">
+                <boolProp name="createNewConnection">false</boolProp>
+                <stringProp name="dataType">Text</stringProp>
+                <stringProp name="readTimeout">5000</stringProp>
+              </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+              <hashTree/>
+
+              <!-- Step 5: Lobby chat -->
+              <LoopController guiclass="LoopControlPanel" testclass="LoopController" testname="Lobby Chat (3 msgs)" enabled="true">
+                <boolProp name="LoopController.continue_forever">false</boolProp>
+                <stringProp name="LoopController.loops">3</stringProp>
+              </LoopController>
+              <hashTree>
+                <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Chat (Joiner)" enabled="true">
+                  <boolProp name="createNewConnection">false</boolProp>
+                  <stringProp name="requestData">{"type":"chat","payload":{"text":"Hi from guesser ${__threadNum}! msg ${__counter(FALSE)}"}}</stringProp>
+                  <stringProp name="dataType">Text</stringProp>
+                </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+                <hashTree/>
+                <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - Chat Response" enabled="true">
+                  <boolProp name="createNewConnection">false</boolProp>
+                  <stringProp name="dataType">Text</stringProp>
+                  <stringProp name="readTimeout">5000</stringProp>
+                </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                <hashTree/>
+                <GaussianRandomTimer guiclass="GaussianRandomTimerGui" testclass="GaussianRandomTimer" testname="Think Time (500-1500ms)" enabled="true">
+                  <stringProp name="ConstantTimer.delay">500</stringProp>
+                  <stringProp name="RandomTimer.range">1000</stringProp>
+                </GaussianRandomTimer>
+                <hashTree/>
+              </hashTree>
+
+              <!-- Step 6: Guess simulation (10 guesses) -->
+              <LoopController guiclass="LoopControlPanel" testclass="LoopController" testname="Guess Loop (10 guesses)" enabled="true">
+                <boolProp name="LoopController.continue_forever">false</boolProp>
+                <stringProp name="LoopController.loops">10</stringProp>
+              </LoopController>
+              <hashTree>
+                <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Guess" enabled="true">
+                  <boolProp name="createNewConnection">false</boolProp>
+                  <stringProp name="requestData">{"type":"guess","payload":{"text":"${__RandomString(${__Random(3,8)},abcdefghijklmnopqrstuvwxyz)}"}}</stringProp>
+                  <stringProp name="dataType">Text</stringProp>
+                </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+                <hashTree/>
+                <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - Guess Response" enabled="true">
+                  <boolProp name="createNewConnection">false</boolProp>
+                  <stringProp name="dataType">Text</stringProp>
+                  <stringProp name="readTimeout">5000</stringProp>
+                </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+                <hashTree/>
+                <UniformRandomTimer guiclass="UniformRandomTimerGui" testclass="UniformRandomTimer" testname="Guess Think Time (1-4s)" enabled="true">
+                  <stringProp name="ConstantTimer.delay">1000</stringProp>
+                  <stringProp name="RandomTimer.range">3000</stringProp>
+                </UniformRandomTimer>
+                <hashTree/>
+              </hashTree>
+
+              <!-- Step 7: Send reaction -->
+              <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Reaction" enabled="true">
+                <boolProp name="createNewConnection">false</boolProp>
+                <stringProp name="requestData">${__groovy(def emojis = ["\ud83d\udc4d"\, "\ud83d\ude02"\, "\ud83d\udd25"\, "\u2764\ufe0f"\, "\ud83d\udc4f"\, "\ud83d\ude2e"]; return '{"type":"reaction"\,"payload":{"emoji":"' + emojis[new Random().nextInt(emojis.size())] + '"}}')}</stringProp>
+                <stringProp name="dataType">Text</stringProp>
+              </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+              <hashTree/>
+
+              <!-- Step 8: Leave room -->
+              <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Leave Room" enabled="true">
+                <boolProp name="createNewConnection">false</boolProp>
+                <stringProp name="requestData">{"type":"leave_room","payload":{}}</stringProp>
+                <stringProp name="dataType">Text</stringProp>
+              </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+              <hashTree/>
+
+            </hashTree>
+            <!-- End If Join Successful -->
+
+            <!-- Step 9: Close WebSocket -->
+            <eu.luminis.jmeter.wssampler.CloseWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.CloseWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.CloseWebSocketSampler" testname="WS Close (Joiner)" enabled="true">
+              <stringProp name="statusCode">1000</stringProp>
+              <stringProp name="readTimeout">3000</stringProp>
+            </eu.luminis.jmeter.wssampler.CloseWebSocketSampler>
+            <hashTree/>
+
+          </hashTree>
+          <!-- End Transaction Controller -->
+
+        </hashTree>
+        <!-- End If Room Code Available -->
+
+        <!-- Pacing -->
+        <ConstantThroughputTimer guiclass="TestBeanGUI" testclass="ConstantThroughputTimer" testname="Pacing - 4 iterations/min per thread" enabled="true">
+          <intProp name="calcMode">1</intProp>
+          <doubleProp>
+            <name>throughput</name>
+            <value>4.0</value>
+          </doubleProp>
+        </ConstantThroughputTimer>
+        <hashTree/>
+
+      </hashTree>
+
+      <!-- ================================================================ -->
+      <!-- TG3: Sustained Connections (Long-lived heartbeat)                -->
+      <!-- ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="TG3 - Sustained Connections (Heartbeat)" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">1</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${SUSTAINED_THREADS}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
+        <stringProp name="ThreadGroup.delay">0</stringProp>
+      </ThreadGroup>
+      <hashTree>
+
+        <!-- Open connection -->
+        <eu.luminis.jmeter.wssampler.OpenWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.OpenWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.OpenWebSocketSampler" testname="WS Open (Sustained)" enabled="true">
+          <stringProp name="server">${HOST}</stringProp>
+          <stringProp name="port">${PORT}</stringProp>
+          <stringProp name="path">${WS_PATH}</stringProp>
+          <stringProp name="connectTimeout">${CONNECT_TIMEOUT}</stringProp>
+          <stringProp name="readTimeout">${READ_TIMEOUT}</stringProp>
+        </eu.luminis.jmeter.wssampler.OpenWebSocketSampler>
+        <hashTree/>
+
+        <!-- Create room to bind connection -->
+        <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Create Room (Sustained)" enabled="true">
+          <boolProp name="createNewConnection">false</boolProp>
+          <stringProp name="requestData">{"type":"create_room","payload":{"name":"Sustained_${__threadNum}"}}</stringProp>
+          <stringProp name="dataType">Text</stringProp>
+        </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+        <hashTree/>
+
+        <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - Room Created (Sustained)" enabled="true">
+          <boolProp name="createNewConnection">false</boolProp>
+          <stringProp name="dataType">Text</stringProp>
+          <stringProp name="readTimeout">5000</stringProp>
+        </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+        <hashTree>
+          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert room_created (Sustained)" enabled="true">
+            <collectionProp name="Asserion.test_strings">
+              <stringProp name="0">room_created</stringProp>
+            </collectionProp>
+            <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+            <intProp name="Assertion.test_type">2</intProp>
+          </ResponseAssertion>
+          <hashTree/>
+        </hashTree>
+
+        <!-- Heartbeat loop: respond to server pings for full duration -->
+        <WhileController guiclass="WhileControllerGui" testclass="WhileController" testname="Heartbeat Loop (respond to pings)" enabled="true">
+          <stringProp name="WhileController.condition">${__groovy(true)}</stringProp>
+        </WhileController>
+        <hashTree>
+          <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - Await Ping" enabled="true">
+            <boolProp name="createNewConnection">false</boolProp>
+            <stringProp name="dataType">Text</stringProp>
+            <stringProp name="readTimeout">35000</stringProp>
+          </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+          <hashTree/>
+          <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Pong" enabled="true">
+            <boolProp name="createNewConnection">false</boolProp>
+            <stringProp name="requestData">{"type":"pong","payload":{}}</stringProp>
+            <stringProp name="dataType">Text</stringProp>
+          </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+          <hashTree/>
+        </hashTree>
+
+        <!-- Close on exit -->
+        <eu.luminis.jmeter.wssampler.CloseWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.CloseWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.CloseWebSocketSampler" testname="WS Close (Sustained)" enabled="true">
+          <stringProp name="statusCode">1000</stringProp>
+          <stringProp name="readTimeout">3000</stringProp>
+        </eu.luminis.jmeter.wssampler.CloseWebSocketSampler>
+        <hashTree/>
+
+      </hashTree>
+
+      <!-- ================================================================ -->
+      <!-- TG4: Spike Test - Sudden burst of connections                    -->
+      <!-- ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="TG4 - Spike Test (Burst Connections)" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">1</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${__jexl3(${ROOMS} * 5)}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">3</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">30</stringProp>
+        <stringProp name="ThreadGroup.delay">${__jexl3(${DURATION} / 2)}</stringProp>
+      </ThreadGroup>
+      <hashTree>
+
+        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="TC - Spike Connect + Create" enabled="true">
+          <boolProp name="TransactionController.includeTimers">false</boolProp>
+          <boolProp name="TransactionController.parent">true</boolProp>
+        </TransactionController>
+        <hashTree>
+
+          <!-- Rapid connect -->
+          <eu.luminis.jmeter.wssampler.OpenWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.OpenWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.OpenWebSocketSampler" testname="WS Open (Spike)" enabled="true">
+            <stringProp name="server">${HOST}</stringProp>
+            <stringProp name="port">${PORT}</stringProp>
+            <stringProp name="path">${WS_PATH}</stringProp>
+            <stringProp name="connectTimeout">${CONNECT_TIMEOUT}</stringProp>
+            <stringProp name="readTimeout">${READ_TIMEOUT}</stringProp>
+          </eu.luminis.jmeter.wssampler.OpenWebSocketSampler>
+          <hashTree/>
+
+          <!-- Create room -->
+          <eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler" testname="WS Send - Create Room (Spike)" enabled="true">
+            <boolProp name="createNewConnection">false</boolProp>
+            <stringProp name="requestData">{"type":"create_room","payload":{"name":"Spike_${__threadNum}_${__RandomString(3,xyz)}"}}</stringProp>
+            <stringProp name="dataType">Text</stringProp>
+          </eu.luminis.jmeter.wssampler.SingleWriteWebSocketSampler>
+          <hashTree/>
+
+          <eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler" testname="WS Read - Room Created (Spike)" enabled="true">
+            <boolProp name="createNewConnection">false</boolProp>
+            <stringProp name="dataType">Text</stringProp>
+            <stringProp name="readTimeout">10000</stringProp>
+          </eu.luminis.jmeter.wssampler.SingleReadWebSocketSampler>
+          <hashTree>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert room_created (Spike)" enabled="true">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="0">room_created</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <intProp name="Assertion.test_type">2</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+          </hashTree>
+
+          <!-- Immediately close -->
+          <eu.luminis.jmeter.wssampler.CloseWebSocketSampler guiclass="eu.luminis.jmeter.wssampler.CloseWebSocketSamplerGui" testclass="eu.luminis.jmeter.wssampler.CloseWebSocketSampler" testname="WS Close (Spike)" enabled="true">
+            <stringProp name="statusCode">1000</stringProp>
+            <stringProp name="readTimeout">3000</stringProp>
+          </eu.luminis.jmeter.wssampler.CloseWebSocketSampler>
+          <hashTree/>
+
+        </hashTree>
+
+      </hashTree>
+
+      <!-- ================================================================ -->
+      <!-- TEARDOWN: Clean up setUp connections                             -->
+      <!-- ================================================================ -->
+      <PostThreadGroup guiclass="PostThreadGroupGui" testclass="PostThreadGroup" testname="tearDown - Cleanup" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+          <stringProp name="LoopController.loops">1</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">1</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">1</stringProp>
+        <boolProp name="ThreadGroup.scheduler">false</boolProp>
+      </PostThreadGroup>
+      <hashTree>
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="Clear Global Properties" enabled="true">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="script">
+props.remove("ROOM_CODES")
+log.info("Teardown: Cleared ROOM_CODES property")
+          </stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+      </hashTree>
+
+      <!-- ================================================================ -->
+      <!-- LISTENERS                                                        -->
+      <!-- ================================================================ -->
+
+      <!-- Summary Report -->
+      <ResultCollector guiclass="SummaryReport" testclass="ResultCollector" testname="Summary Report" enabled="true">
+        <boolProp name="ResultCollector.error_logging">false</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <threadName>true</threadName>
+            <dataType>true</dataType>
+            <encoding>false</encoding>
+            <assertions>true</assertions>
+            <subresults>true</subresults>
+            <responseData>false</responseData>
+            <samplerData>false</samplerData>
+            <xml>false</xml>
+            <fieldNames>true</fieldNames>
+            <responseHeaders>false</responseHeaders>
+            <requestHeaders>false</requestHeaders>
+            <responseDataOnError>true</responseDataOnError>
+            <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+            <assertionsResultsToSave>0</assertionsResultsToSave>
+            <bytes>true</bytes>
+            <sentBytes>true</sentBytes>
+            <url>true</url>
+            <threadCounts>true</threadCounts>
+            <idleTime>true</idleTime>
+            <connectTime>true</connectTime>
+          </value>
+        </objProp>
+        <stringProp name="filename">jmeter/results/ws_summary.csv</stringProp>
+      </ResultCollector>
+      <hashTree/>
+
+      <!-- Aggregate Report -->
+      <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector" testname="Aggregate Report" enabled="true">
+        <boolProp name="ResultCollector.error_logging">false</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <threadName>true</threadName>
+            <dataType>true</dataType>
+            <encoding>false</encoding>
+            <assertions>true</assertions>
+            <subresults>true</subresults>
+            <responseData>false</responseData>
+            <samplerData>false</samplerData>
+            <xml>false</xml>
+            <fieldNames>true</fieldNames>
+            <responseHeaders>false</responseHeaders>
+            <requestHeaders>false</requestHeaders>
+            <responseDataOnError>true</responseDataOnError>
+            <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+            <assertionsResultsToSave>0</assertionsResultsToSave>
+            <bytes>true</bytes>
+            <sentBytes>true</sentBytes>
+            <url>true</url>
+            <threadCounts>true</threadCounts>
+            <idleTime>true</idleTime>
+            <connectTime>true</connectTime>
+          </value>
+        </objProp>
+        <stringProp name="filename">jmeter/results/ws_aggregate.csv</stringProp>
+      </ResultCollector>
+      <hashTree/>
+
+      <!-- View Results Tree (disabled for production runs, enable for debug) -->
+      <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree (DEBUG ONLY)" enabled="false">
+        <boolProp name="ResultCollector.error_logging">false</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <threadName>true</threadName>
+            <dataType>true</dataType>
+            <encoding>false</encoding>
+            <assertions>true</assertions>
+            <subresults>true</subresults>
+            <responseData>true</responseData>
+            <samplerData>true</samplerData>
+            <xml>false</xml>
+            <fieldNames>true</fieldNames>
+            <responseHeaders>true</responseHeaders>
+            <requestHeaders>true</requestHeaders>
+          </value>
+        </objProp>
+        <stringProp name="filename"></stringProp>
+      </ResultCollector>
+      <hashTree/>
+
+      <!-- Response Time Percentiles Graph -->
+      <ResultCollector guiclass="RespTimeGraphVisualizer" testclass="ResultCollector" testname="Response Time Graph" enabled="true">
+        <boolProp name="ResultCollector.error_logging">false</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <connectTime>true</connectTime>
+          </value>
+        </objProp>
+        <stringProp name="filename">jmeter/results/ws_response_time.csv</stringProp>
+      </ResultCollector>
+      <hashTree/>
+
+    </hashTree>
+  </hashTree>
+</jmeterTestPlan>
