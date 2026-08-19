@@ -69,7 +69,10 @@ async def _subscribe_loop():
                 # Ignore messages from ourselves
                 if data.get("source_worker") == WORKER_ID:
                     continue
-                if _message_handler:
+                # Handle RPC requests (worker-to-worker)
+                if "rpc" in data and _message_handler:
+                    await _message_handler(channel, data)
+                elif "message" in data and _message_handler:
                     await _message_handler(channel, data)
             else:
                 # No message — yield to event loop briefly
@@ -132,6 +135,73 @@ async def remove_room_worker(room_code: str) -> None:
     if _redis_client is None:
         return
     await _redis_client.hdel("room_workers", room_code)
+
+
+async def get_room_info(room_code: str) -> Optional[dict]:
+    """Get basic room info from Redis (state, player count, config).
+
+    Returns None if room not found in registry.
+    """
+    if _redis_client is None:
+        return None
+    info = await _redis_client.hget("room_info", room_code)
+    if info is None:
+        return None
+    import json as _json
+    return _json.loads(info)
+
+
+async def set_room_info(room_code: str, info: dict) -> None:
+    """Store basic room info in Redis for cross-worker discovery."""
+    if _redis_client is None:
+        return
+    import json as _json
+    await _redis_client.hset("room_info", room_code, _json.dumps(info))
+
+
+async def remove_room_info(room_code: str) -> None:
+    """Remove room info from Redis."""
+    if _redis_client is None:
+        return
+    await _redis_client.hdel("room_info", room_code)
+
+
+async def publish_rpc_request(target_worker: str, request: dict) -> None:
+    """Publish an RPC request to a specific worker's channel."""
+    if _redis_client is None:
+        return
+    payload = json.dumps({
+        "source_worker": WORKER_ID,
+        "rpc": request,
+    })
+    await _redis_client.publish(f"worker:{target_worker}", payload)
+
+
+async def wait_for_rpc_response(request_id: str, timeout: float = 5.0) -> Optional[dict]:
+    """Wait for an RPC response on a temporary Redis key (polling).
+
+    The responding worker writes the response to a Redis key, and this
+    method polls for it.
+    """
+    if _redis_client is None:
+        return None
+    key = f"rpc_response:{request_id}"
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        result = await _redis_client.get(key)
+        if result is not None:
+            await _redis_client.delete(key)
+            return json.loads(result)
+        await asyncio.sleep(0.05)
+    return None
+
+
+async def set_rpc_response(request_id: str, response: dict) -> None:
+    """Set an RPC response for a waiting caller."""
+    if _redis_client is None:
+        return
+    await _redis_client.set(f"rpc_response:{request_id}", json.dumps(response), ex=10)
 
 
 def is_redis_enabled() -> bool:

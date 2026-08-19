@@ -53,6 +53,7 @@ class RoomManager:
             try:
                 await redis_pubsub.unsubscribe_room(room_code)
                 await redis_pubsub.remove_room_worker(room_code)
+                await redis_pubsub.remove_room_info(room_code)
             except Exception as e:
                 logger.error("Failed to clean up Redis for room %s: %s", room_code, e)
 
@@ -118,6 +119,13 @@ class RoomManager:
         if redis_pubsub.is_redis_enabled():
             await redis_pubsub.register_room_worker(room_code)
             await redis_pubsub.subscribe_room(room_code)
+            # Publish room info for cross-worker discovery
+            await redis_pubsub.set_room_info(room_code, {
+                "state": room.state.value,
+                "player_count": len(room.players),
+                "config": self._serialize_config(room.config),
+                "host_id": player_id,
+            })
 
         return {
             "type": "room_created",
@@ -130,6 +138,10 @@ class RoomManager:
 
     async def join_room(self, name: str, room_code: str, websocket) -> dict:
         """Join an existing room.
+
+        If the room exists locally, joins directly. If the room is on another
+        worker (discovered via Redis), sends an RPC request to the owning worker
+        to register the player, then tracks the player locally as a proxy.
 
         Args:
             name: Display name for the joining player.
@@ -147,14 +159,27 @@ class RoomManager:
                 "payload": {"code": "INVALID_NAME", "message": name_error},
             }
 
-        # Check room exists
+        # Check room exists locally first
         room = self.rooms.get(room_code)
-        if room is None:
-            return {
-                "type": "error",
-                "payload": {"code": "ROOM_NOT_FOUND", "message": "Room not found"},
-            }
+        if room is not None:
+            # Room is local — join directly
+            return await self._join_room_local(room, room_code, name, websocket)
 
+        # Room not local — check Redis for cross-worker discovery
+        if redis_pubsub.is_redis_enabled():
+            owner_worker = await redis_pubsub.get_room_worker(room_code)
+            if owner_worker is not None:
+                return await self._join_room_remote(
+                    room_code, name, websocket, owner_worker
+                )
+
+        return {
+            "type": "error",
+            "payload": {"code": "ROOM_NOT_FOUND", "message": "Room not found"},
+        }
+
+    async def _join_room_local(self, room, room_code: str, name: str, websocket) -> dict:
+        """Join a room that exists on this worker."""
         # Check room is in lobby state
         if room.state != RoomState.LOBBY:
             return {
@@ -179,6 +204,15 @@ class RoomManager:
         room.add_player(player)
         self._player_to_room[player_id] = room_code
 
+        # Update room info in Redis
+        if redis_pubsub.is_redis_enabled():
+            await redis_pubsub.set_room_info(room_code, {
+                "state": room.state.value,
+                "player_count": len(room.players),
+                "config": self._serialize_config(room.config),
+                "host_id": room.host_id,
+            })
+
         # Broadcast updated player list to all existing players
         await self.broadcast(
             room_code,
@@ -199,6 +233,60 @@ class RoomManager:
                 "config": self._serialize_config(room.config),
             },
         }
+
+    async def _join_room_remote(self, room_code: str, name: str, websocket, owner_worker: str) -> dict:
+        """Join a room that exists on another worker via Redis RPC.
+
+        The player's WebSocket lives on this worker. We register the player
+        on the owning worker (so it's part of the room's player list), but
+        keep the WebSocket reference locally. Broadcasts from the owning
+        worker reach us via Redis pub/sub.
+        """
+        from uuid import uuid4 as _uuid4
+
+        # Generate player_id locally
+        player_id = str(_uuid4())
+        request_id = str(_uuid4())
+
+        # Subscribe to this room's Redis channel so we receive broadcasts
+        await redis_pubsub.subscribe_room(room_code)
+
+        # Send RPC to the owning worker
+        await redis_pubsub.publish_rpc_request(owner_worker, {
+            "type": "join_room",
+            "request_id": request_id,
+            "room_code": room_code,
+            "player_id": player_id,
+            "player_name": name,
+        })
+
+        # Wait for response from the owning worker
+        response = await redis_pubsub.wait_for_rpc_response(request_id, timeout=5.0)
+        if response is None:
+            await redis_pubsub.unsubscribe_room(room_code)
+            return {
+                "type": "error",
+                "payload": {"code": "ROOM_NOT_FOUND", "message": "Room owner did not respond"},
+            }
+
+        if response.get("type") == "error":
+            await redis_pubsub.unsubscribe_room(room_code)
+            return response
+
+        # Success — create a local proxy room to track this player's WebSocket
+        # This allows broadcasts received from Redis to be forwarded to this client
+        if room_code not in self.rooms:
+            # Create a minimal proxy room (only used for WebSocket routing)
+            proxy_room = Room(code=room_code, host_id=response["payload"].get("host_id", ""))
+            proxy_room.state = RoomState.LOBBY
+            self.rooms[room_code] = proxy_room
+
+        proxy_room = self.rooms[room_code]
+        player = Player(id=player_id, name=name, websocket=websocket)
+        proxy_room.add_player(player)
+        self._player_to_room[player_id] = room_code
+
+        return response
 
     async def remove_player(self, player_id: str) -> None:
         """Remove a player from their room, handling host reassignment and cleanup.
@@ -546,14 +634,20 @@ class RoomManager:
     async def handle_redis_message(self, channel: str, data: dict) -> None:
         """Handle a message received from Redis pub/sub (from another worker).
 
-        Forwards the message to local clients connected to the room.
-        This is the callback passed to redis_pubsub.init_redis().
+        Handles two types of messages:
+        1. Room broadcasts: forwards to local clients connected to the room.
+        2. RPC requests: processes cross-worker join requests.
 
         Args:
-            channel: The Redis channel (format: "room:<room_code>")
-            data: The message payload containing 'source_worker' and 'message'.
+            channel: The Redis channel (format: "room:<room_code>" or "worker:<worker_id>")
+            data: The message payload containing 'source_worker' and either 'message' or 'rpc'.
         """
-        # Extract room code from channel name (e.g., "room:ABC123" -> "ABC123")
+        # Handle RPC requests (worker-to-worker)
+        if "rpc" in data:
+            await self._handle_rpc(data)
+            return
+
+        # Handle room broadcasts — extract room code from channel name
         room_code = channel.replace("room:", "", 1)
 
         message = data.get("message")
@@ -572,6 +666,75 @@ class RoomManager:
                     await player.websocket.send_text(json_data)
                 except Exception:
                     pass
+
+    async def _handle_rpc(self, data: dict) -> None:
+        """Handle an RPC request from another worker.
+
+        Currently supports:
+        - join_room: Add a player to a room owned by this worker.
+        """
+        rpc = data.get("rpc", {})
+        rpc_type = rpc.get("type")
+
+        if rpc_type == "join_room":
+            request_id = rpc.get("request_id")
+            room_code = rpc.get("room_code")
+            player_id = rpc.get("player_id")
+            player_name = rpc.get("player_name")
+
+            room = self.rooms.get(room_code)
+            if room is None:
+                response = {
+                    "type": "error",
+                    "payload": {"code": "ROOM_NOT_FOUND", "message": "Room not found on owner"},
+                }
+            elif room.state != RoomState.LOBBY:
+                response = {
+                    "type": "error",
+                    "payload": {"code": "ROOM_IN_PROGRESS", "message": "Room is not accepting new players"},
+                }
+            elif len(room.players) >= min(room.config.max_players, MAX_PLAYERS_HARD_CAP):
+                response = {
+                    "type": "error",
+                    "payload": {"code": "ROOM_FULL", "message": "Room is full"},
+                }
+            else:
+                # Add the player to the room (no WebSocket — it's on the other worker)
+                player = Player(id=player_id, name=player_name, websocket=None)
+                player.is_connected = True  # Logically connected (via remote worker)
+                room.add_player(player)
+                self._player_to_room[player_id] = room_code
+
+                # Update room info in Redis
+                await redis_pubsub.set_room_info(room_code, {
+                    "state": room.state.value,
+                    "player_count": len(room.players),
+                    "config": self._serialize_config(room.config),
+                    "host_id": room.host_id,
+                })
+
+                # Broadcast player_list to local players
+                await self.broadcast(room_code, {
+                    "type": "player_list",
+                    "payload": {
+                        "players": [self._serialize_player(p) for p in room.players]
+                    },
+                })
+
+                response = {
+                    "type": "room_joined",
+                    "payload": {
+                        "room_code": room_code,
+                        "player_id": player_id,
+                        "players": [self._serialize_player(p) for p in room.players],
+                        "config": self._serialize_config(room.config),
+                        "host_id": room.host_id,
+                    },
+                }
+
+            # Send response back via Redis
+            if request_id:
+                await redis_pubsub.set_rpc_response(request_id, response)
 
     def _find_room_by_player(self, player_id: str) -> Room | None:
         """O(1) lookup of room containing a player via index, with linear fallback."""
