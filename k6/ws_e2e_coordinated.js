@@ -468,6 +468,12 @@ export default function () {
           // Ready up after brief delay
           socket.setTimeout(function () {
             if (state === 'lobby') {
+              // Update game settings to use configured rounds/duration
+              sendMsg({ type: 'update_settings', payload: {
+                num_rounds: NUM_ROUNDS,
+                turn_duration: TURN_DURATION,
+                max_players: PLAYERS_PER_ROOM,
+              }});
               sendMsg({ type: 'toggle_ready', payload: {} });
 
               // Start game after a short delay for all to be ready

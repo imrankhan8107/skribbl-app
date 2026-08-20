@@ -165,9 +165,15 @@ class RoomManager:
             # Room is local — join directly
             return await self._join_room_local(room, room_code, name, websocket)
 
-        # Room not local — check Redis for cross-worker discovery
+        # Room not local — check Redis for cross-worker discovery (with retry for race condition)
         if redis_pubsub.is_redis_enabled():
-            owner_worker = await redis_pubsub.get_room_worker(room_code)
+            owner_worker = None
+            for _attempt in range(5):
+                owner_worker = await redis_pubsub.get_room_worker(room_code)
+                if owner_worker is not None:
+                    break
+                # Room may not be registered yet — brief wait
+                await asyncio.sleep(0.3)
             if owner_worker is not None:
                 return await self._join_room_remote(
                     room_code, name, websocket, owner_worker
