@@ -10,6 +10,14 @@
  *   - Then joiners send join_room with the actual code
  *   - Full game lifecycle plays out with synchronized players
  *
+ * k6 v2.2.0 FIX:
+ *   sleep() inside ws.connect() does NOT yield to WebSocket event handlers.
+ *   This script uses a PURELY EVENT-DRIVEN STATE MACHINE pattern:
+ *   - ALL game logic lives inside socket.on('message') callbacks
+ *   - socket.setTimeout() for timeouts
+ *   - socket.setInterval() for periodic actions (drawing, guessing, polling)
+ *   - NO sleep() calls inside the ws.connect() callback
+ *
  * Room topology:
  *   VU 1-5   → Room 0 (VU 1 = host, VU 2-5 = joiners)
  *   VU 6-10  → Room 1 (VU 6 = host, VU 7-10 = joiners)
@@ -86,13 +94,18 @@ const activeConnections = new Gauge('active_connections');
 
 const HOST = __ENV.HOST || 'localhost';
 const PORT = __ENV.PORT || '8000';
+const COORD_HOST = __ENV.COORD_HOST || 'localhost';
 const COORD_PORT = __ENV.COORD_PORT || '9090';
 const WS_URL = `ws://${HOST}:${PORT}/ws`;
-const COORD_URL = `http://${HOST}:${COORD_PORT}`;
+const COORD_URL = `http://${COORD_HOST}:${COORD_PORT}`;
 const PLAYERS_PER_ROOM = parseInt(__ENV.PLAYERS_PER_ROOM || '5');
 const TARGET_VUS = parseInt(__ENV.VUS || '50');
 const NUM_ROUNDS = parseInt(__ENV.NUM_ROUNDS || '3');
 const TURN_DURATION = parseInt(__ENV.TURN_DURATION || '80');
+const HOLD_SECONDS = Math.min(
+  NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + 20) + 180,
+  parseInt(__ENV.HOLD_TIME || '600')
+);
 
 // ─── k6 Options ─────────────────────────────────────────────────────────────
 
@@ -161,7 +174,7 @@ function generateStrokePoints(numPoints) {
   return points;
 }
 
-// ─── Coordination helpers ───────────────────────────────────────────────────
+// ─── Coordination helpers (used OUTSIDE ws.connect for joiners) ─────────────
 
 function publishRoomCode(roomIndex, roomCode) {
   const res = http.post(`${COORD_URL}/rooms/${roomIndex}`, JSON.stringify({ room_code: roomCode }), {
@@ -206,92 +219,70 @@ export default function () {
   const playerIndex = getPlayerIndexInRoom(vu);
   const playerName = `k6_${isHost ? 'host' : 'p' + playerIndex}_vu${vu}_r${roomIndex}`;
 
-  // Stagger connections: hosts first, joiners wait
+  // ── Pre-connection coordination (sleep is fine OUTSIDE ws.connect) ──
+
+  let coordRoomCode = null;
+
   if (!isHost) {
+    // Stagger joiners: wait 2-5s after hosts connect
     sleep(2 + playerIndex * 0.5 + Math.random() * 0.5);
+
+    // Poll coordination server BEFORE connecting to WebSocket
+    coordRoomCode = pollRoomCode(roomIndex, 20000);
+    if (!coordRoomCode) {
+      console.log(`[JOINER VU${vu}] Failed to get room code from coord server`);
+      roomJoinFailures.add(1);
+      errorCount.add(1);
+      connectionSuccess.add(0);
+      return;
+    }
   }
 
-  const connectStart = Date.now();
+  // ── WebSocket connection ──
 
-  const res = ws.connect(WS_URL, { tags: { room: `room_${roomIndex}`, role: isHost ? 'host' : 'joiner' } }, function (socket) {
+  const connectStart = Date.now();
+  const wsUrl = `${WS_URL}?room=${roomIndex}`;
+
+  const res = ws.connect(wsUrl, { tags: { room: `room_${roomIndex}`, role: isHost ? 'host' : 'joiner' } }, function (socket) {
     wsConnectRtt.add(Date.now() - connectStart);
     connectionSuccess.add(1);
     activeConnections.add(1);
 
-    // ── Per-VU State ──
-    let roomCode = null;
+    // ══════════════════════════════════════════════════════════════════════════
+    // STATE
+    // ══════════════════════════════════════════════════════════════════════════
+
+    let state = 'connecting'; // connecting | lobby | waiting_start | playing | game_over | error
+    let roomCode = coordRoomCode;
     let playerId = null;
-    let gameState = 'connecting'; // connecting | lobby | playing | game_over | error
     let isDrawer = false;
     let currentWord = null;
     let turnActive = false;
     let gameCompleted = false;
-    let messageQueue = [];
 
-    // ── Message Processing ──
-    socket.on('message', function (data) {
-      messagesReceived.add(1);
-      try {
-        const msg = JSON.parse(data);
-        messageQueue.push(msg);
-        processMessage(msg);
-      } catch (e) {
-        errorCount.add(1);
-      }
-    });
+    // Timing state
+    let roomCreateStart = 0;
+    let roomJoinStart = 0;
+    let gameStartTime = 0;
+    let wordSelectStart = 0;
+    let lastGuessStart = 0;
+    let lastStrokeStart = 0;
 
-    function processMessage(msg) {
-      switch (msg.type) {
-        case 'room_created':
-          roomCode = msg.payload.room_code;
-          playerId = msg.payload.player_id;
-          gameState = 'lobby';
-          break;
-        case 'room_joined':
-          roomCode = msg.payload.room_code;
-          playerId = msg.payload.player_id;
-          gameState = 'lobby';
-          break;
-        case 'drawer_selecting':
-          isDrawer = msg.payload.drawer_id === playerId;
-          break;
-        case 'word_choices':
-          break; // handled in game loop
-        case 'word_assigned':
-          currentWord = msg.payload.word;
-          break;
-        case 'turn_started':
-          turnActive = true;
-          isDrawer = msg.payload.drawer_id === playerId;
-          turnsPlayed.add(1);
-          break;
-        case 'turn_ended':
-          turnActive = false;
-          isDrawer = false;
-          currentWord = null;
-          break;
-        case 'guess_correct':
-          correctGuesses.add(1);
-          break;
-        case 'game_over':
-          gameState = 'game_over';
-          gameCompleted = true;
-          gamesCompleted.add(1);
-          gameCompletionRate.add(1);
-          break;
-        case 'game_ended_insufficient_players':
-          gameState = 'game_over';
-          gamesAborted.add(1);
-          gameCompletionRate.add(0);
-          break;
-        case 'error':
-          errorCount.add(1);
-          break;
-        case 'ping':
-          sendMsg({ type: 'pong', payload: {} });
-          break;
-      }
-    }
+    // Intervals (references kept for documentation, controlled via flags)
+    let drawingInterval = null;
+    let guessingInterval = null;
+    let heartbeatInterval = null;
+
+    // Drawing state
+    let strokesRemaining = 0;
+    let currentTurnDuration = TURN_DURATION;
+
+    // Guessing state
+    let guessesRemaining = 0;
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // HELPERS
+    // ══════════════════════════════════════════════════════════════════════════
 
     function sendMsg(msg) {
       try {
@@ -302,261 +293,385 @@ export default function () {
       }
     }
 
-    function waitFor(type, timeoutMs) {
-      const start = Date.now();
-      while (Date.now() - start < timeoutMs) {
-        const idx = messageQueue.findIndex((m) => m.type === type);
-        if (idx !== -1) {
-          return messageQueue.splice(idx, 1)[0];
-        }
-        sleep(0.1);
+    // Flags to control intervals (k6 doesn't support socket.clearInterval)
+    let drawingActive = false;
+    let guessingActive = false;
+    let heartbeatActive = true;
+    let sessionEnded = false;
+
+    function clearGameIntervals() {
+      drawingActive = false;
+      guessingActive = false;
+    }
+
+    function endSession(reason) {
+      if (sessionEnded) return;
+      sessionEnded = true;
+      clearGameIntervals();
+      heartbeatActive = false;
+      state = 'game_over';
+      if (reason === 'completed') {
+        // already recorded
+      } else if (reason === 'aborted') {
+        gamesAborted.add(1);
+        gameCompletionRate.add(0);
+      } else if (reason === 'error') {
+        state = 'error';
+        errorCount.add(1);
       }
-      return null;
-    }
-
-    function waitForAny(types, timeoutMs) {
-      const start = Date.now();
-      while (Date.now() - start < timeoutMs) {
-        const idx = messageQueue.findIndex((m) => types.includes(m.type));
-        if (idx !== -1) {
-          return messageQueue.splice(idx, 1)[0];
-        }
-        sleep(0.1);
-      }
-      return null;
-    }
-
-    function drain(type) {
-      const found = messageQueue.filter((m) => m.type === type);
-      messageQueue = messageQueue.filter((m) => m.type !== type);
-      return found;
-    }
-
-    function isGameOver() {
-      return gameState === 'game_over' || gameState === 'error';
+      socket.close();
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // FLOW START
+    // SOCKET OPEN — Send initial message
     // ══════════════════════════════════════════════════════════════════════════
 
     socket.on('open', function () {
       if (isHost) {
-        runHostFlow();
+        // Host: create the room
+        roomCreateStart = Date.now();
+        sendMsg({ type: 'create_room', payload: { name: playerName } });
+
+        // Timeout: if no room_created in 10s, fail
+        socket.setTimeout(function () {
+          if (state === 'connecting') {
+            console.log(`[HOST VU${vu}] Timeout waiting for room_created`);
+            roomCreateFailures.add(1);
+            endSession('error');
+          }
+        }, 10000);
       } else {
-        runJoinerFlow();
+        // Joiner: join with the room code we already have
+        roomJoinStart = Date.now();
+        sendMsg({ type: 'join_room', payload: { name: playerName, room_code: roomCode } });
+
+        // Timeout: if no room_joined in 10s, fail
+        socket.setTimeout(function () {
+          if (state === 'connecting') {
+            console.log(`[JOINER VU${vu}] Timeout waiting for room_joined`);
+            roomJoinFailures.add(1);
+            endSession('error');
+          }
+        }, 10000);
+      }
+
+      // ── Heartbeat interval ──
+      heartbeatInterval = socket.setInterval(function () {
+        if (heartbeatActive) sendMsg({ type: 'pong', payload: {} });
+      }, 25000);
+    });
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // MESSAGE HANDLER — The State Machine
+    // ══════════════════════════════════════════════════════════════════════════
+
+    socket.on('message', function (data) {
+      messagesReceived.add(1);
+
+      let msg;
+      try {
+        msg = JSON.parse(data);
+      } catch (e) {
+        errorCount.add(1);
+        return;
+      }
+
+      // ── Always handle ping ──
+      if (msg.type === 'ping') {
+        sendMsg({ type: 'pong', payload: {} });
+        return;
+      }
+
+      // ── State machine dispatch ──
+      switch (state) {
+        case 'connecting':
+          handleConnecting(msg);
+          break;
+        case 'lobby':
+          handleLobby(msg);
+          break;
+        case 'waiting_start':
+          handleWaitingStart(msg);
+          break;
+        case 'playing':
+          handlePlaying(msg);
+          break;
+        case 'game_over':
+        case 'error':
+          // Ignore messages after game is done
+          break;
       }
     });
 
-    // ── HOST FLOW ──
-    function runHostFlow() {
-      // Step 1: Create room
-      const t0 = Date.now();
-      sendMsg({ type: 'create_room', payload: { name: playerName } });
+    // ══════════════════════════════════════════════════════════════════════════
+    // STATE: connecting
+    // ══════════════════════════════════════════════════════════════════════════
 
-      const resp = waitFor('room_created', 10000);
-      if (!resp) {
-        roomCreateFailures.add(1);
-        errorCount.add(1);
-        gameState = 'error';
-        return;
-      }
-      roomCreateRtt.add(Date.now() - t0);
-      roomsCreated.add(1);
-      roomCode = resp.payload.room_code;
-      playerId = resp.payload.player_id;
-      gameState = 'lobby';
+    function handleConnecting(msg) {
+      if (msg.type === 'room_created') {
+        roomCreateRtt.add(Date.now() - roomCreateStart);
+        roomsCreated.add(1);
+        roomCode = msg.payload.room_code;
+        playerId = msg.payload.player_id;
+        state = 'lobby';
 
-      // Step 2: Publish room code to coordination server
-      publishRoomCode(roomIndex, roomCode);
+        // Publish room code to coordination server for joiners
+        publishRoomCode(roomIndex, roomCode);
 
-      // Step 3: Wait for joiners (watch player_list updates)
-      const joinWaitStart = Date.now();
-      while (Date.now() - joinWaitStart < 30000) {
-        const plMsg = drain('player_list');
-        if (plMsg.length > 0) {
-          const last = plMsg[plMsg.length - 1];
-          if (last.payload.players.length >= PLAYERS_PER_ROOM) {
-            break;
+        // Host waits in lobby for players to join
+        // Set a timeout — if game hasn't started in 60s, abort
+        socket.setTimeout(function () {
+          if (state === 'lobby' || state === 'waiting_start') {
+            console.log(`[HOST VU${vu}] Timeout waiting for game to start`);
+            endSession('aborted');
           }
-        }
-        sleep(0.5);
+        }, 60000);
+
+      } else if (msg.type === 'room_joined') {
+        roomJoinRtt.add(Date.now() - roomJoinStart);
+        roomsJoined.add(1);
+        roomCode = msg.payload.room_code;
+        playerId = msg.payload.player_id;
+        state = 'lobby';
+
+        // Joiner readies up after a short delay (1-3s simulated via setTimeout)
+        socket.setTimeout(function () {
+          if (state === 'lobby') {
+            sendMsg({ type: 'toggle_ready', payload: {} });
+          }
+        }, Math.floor(randomBetween(1000, 3000)));
+
+        // Set a timeout — if game hasn't started in 60s, abort
+        socket.setTimeout(function () {
+          if (state === 'lobby' || state === 'waiting_start') {
+            console.log(`[JOINER VU${vu}] Timeout waiting for game to start`);
+            endSession('aborted');
+          }
+        }, 60000);
+
+      } else if (msg.type === 'error') {
+        console.log(`[VU${vu}] Error during connecting: ${JSON.stringify(msg.payload)}`);
+        if (isHost) roomCreateFailures.add(1);
+        else roomJoinFailures.add(1);
+        endSession('error');
       }
-
-      // Step 4: Ready up
-      sleep(randomBetween(0.5, 1.5));
-      sendMsg({ type: 'toggle_ready', payload: {} });
-
-      // Step 5: Wait briefly for all to ready, then start
-      sleep(randomBetween(2, 4));
-
-      const startT = Date.now();
-      sendMsg({ type: 'start_game', payload: {} });
-      gamesStarted.add(1);
-
-      const startResp = waitForAny(['drawer_selecting', 'turn_started', 'error'], 10000);
-      if (startResp && startResp.type !== 'error') {
-        gameStartRtt.add(Date.now() - startT);
-        gameState = 'playing';
-      } else {
-        errorCount.add(1);
-        gameCompletionRate.add(0);
-        gameState = 'error';
-        return;
-      }
-
-      // Step 6: Play the game
-      runGameLoop();
     }
 
-    // ── JOINER FLOW ──
-    function runJoinerFlow() {
-      // Step 1: Poll coordination server for room code
-      const code = pollRoomCode(roomIndex, 20000);
-      if (!code) {
-        // Fallback: create own room (degraded mode)
-        roomJoinFailures.add(1);
-        const t0 = Date.now();
-        sendMsg({ type: 'create_room', payload: { name: playerName } });
-        const resp = waitForAny(['room_created', 'error'], 10000);
-        if (resp && resp.type === 'room_created') {
-          roomJoinRtt.add(Date.now() - t0);
-          roomCode = resp.payload.room_code;
-          playerId = resp.payload.player_id;
-          gameState = 'lobby';
-        } else {
-          errorCount.add(1);
-          gameState = 'error';
+    // ══════════════════════════════════════════════════════════════════════════
+    // STATE: lobby
+    // ══════════════════════════════════════════════════════════════════════════
+
+    function handleLobby(msg) {
+      if (msg.type === 'player_list') {
+        // Host: check if room is full, then ready up and start game
+        if (isHost && msg.payload.players && msg.payload.players.length >= PLAYERS_PER_ROOM) {
+          // Ready up after brief delay
+          socket.setTimeout(function () {
+            if (state === 'lobby') {
+              sendMsg({ type: 'toggle_ready', payload: {} });
+
+              // Start game after a short delay for all to be ready
+              socket.setTimeout(function () {
+                if (state === 'lobby') {
+                  gameStartTime = Date.now();
+                  sendMsg({ type: 'start_game', payload: {} });
+                  gamesStarted.add(1);
+                  state = 'waiting_start';
+                }
+              }, Math.floor(randomBetween(2000, 4000)));
+            }
+          }, Math.floor(randomBetween(500, 1500)));
+        }
+      } else if (msg.type === 'drawer_selecting' || msg.type === 'turn_started') {
+        // Game started (possibly triggered by another event path)
+        if (gameStartTime === 0) gameStartTime = Date.now();
+        gameStartRtt.add(Date.now() - gameStartTime);
+        state = 'playing';
+        handlePlaying(msg);
+      } else if (msg.type === 'game_over') {
+        gameCompleted = true;
+        gamesCompleted.add(1);
+        gameCompletionRate.add(1);
+        endSession('completed');
+      } else if (msg.type === 'error') {
+        console.log(`[VU${vu}] Error in lobby: ${JSON.stringify(msg.payload)}`);
+        endSession('error');
+      }
+      // Ignore other messages in lobby (chat_message, etc.)
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // STATE: waiting_start (host sent start_game, waiting for confirmation)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    function handleWaitingStart(msg) {
+      if (msg.type === 'drawer_selecting' || msg.type === 'turn_started') {
+        gameStartRtt.add(Date.now() - gameStartTime);
+        state = 'playing';
+        handlePlaying(msg);
+      } else if (msg.type === 'error') {
+        console.log(`[VU${vu}] Error starting game: ${JSON.stringify(msg.payload)}`);
+        gameCompletionRate.add(0);
+        endSession('error');
+      } else if (msg.type === 'game_over') {
+        gameCompleted = true;
+        gamesCompleted.add(1);
+        gameCompletionRate.add(1);
+        endSession('completed');
+      }
+      // Timeout for waiting_start is covered by the 60s lobby timeout
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // STATE: playing
+    // ══════════════════════════════════════════════════════════════════════════
+
+    function handlePlaying(msg) {
+      switch (msg.type) {
+        case 'drawer_selecting':
+          isDrawer = msg.payload.drawer_id === playerId;
+          turnActive = false;
+          clearGameIntervals();
+          break;
+
+        case 'word_choices':
+          // Drawer selects a word after 1-4s
+          if (isDrawer && msg.payload.choices && msg.payload.choices.length > 0) {
+            wordSelectStart = Date.now();
+            const choices = msg.payload.choices;
+            socket.setTimeout(function () {
+              if (state === 'playing') {
+                const word = choices[Math.floor(Math.random() * choices.length)];
+                sendMsg({ type: 'select_word', payload: { word: word } });
+                currentWord = word;
+              }
+            }, Math.floor(randomBetween(1000, 4000)));
+          }
+          break;
+
+        case 'word_assigned':
+          currentWord = msg.payload.word;
+          break;
+
+        case 'turn_started':
+          turnActive = true;
+          turnsPlayed.add(1);
+          isDrawer = msg.payload.drawer_id === playerId;
+          currentTurnDuration = msg.payload.duration || TURN_DURATION;
+
+          if (wordSelectStart > 0) {
+            wordSelectionRtt.add(Date.now() - wordSelectStart);
+            wordSelectStart = 0;
+          }
+
+          if (isDrawer) {
+            startDrawing(currentTurnDuration);
+          } else {
+            startGuessing(currentTurnDuration);
+          }
+          break;
+
+        case 'turn_ended':
+          turnActive = false;
+          isDrawer = false;
+          currentWord = null;
+          clearGameIntervals();
+          break;
+
+        case 'stroke':
+          // Received a stroke broadcast — measure latency if we sent it
+          if (lastStrokeStart > 0) {
+            drawBroadcastRtt.add(Date.now() - lastStrokeStart);
+            lastStrokeStart = 0;
+          }
+          break;
+
+        case 'chat_message':
+          // Response to a guess (wrong guess echoed back)
+          if (lastGuessStart > 0) {
+            guessBroadcastRtt.add(Date.now() - lastGuessStart);
+            lastGuessStart = 0;
+          }
+          chatMessagesSent.add(1);
+          break;
+
+        case 'guess_correct':
+          correctGuesses.add(1);
+          if (lastGuessStart > 0) {
+            guessBroadcastRtt.add(Date.now() - lastGuessStart);
+            lastGuessStart = 0;
+          }
+          // Stop guessing — we got it right
+          guessingActive = false;
+          break;
+
+        case 'hint_update':
+          // Informational, no action needed
+          break;
+
+        case 'game_over':
+          gameCompleted = true;
+          gamesCompleted.add(1);
+          gameCompletionRate.add(1);
+          endSession('completed');
+          break;
+
+        case 'game_ended_insufficient_players':
+          gamesAborted.add(1);
+          gameCompletionRate.add(0);
+          endSession('aborted');
+          break;
+
+        case 'error':
+          console.log(`[VU${vu}] Error during game: ${JSON.stringify(msg.payload)}`);
+          endSession('error');
+          break;
+
+        case 'player_list':
+        case 'score_update':
+        case 'reaction':
+          // Informational messages, no action needed
+          break;
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // DRAWING — Periodic stroke simulation via setInterval
+    // ══════════════════════════════════════════════════════════════════════════
+
+    function startDrawing(duration) {
+      // Simulate 4-10 strokes across ~60% of the turn duration
+      const numStrokes = Math.floor(randomBetween(4, 10));
+      const drawingTime = duration * 0.6;
+      const strokeIntervalMs = Math.floor((drawingTime / numStrokes) * 1000);
+      strokesRemaining = numStrokes;
+      drawingActive = true;
+
+      drawingInterval = socket.setInterval(function () {
+        if (!drawingActive || !turnActive || state !== 'playing' || strokesRemaining <= 0) {
+          drawingActive = false;
+          // Occasional fill at end of drawing
+          if (turnActive && state === 'playing' && strokesRemaining <= 0 && Math.random() < 0.2) {
+            sendMsg({
+              type: 'fill',
+              payload: {
+                x: Math.floor(Math.random() * 800),
+                y: Math.floor(Math.random() * 600),
+                color: '#FFFFFF',
+              },
+            });
+            drawingEventsSent.add(1);
+          }
           return;
         }
-        // Can't truly play multiplayer without coordination — hold connection
-        sleep(60);
-        return;
-      }
 
-      // Step 2: Join the room
-      const t0 = Date.now();
-      sendMsg({ type: 'join_room', payload: { name: playerName, room_code: code } });
-
-      const resp = waitForAny(['room_joined', 'error'], 10000);
-      if (resp && resp.type === 'room_joined') {
-        roomJoinRtt.add(Date.now() - t0);
-        roomsJoined.add(1);
-        roomCode = resp.payload.room_code;
-        playerId = resp.payload.player_id;
-        gameState = 'lobby';
-      } else {
-        roomJoinFailures.add(1);
-        errorCount.add(1);
-        gameState = 'error';
-        return;
-      }
-
-      // Step 3: Ready up
-      sleep(randomBetween(1, 3));
-      sendMsg({ type: 'toggle_ready', payload: {} });
-
-      // Step 4: Wait for game start
-      const startMsg = waitForAny(['drawer_selecting', 'turn_started', 'game_over'], 60000);
-      if (startMsg && startMsg.type !== 'game_over') {
-        gameState = 'playing';
-        processMessage(startMsg);
-      } else if (startMsg && startMsg.type === 'game_over') {
-        processMessage(startMsg);
-        return;
-      } else {
-        // Timeout waiting for game start
-        errorCount.add(1);
-        gameState = 'error';
-        return;
-      }
-
-      // Step 5: Play the game
-      runGameLoop();
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // GAME LOOP — Full lifecycle simulation
-    // ══════════════════════════════════════════════════════════════════════════
-
-    function runGameLoop() {
-      const maxDuration = (NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + 25) + 120) * 1000;
-      const loopStart = Date.now();
-
-      while (!isGameOver() && Date.now() - loopStart < maxDuration) {
-        const msg = waitForAny(
-          [
-            'drawer_selecting', 'word_choices', 'word_assigned',
-            'turn_started', 'turn_ended', 'hint_update',
-            'game_over', 'game_ended_insufficient_players',
-            'guess_correct', 'chat_message', 'ping',
-          ],
-          3000
-        );
-
-        if (!msg) {
-          sleep(0.3);
-          continue;
-        }
-
-        processMessage(msg);
-
-        if (isGameOver()) break;
-
-        // ── Role-based behavior ──
-        if (msg.type === 'word_choices' && isDrawer) {
-          doWordSelection(msg.payload.choices);
-        } else if (msg.type === 'turn_started') {
-          if (isDrawer) {
-            doDrawing(msg.payload.duration);
-          } else {
-            doGuessing(msg.payload.duration);
-          }
-        }
-      }
-
-      if (!gameCompleted && !isGameOver()) {
-        gamesAborted.add(1);
-        gameCompletionRate.add(0);
-      }
-    }
-
-    // ── WORD SELECTION (Drawer) ──
-    function doWordSelection(choices) {
-      // Simulate think time (1-5 seconds, usually fast)
-      sleep(randomBetween(1, 4));
-
-      if (isGameOver()) return;
-
-      const word = choices[Math.floor(Math.random() * choices.length)];
-      const t0 = Date.now();
-      sendMsg({ type: 'select_word', payload: { word: word } });
-      currentWord = word;
-
-      const confirmation = waitFor('turn_started', 8000);
-      if (confirmation) {
-        wordSelectionRtt.add(Date.now() - t0);
-        processMessage(confirmation);
-      }
-    }
-
-    // ── DRAWING (Drawer) ──
-    function doDrawing(duration) {
-      // Simulate 4-10 strokes across ~60% of the turn duration
-      const drawingTime = duration * 0.6;
-      const numStrokes = Math.floor(randomBetween(4, 10));
-      const strokeInterval = drawingTime / numStrokes;
-
-      for (let i = 0; i < numStrokes; i++) {
-        if (isGameOver() || !turnActive) break;
-
-        // Generate stroke
+        // Generate and send a stroke
         const numPoints = Math.floor(randomBetween(15, 80));
         const points = generateStrokePoints(numPoints);
         const colors = ['#000000', '#FF0000', '#0000FF', '#00FF00', '#FFA500', '#800080'];
         const widths = [2, 3, 5, 8, 12];
 
-        const t0 = Date.now();
+        lastStrokeStart = Date.now();
         sendMsg({
           type: 'stroke',
           payload: {
@@ -566,104 +681,77 @@ export default function () {
           },
         });
         drawingEventsSent.add(1);
-
-        // Wait for stroke broadcast (measures server fan-out time)
-        const echo = waitFor('stroke', 1500);
-        if (echo) {
-          drawBroadcastRtt.add(Date.now() - t0);
-        }
-
-        // Pause between strokes
-        sleep(randomBetween(strokeInterval * 0.3, strokeInterval * 1.0));
-
-        // Check for turn/game end
-        const endMsgs = drain('turn_ended');
-        if (endMsgs.length > 0) { turnActive = false; break; }
-        const overMsgs = drain('game_over');
-        if (overMsgs.length > 0) { processMessage(overMsgs[0]); break; }
-      }
-
-      // Occasional fill
-      if (turnActive && !isGameOver() && Math.random() < 0.2) {
-        sendMsg({
-          type: 'fill',
-          payload: {
-            x: Math.floor(Math.random() * 800),
-            y: Math.floor(Math.random() * 600),
-            color: '#FFFFFF',
-          },
-        });
-        drawingEventsSent.add(1);
-      }
+        strokesRemaining--;
+      }, strokeIntervalMs);
     }
 
-    // ── GUESSING (Non-drawer) ──
-    function doGuessing(duration) {
-      // Submit 4-10 guesses spread across the turn
+    // ══════════════════════════════════════════════════════════════════════════
+    // GUESSING — Periodic guess simulation via setInterval
+    // ══════════════════════════════════════════════════════════════════════════
+
+    function startGuessing(duration) {
+      // Submit 4-10 guesses spread across 75% of the turn
       const numGuesses = Math.floor(randomBetween(4, 10));
       const guessWindow = duration * 0.75;
-      const interval = guessWindow / numGuesses;
+      const guessIntervalMs = Math.floor((guessWindow / numGuesses) * 1000);
+      guessesRemaining = numGuesses;
+      guessingActive = true;
 
-      for (let i = 0; i < numGuesses; i++) {
-        if (isGameOver() || !turnActive) break;
-
-        // Think time
-        sleep(randomBetween(interval * 0.4, interval * 1.2));
-
-        if (isGameOver() || !turnActive) break;
-
-        // Pick a guess
-        const guess = GUESS_WORDS[Math.floor(Math.random() * GUESS_WORDS.length)];
-        const t0 = Date.now();
-        sendMsg({ type: 'guess', payload: { text: guess } });
-        guessesSent.add(1);
-
-        // Wait for response (chat_message = wrong, guess_correct = right)
-        const resp = waitForAny(['chat_message', 'guess_correct'], 2000);
-        if (resp) {
-          guessBroadcastRtt.add(Date.now() - t0);
-          if (resp.type === 'guess_correct') {
-            // We guessed correctly — stop guessing this turn
-            break;
+      guessingInterval = socket.setInterval(function () {
+        if (!guessingActive || !turnActive || state !== 'playing' || guessesRemaining <= 0) {
+          guessingActive = false;
+          // Emoji reaction at end
+          if (state === 'playing' && guessesRemaining <= 0 && Math.random() < 0.3) {
+            const emojis = ['👍', '😂', '🔥', '❤️', '👏', '😮'];
+            sendMsg({
+              type: 'reaction',
+              payload: { emoji: emojis[Math.floor(Math.random() * emojis.length)] },
+            });
           }
+          return;
         }
 
-        // Check turn/game end
-        const ends = drain('turn_ended');
-        if (ends.length > 0) { turnActive = false; processMessage(ends[0]); break; }
-        const overs = drain('game_over');
-        if (overs.length > 0) { processMessage(overs[0]); break; }
-      }
-
-      // Emoji reactions
-      if (!isGameOver() && Math.random() < 0.3) {
-        const emojis = ['👍', '😂', '🔥', '❤️', '👏', '😮'];
-        sendMsg({
-          type: 'reaction',
-          payload: { emoji: emojis[Math.floor(Math.random() * emojis.length)] },
-        });
-      }
+        // Pick and send a guess
+        const guess = GUESS_WORDS[Math.floor(Math.random() * GUESS_WORDS.length)];
+        lastGuessStart = Date.now();
+        sendMsg({ type: 'guess', payload: { text: guess } });
+        guessesSent.add(1);
+        guessesRemaining--;
+      }, guessIntervalMs);
     }
 
-    // ── Heartbeat ──
-    socket.setInterval(function () {
-      sendMsg({ type: 'pong', payload: {} });
-    }, 25000);
+    // ══════════════════════════════════════════════════════════════════════════
+    // ERROR & CLOSE HANDLERS
+    // ══════════════════════════════════════════════════════════════════════════
 
-    // ── Hold connection for full game duration ──
-    const holdTime = NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + 20) + 180;
-    sleep(Math.min(holdTime, parseInt(__ENV.HOLD_TIME || '600')));
-
-    socket.on('error', function () {
+    socket.on('error', function (e) {
       connectionFailures.add(1);
       errorCount.add(1);
+      console.log(`[VU${vu}] WebSocket error: ${e}`);
     });
 
     socket.on('close', function () {
       activeConnections.add(-1);
       disconnects.add(1);
+      drawingActive = false;
+      guessingActive = false;
+      heartbeatActive = false;
     });
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // SESSION TIMEOUT — Keep connection alive for max game duration
+    // ══════════════════════════════════════════════════════════════════════════
+
+    socket.setTimeout(function () {
+      if (state === 'playing' && !gameCompleted) {
+        endSession('aborted');
+      } else if (state !== 'game_over' && state !== 'error') {
+        endSession('aborted');
+      }
+    }, HOLD_SECONDS * 1000);
   });
+
+  // ── Post-connection check ──
 
   check(res, {
     'WebSocket handshake 101': (r) => r && r.status === 101,

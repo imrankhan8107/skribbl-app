@@ -9,134 +9,106 @@ Usage:
     python k6/coord_server.py --port 9090
 
 This should be started BEFORE running the k6 test.
-It's intentionally minimal — no dependencies beyond Python stdlib.
+Uses asyncio for high concurrency (handles 1000+ VUs polling simultaneously).
 """
 
 import argparse
+import asyncio
 import json
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from aiohttp import web
 
 
-# Thread-safe room code storage
+# Thread-safe room code storage (asyncio is single-threaded, so dict is safe)
 _rooms: dict[int, str] = {}
-_lock = threading.Lock()
 
 
-class CoordHandler(BaseHTTPRequestHandler):
-    """HTTP handler for room code coordination."""
+async def handle_get_room(request: web.Request) -> web.Response:
+    """GET /rooms/{index} — retrieve room code for a given room index."""
+    try:
+        room_index = int(request.match_info['index'])
+    except (ValueError, KeyError):
+        return web.json_response({'error': 'Invalid room index'}, status=400)
 
-    def do_GET(self):
-        """GET /rooms/{index} — retrieve room code for a given room index."""
-        if self.path.startswith('/rooms/'):
-            try:
-                room_index = int(self.path.split('/rooms/')[1])
-            except (ValueError, IndexError):
-                self._respond(400, {'error': 'Invalid room index'})
-                return
+    code = _rooms.get(room_index)
+    if code:
+        return web.json_response({'room_code': code, 'room_index': room_index})
+    else:
+        return web.json_response(
+            {'error': 'Room not yet created', 'room_index': room_index}, status=404
+        )
 
-            with _lock:
-                code = _rooms.get(room_index)
 
-            if code:
-                self._respond(200, {'room_code': code, 'room_index': room_index})
-            else:
-                self._respond(404, {'error': 'Room not yet created', 'room_index': room_index})
+async def handle_list_rooms(request: web.Request) -> web.Response:
+    """GET /rooms — list all rooms (for debugging)."""
+    return web.json_response({'rooms': {str(k): v for k, v in _rooms.items()}, 'count': len(_rooms)})
 
-        elif self.path == '/rooms':
-            # List all rooms (for debugging)
-            with _lock:
-                snapshot = dict(_rooms)
-            self._respond(200, {'rooms': snapshot, 'count': len(snapshot)})
 
-        elif self.path == '/health':
-            self._respond(200, {'status': 'ok', 'rooms_tracked': len(_rooms)})
+async def handle_post_room(request: web.Request) -> web.Response:
+    """POST /rooms/{index} — publish room code for a given room index."""
+    try:
+        room_index = int(request.match_info['index'])
+    except (ValueError, KeyError):
+        return web.json_response({'error': 'Invalid room index'}, status=400)
 
-        elif self.path == '/reset':
-            with _lock:
-                _rooms.clear()
-            self._respond(200, {'status': 'reset'})
+    try:
+        data = await request.json()
+        room_code = data.get('room_code')
+    except (json.JSONDecodeError, AttributeError):
+        return web.json_response({'error': 'Invalid JSON body'}, status=400)
 
-        else:
-            self._respond(404, {'error': 'Not found'})
+    if not room_code:
+        return web.json_response({'error': 'Missing room_code'}, status=400)
 
-    def do_POST(self):
-        """POST /rooms/{index} — publish room code for a given room index."""
-        if self.path.startswith('/rooms/'):
-            try:
-                room_index = int(self.path.split('/rooms/')[1])
-            except (ValueError, IndexError):
-                self._respond(400, {'error': 'Invalid room index'})
-                return
+    _rooms[room_index] = room_code
+    return web.json_response({
+        'status': 'published',
+        'room_index': room_index,
+        'room_code': room_code,
+    })
 
-            # Read body
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length)
 
-            try:
-                data = json.loads(body)
-                room_code = data.get('room_code')
-            except (json.JSONDecodeError, AttributeError):
-                self._respond(400, {'error': 'Invalid JSON body'})
-                return
+async def handle_delete_room(request: web.Request) -> web.Response:
+    """DELETE /rooms/{index} — remove a room code (for cleanup)."""
+    try:
+        room_index = int(request.match_info['index'])
+    except (ValueError, KeyError):
+        return web.json_response({'error': 'Invalid room index'}, status=400)
 
-            if not room_code:
-                self._respond(400, {'error': 'Missing room_code'})
-                return
+    removed = _rooms.pop(room_index, None)
+    if removed:
+        return web.json_response({'status': 'removed', 'room_index': room_index})
+    else:
+        return web.json_response({'error': 'Room not found'}, status=404)
 
-            with _lock:
-                _rooms[room_index] = room_code
 
-            self._respond(200, {
-                'status': 'published',
-                'room_index': room_index,
-                'room_code': room_code,
-            })
+async def handle_delete_all_rooms(request: web.Request) -> web.Response:
+    """DELETE /rooms — clear all rooms."""
+    _rooms.clear()
+    return web.json_response({'status': 'all rooms cleared'})
 
-        elif self.path == '/reset':
-            with _lock:
-                _rooms.clear()
-            self._respond(200, {'status': 'reset'})
 
-        else:
-            self._respond(404, {'error': 'Not found'})
+async def handle_health(request: web.Request) -> web.Response:
+    """GET /health — health check."""
+    return web.json_response({'status': 'ok', 'rooms_tracked': len(_rooms)})
 
-    def do_DELETE(self):
-        """DELETE /rooms/{index} — remove a room code (for cleanup)."""
-        if self.path.startswith('/rooms/'):
-            try:
-                room_index = int(self.path.split('/rooms/')[1])
-            except (ValueError, IndexError):
-                self._respond(400, {'error': 'Invalid room index'})
-                return
 
-            with _lock:
-                removed = _rooms.pop(room_index, None)
+async def handle_reset(request: web.Request) -> web.Response:
+    """POST /reset or GET /reset — clear all rooms."""
+    _rooms.clear()
+    return web.json_response({'status': 'reset'})
 
-            if removed:
-                self._respond(200, {'status': 'removed', 'room_index': room_index})
-            else:
-                self._respond(404, {'error': 'Room not found'})
 
-        elif self.path == '/rooms':
-            with _lock:
-                _rooms.clear()
-            self._respond(200, {'status': 'all rooms cleared'})
-
-        else:
-            self._respond(404, {'error': 'Not found'})
-
-    def _respond(self, status: int, body: dict):
-        """Send a JSON response."""
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(json.dumps(body).encode())
-
-    def log_message(self, format, *args):
-        """Suppress default request logging for cleaner output."""
-        pass
+def create_app() -> web.Application:
+    app = web.Application()
+    app.router.add_get('/rooms/{index}', handle_get_room)
+    app.router.add_get('/rooms', handle_list_rooms)
+    app.router.add_post('/rooms/{index}', handle_post_room)
+    app.router.add_delete('/rooms/{index}', handle_delete_room)
+    app.router.add_delete('/rooms', handle_delete_all_rooms)
+    app.router.add_get('/health', handle_health)
+    app.router.add_get('/reset', handle_reset)
+    app.router.add_post('/reset', handle_reset)
+    return app
 
 
 def main():
@@ -145,7 +117,6 @@ def main():
     parser.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind to (default: 0.0.0.0)')
     args = parser.parse_args()
 
-    server = HTTPServer((args.host, args.port), CoordHandler)
     print(f"[coord] Coordination server listening on {args.host}:{args.port}")
     print(f"[coord] Endpoints:")
     print(f"[coord]   GET  /rooms/{{index}}  — poll for room code")
@@ -154,13 +125,12 @@ def main():
     print(f"[coord]   GET  /health         — health check")
     print(f"[coord]   POST /reset          — clear all rooms")
     print(f"[coord]")
-    print(f"[coord] Start your k6 test with: k6 run --env COORD_PORT={args.port} k6/ws_e2e_coordinated.js")
+    print(f"[coord] Using aiohttp async server (handles 1000+ concurrent connections)")
+    print(f"[coord]")
+    print(f"[coord] Start your k6 test with: k6 run --env COORD_PORT={args.port} k6/ws_mixed_workload.js")
 
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n[coord] Shutting down.")
-        server.shutdown()
+    app = create_app()
+    web.run_app(app, host=args.host, port=args.port, print=None)
 
 
 if __name__ == '__main__':
