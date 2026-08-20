@@ -279,6 +279,7 @@ class RoomManager:
             # Create a minimal proxy room (only used for WebSocket routing)
             proxy_room = Room(code=room_code, host_id=response["payload"].get("host_id", ""))
             proxy_room.state = RoomState.LOBBY
+            proxy_room.is_proxy = True
             self.rooms[room_code] = proxy_room
 
         proxy_room = self.rooms[room_code]
@@ -672,6 +673,8 @@ class RoomManager:
 
         Currently supports:
         - join_room: Add a player to a room owned by this worker.
+        - forward_message: Process a forwarded player message on the owning worker.
+        - player_disconnected: Handle a remote player's disconnection on the owning worker.
         """
         rpc = data.get("rpc", {})
         rpc_type = rpc.get("type")
@@ -735,6 +738,161 @@ class RoomManager:
             # Send response back via Redis
             if request_id:
                 await redis_pubsub.set_rpc_response(request_id, response)
+
+        elif rpc_type == "forward_message":
+            await self._handle_forwarded_message(rpc)
+
+        elif rpc_type == "player_disconnected":
+            await self._handle_remote_disconnect(rpc)
+
+    async def _handle_forwarded_message(self, rpc: dict) -> None:
+        """Handle a message forwarded from a proxy worker.
+
+        The proxy worker sends this RPC when a player connected to it sends
+        a game message (guess, stroke, chat, etc.). We process it as if the
+        player sent it directly on this worker.
+
+        Args:
+            rpc: The RPC payload containing room_code, player_id, and message.
+        """
+        from backend import game_engine as _game_engine
+
+        room_code = rpc.get("room_code")
+        player_id = rpc.get("player_id")
+        message = rpc.get("message")
+
+        if not room_code or not player_id or not message:
+            return
+
+        room = self.rooms.get(room_code)
+        if room is None:
+            return
+
+        # Verify the player exists in this room
+        player = room.get_player(player_id)
+        if player is None:
+            return
+
+        msg_type = message.get("type")
+        payload = message.get("payload", {})
+
+        try:
+            if msg_type == "guess":
+                text = payload.get("text", "")
+                await _game_engine.handle_guess(room, player_id, text, self)
+
+            elif msg_type == "chat":
+                text = payload.get("text", "")
+                if room.state == RoomState.LOBBY:
+                    if player:
+                        await self.broadcast(room.code, {
+                            "type": "chat_message",
+                            "payload": {
+                                "player_name": player.name,
+                                "text": text,
+                                "is_system": False,
+                            },
+                        })
+                else:
+                    await _game_engine.handle_chat(room, player_id, text, self)
+
+            elif msg_type == "stroke":
+                await self.broadcast(room.code, {
+                    "type": "stroke",
+                    "payload": payload,
+                })
+
+            elif msg_type == "fill":
+                await self.broadcast(room.code, {
+                    "type": "fill",
+                    "payload": payload,
+                })
+
+            elif msg_type == "clear_canvas":
+                await self.broadcast(room.code, {
+                    "type": "clear_canvas",
+                    "payload": {},
+                })
+
+            elif msg_type == "toggle_ready":
+                await self.toggle_ready(player_id)
+
+            elif msg_type == "start_game":
+                result = await self.start_game(player_id)
+                if result.get("type") != "error":
+                    # Game started successfully — start the first turn
+                    await _game_engine.start_turn(room, self)
+
+            elif msg_type == "select_word":
+                word = payload.get("word", "")
+                await _game_engine.handle_word_selection(room, player_id, word, self)
+
+            elif msg_type == "reaction":
+                emoji = payload.get("emoji", "")
+                await self.broadcast(room.code, {
+                    "type": "reaction",
+                    "payload": {
+                        "player_name": player.name if player else "Unknown",
+                        "emoji": emoji,
+                    },
+                })
+
+            elif msg_type == "leave_room":
+                await self.remove_player(player_id)
+
+            elif msg_type == "kick_player":
+                target_id = payload.get("target_player_id", "")
+                await self.kick_player(player_id, target_id)
+
+            elif msg_type == "update_settings":
+                settings = payload if isinstance(payload, dict) else {}
+                await self.update_settings(player_id, settings)
+
+            elif msg_type == "rematch":
+                await self.handle_rematch(player_id)
+
+            elif msg_type == "end_game_now":
+                if room.host_id == player_id:
+                    task = getattr(room, '_insufficient_players_task', None)
+                    if task and not task.done():
+                        task.cancel()
+                        room._insufficient_players_task = None
+                    await self._end_game_insufficient_players_immediate(room)
+
+        except Exception as exc:
+            logger.exception(
+                "Error handling forwarded message type '%s' for player %s in room %s: %s",
+                msg_type, player_id, room_code, exc
+            )
+
+    async def _handle_remote_disconnect(self, rpc: dict) -> None:
+        """Handle a remote player's disconnection reported by a proxy worker.
+
+        When a player disconnects from the proxy worker, that worker sends
+        this RPC to the owning worker so the player can be properly marked
+        as disconnected and the grace window/cleanup can begin.
+
+        Args:
+            rpc: The RPC payload containing room_code and player_id.
+        """
+        from backend import game_engine as _game_engine
+
+        room_code = rpc.get("room_code")
+        player_id = rpc.get("player_id")
+
+        if not room_code or not player_id:
+            return
+
+        room = self.rooms.get(room_code)
+        if room is None:
+            return
+
+        player = room.get_player(player_id)
+        if player is None:
+            return
+
+        # Delegate to existing disconnect handling logic
+        await self.handle_disconnect(player_id, _game_engine)
 
     def _find_room_by_player(self, player_id: str) -> Room | None:
         """O(1) lookup of room containing a player via index, with linear fallback."""

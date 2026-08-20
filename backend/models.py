@@ -64,6 +64,7 @@ class Room:
     turn: Optional[TurnState] = None
     used_words: set = field(default_factory=set)
     word_pool: deque = field(default_factory=deque)   # deque for O(1) popleft
+    is_proxy: bool = False         # True if this room is owned by another worker
 
     def add_player(self, player: Player) -> None:
         """Add a player to the room with O(1) index update."""

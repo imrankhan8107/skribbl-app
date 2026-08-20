@@ -177,6 +177,28 @@ async def publish_rpc_request(target_worker: str, request: dict) -> None:
     await _redis_client.publish(f"worker:{target_worker}", payload)
 
 
+async def forward_to_room_owner(room_code: str, player_id: str, message: dict) -> None:
+    """Forward a player's message to the worker that owns the room.
+
+    Used by proxy workers to relay player actions (guesses, strokes, etc.)
+    to the owning worker for authoritative processing.
+
+    Args:
+        room_code: The room code the message belongs to.
+        player_id: The ID of the player who sent the message.
+        message: The original message dict from the client.
+    """
+    owner_worker = await get_room_worker(room_code)
+    if owner_worker is None:
+        return
+    await publish_rpc_request(owner_worker, {
+        "type": "forward_message",
+        "room_code": room_code,
+        "player_id": player_id,
+        "message": message,
+    })
+
+
 async def wait_for_rpc_response(request_id: str, timeout: float = 5.0) -> Optional[dict]:
     """Wait for an RPC response on a temporary Redis key (polling).
 
