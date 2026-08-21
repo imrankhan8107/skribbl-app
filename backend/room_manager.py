@@ -151,9 +151,11 @@ class RoomManager:
     async def join_room(self, name: str, room_code: str, websocket) -> dict:
         """Join an existing room.
 
-        If the room exists locally, joins directly. If the room is on another
-        worker (discovered via Redis), sends an RPC request to the owning worker
-        to register the player, then tracks the player locally as a proxy.
+        If the room exists locally and is owned by this worker, joins directly.
+        If the room is on another worker (including when a proxy room already
+        exists locally from a previous joiner), sends an RPC request to the
+        owning worker to register the player, then tracks the player locally
+        as a proxy.
 
         Args:
             name: Display name for the joining player.
@@ -173,11 +175,12 @@ class RoomManager:
 
         # Check room exists locally first
         room = self.rooms.get(room_code)
-        if room is not None:
-            # Room is local — join directly
+        if room is not None and not room.is_proxy:
+            # Room is truly owned by this worker — join directly
             return await self._join_room_local(room, room_code, name, websocket)
 
-        # Room not local — check Redis for cross-worker discovery (with retry for race condition)
+        # Room is either not local or is a proxy (owned by another worker).
+        # In both cases, route via RPC to the owning worker.
         if redis_pubsub.is_redis_enabled():
             owner_worker = None
             for _attempt in range(5):
