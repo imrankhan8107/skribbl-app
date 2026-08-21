@@ -223,9 +223,16 @@ export default function () {
 
   let coordRoomCode = null;
 
-  if (!isHost) {
-    // Stagger joiners: wait 2-5s after hosts connect
-    sleep(2 + playerIndex * 0.5 + Math.random() * 0.5);
+  if (isHost) {
+    // Stagger hosts: spread room creation over ~5 seconds based on room index
+    const hostStagger = (roomIndex / 200) * 5 + Math.random() * 0.3;
+    sleep(hostStagger);
+  } else {
+    // Stagger joiners: spread across time based on room index + player position
+    // With 200 rooms, this spreads joins over ~10 seconds instead of bursting all at once
+    const roomStagger = (roomIndex / 200) * 8; // 0-8s based on room index
+    const playerStagger = playerIndex * 0.5 + Math.random() * 0.5; // 0.5-2.5s per player
+    sleep(2 + roomStagger + playerStagger);
 
     // Poll coordination server BEFORE connecting to WebSocket
     coordRoomCode = pollRoomCode(roomIndex, 20000);
