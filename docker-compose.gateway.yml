@@ -1,0 +1,46 @@
+# Option C: Go WebSocket Proxy Gateway + Python Workers
+#
+# The gateway holds all client WebSocket connections and transparently proxies
+# them to the correct Python worker based on room registry lookup in Redis.
+#
+# Usage:
+#   docker compose -f docker-compose.gateway.yml up --build
+#   docker compose -f docker-compose.gateway.yml up --build --scale app=6
+#
+# Access: ws://localhost:9000/ws (via gateway)
+# Health: http://localhost:9000/health
+
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose:
+      - "8000"
+
+  gateway:
+    build:
+      context: ./gateway
+    command: ["-port", "9000", "-redis", "redis://redis:6379", "-backends", "app:8000"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_started
+    ports:
+      - "9000:9000"
