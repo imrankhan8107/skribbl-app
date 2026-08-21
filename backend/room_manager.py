@@ -52,8 +52,14 @@ class RoomManager:
         if redis_pubsub.is_redis_enabled():
             try:
                 await redis_pubsub.unsubscribe_room(room_code)
+                await redis_pubsub.unregister_room_with_ttl(room_code)
                 await redis_pubsub.remove_room_worker(room_code)
                 await redis_pubsub.remove_room_info(room_code)
+                # Report updated load after room deletion
+                await redis_pubsub.report_worker_load(
+                    len([r for r in self.rooms.values() if not r.is_proxy]),
+                    sum(len(r.players) for r in self.rooms.values()),
+                )
             except Exception as e:
                 logger.error("Failed to clean up Redis for room %s: %s", room_code, e)
 
@@ -117,6 +123,7 @@ class RoomManager:
 
         # Register room ownership and subscribe in Redis (no-op if not configured)
         if redis_pubsub.is_redis_enabled():
+            await redis_pubsub.register_room_with_ttl(room_code)
             await redis_pubsub.register_room_worker(room_code)
             await redis_pubsub.subscribe_room(room_code)
             # Publish room info for cross-worker discovery
@@ -126,6 +133,11 @@ class RoomManager:
                 "config": self._serialize_config(room.config),
                 "host_id": player_id,
             })
+            # Report updated load
+            await redis_pubsub.report_worker_load(
+                len([r for r in self.rooms.values() if not r.is_proxy]),
+                sum(len(r.players) for r in self.rooms.values()),
+            )
 
         return {
             "type": "room_created",
@@ -169,7 +181,7 @@ class RoomManager:
         if redis_pubsub.is_redis_enabled():
             owner_worker = None
             for _attempt in range(5):
-                owner_worker = await redis_pubsub.get_room_worker(room_code)
+                owner_worker = await redis_pubsub.get_room_worker_with_ttl(room_code)
                 if owner_worker is not None:
                     break
                 # Room may not be registered yet — brief wait

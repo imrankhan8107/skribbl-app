@@ -117,10 +117,16 @@ async def publish_to_room(room_code: str, message: dict) -> None:
 
 
 async def register_room_worker(room_code: str) -> None:
-    """Register which worker owns a room (stored in Redis hash)."""
+    """Register which worker owns a room.
+
+    Uses both a hash (for fast lookup) and an individual key with TTL
+    (for automatic cleanup if the worker crashes without unregistering).
+    """
     if _redis_client is None:
         return
     await _redis_client.hset("room_workers", room_code, WORKER_ID)
+    # Per-room TTL key — expires in 1 hour if not refreshed (room deleted)
+    await _redis_client.set(f"room_owner:{room_code}", WORKER_ID, ex=3600)
 
 
 async def get_room_worker(room_code: str) -> Optional[str]:
@@ -135,6 +141,7 @@ async def remove_room_worker(room_code: str) -> None:
     if _redis_client is None:
         return
     await _redis_client.hdel("room_workers", room_code)
+    await _redis_client.delete(f"room_owner:{room_code}")
 
 
 async def get_room_info(room_code: str) -> Optional[dict]:
@@ -199,6 +206,11 @@ async def forward_to_room_owner(room_code: str, player_id: str, message: dict) -
     })
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# LOAD-AWARE ROOM PLACEMENT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
 async def wait_for_rpc_response(request_id: str, timeout: float = 5.0) -> Optional[dict]:
     """Wait for an RPC response on a temporary Redis key (polling).
 
@@ -226,6 +238,115 @@ async def set_rpc_response(request_id: str, response: dict) -> None:
     await _redis_client.set(f"rpc_response:{request_id}", json.dumps(response), ex=10)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Load-Aware Room Placement
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+async def report_worker_load(room_count: int, connection_count: int) -> None:
+    """Report this worker's current load to a Redis sorted set.
+
+    Used by the room creation logic to pick the least-loaded worker
+    for new rooms (prevents hotspots under round-robin routing).
+
+    Args:
+        room_count: Number of active rooms on this worker.
+        connection_count: Number of active WebSocket connections.
+    """
+    if _redis_client is None:
+        return
+    # Score = connection_count (route new rooms to least-connected worker)
+    await _redis_client.zadd("worker_load", {WORKER_ID: connection_count})
+    # Also store room count for observability
+    await _redis_client.hset("worker_rooms", WORKER_ID, room_count)
+    # TTL: if a worker crashes, its entry expires after 60s
+    await _redis_client.expire("worker_load", 120)
+
+
+async def get_least_loaded_worker() -> Optional[str]:
+    """Find the worker with the fewest active connections.
+
+    Returns the worker_id of the least-loaded worker, or None if
+    no load data is available.
+    """
+    if _redis_client is None:
+        return None
+    # Get worker with lowest score (fewest connections)
+    result = await _redis_client.zrange("worker_load", 0, 0)
+    if result:
+        return result[0]
+    return None
+
+
+async def get_all_worker_loads() -> dict:
+    """Get load info for all workers (for observability/debugging).
+
+    Returns dict of {worker_id: connection_count}.
+    """
+    if _redis_client is None:
+        return {}
+    result = await _redis_client.zrange("worker_load", 0, -1, withscores=True)
+    return {worker_id: int(score) for worker_id, score in result}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Per-Room TTL (stale room cleanup)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+async def register_room_with_ttl(room_code: str, ttl_seconds: int = 3600) -> None:
+    """Register room ownership with a TTL for automatic stale cleanup.
+
+    If a worker crashes without unregistering, the room entry expires
+    after ttl_seconds so joiners don't get stuck routing to a dead worker.
+
+    Args:
+        room_code: The room code to register.
+        ttl_seconds: How long the entry lives before auto-expiry (default 1 hour).
+    """
+    if _redis_client is None:
+        return
+    # Use a per-room key with TTL instead of the hash (hashes can't have per-field TTL)
+    await _redis_client.set(f"room_owner:{room_code}", WORKER_ID, ex=ttl_seconds)
+    # Also keep the hash for backward compatibility
+    await _redis_client.hset("room_workers", room_code, WORKER_ID)
+
+
+async def refresh_room_ttl(room_code: str, ttl_seconds: int = 3600) -> None:
+    """Refresh the TTL on a room's registry entry (call periodically for active rooms).
+
+    Args:
+        room_code: The room code to refresh.
+        ttl_seconds: New TTL to set.
+    """
+    if _redis_client is None:
+        return
+    await _redis_client.expire(f"room_owner:{room_code}", ttl_seconds)
+
+
+async def get_room_worker_with_ttl(room_code: str) -> Optional[str]:
+    """Get room owner, preferring the TTL-based key over the hash.
+
+    Falls back to the hash if the per-room key doesn't exist (backward compat).
+    """
+    if _redis_client is None:
+        return None
+    # Try per-room key first (has TTL)
+    owner = await _redis_client.get(f"room_owner:{room_code}")
+    if owner is not None:
+        return owner
+    # Fallback to hash
+    return await _redis_client.hget("room_workers", room_code)
+
+
+async def unregister_room_with_ttl(room_code: str) -> None:
+    """Remove room from both per-room key and hash."""
+    if _redis_client is None:
+        return
+    await _redis_client.delete(f"room_owner:{room_code}")
+    await _redis_client.hdel("room_workers", room_code)
+
+
 def is_redis_enabled() -> bool:
     """Check if Redis is configured and connected."""
     return _redis_client is not None
@@ -237,8 +358,17 @@ def get_worker_id() -> str:
 
 
 async def shutdown_redis() -> None:
-    """Clean shutdown of Redis connections."""
+    """Clean shutdown of Redis connections.
+
+    Also removes this worker's load entry from the sorted set.
+    """
     global _subscriber_task, _pubsub, _redis_client
+    # Remove load entry before shutting down
+    if _redis_client:
+        try:
+            await _redis_client.zrem("worker_load", WORKER_ID)
+        except Exception:
+            pass
     if _subscriber_task:
         _subscriber_task.cancel()
         try:

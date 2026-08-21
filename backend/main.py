@@ -22,10 +22,38 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: initialize Redis on startup, shutdown on exit."""
+    import asyncio
     from backend.ws_handler import room_manager
     await redis_pubsub.init_redis(room_manager.handle_redis_message)
     logger.info("Application started (worker_id=%s)", redis_pubsub.get_worker_id())
+
+    # Start periodic load reporter (every 10 seconds)
+    async def _report_load_periodically():
+        while True:
+            try:
+                room_count = len([r for r in room_manager.rooms.values() if not r.is_proxy])
+                connection_count = sum(
+                    1 for r in room_manager.rooms.values() if not r.is_proxy
+                    for p in r.players if p.is_connected and p.websocket is not None
+                )
+                await redis_pubsub.report_worker_load(room_count, connection_count)
+            except Exception as e:
+                logger.debug("Load report failed: %s", e)
+            await asyncio.sleep(10)
+
+    load_task = None
+    if redis_pubsub.is_redis_enabled():
+        load_task = asyncio.create_task(_report_load_periodically())
+
     yield
+
+    # Shutdown: cancel load reporter and clean up
+    if load_task:
+        load_task.cancel()
+        try:
+            await load_task
+        except asyncio.CancelledError:
+            pass
     await redis_pubsub.shutdown_redis()
     logger.info("Application shutdown (worker_id=%s)", redis_pubsub.get_worker_id())
 
