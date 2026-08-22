@@ -86,6 +86,7 @@ func main() {
 	gw := &Gateway{
 		backends: backends,
 		redis:    rdb,
+		resolver: NewWorkerResolver(rdb, 5*time.Second),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
@@ -93,9 +94,15 @@ func main() {
 		},
 	}
 
+	// Start resolver cache cleanup goroutine
+	if rdb != nil {
+		go gw.resolver.StartCleanup(context.Background())
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", gw.HandleWebSocket)
 	mux.HandleFunc("/health", gw.HandleHealth)
+	mux.HandleFunc("/rooms/", gw.HandleCoord) // Coord: GET/POST /rooms/{index}
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", *listenPort),
@@ -128,56 +135,78 @@ func main() {
 type Gateway struct {
 	backends []string
 	redis    *redis.Client
+	resolver *WorkerResolver
 	upgrader websocket.Upgrader
 	rrIndex  atomic.Uint64 // round-robin counter
 	mu       sync.Mutex
+	coordMap map[string]string // in-memory fallback for coord (no Redis)
 }
 
 // HandleWebSocket accepts a client connection, reads the first message to
 // determine routing, then pipes bidirectionally to the backend worker.
 func (gw *Gateway) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+	connID := totalConnects.Add(1)
+	upgradeStart := time.Now()
+
 	clientConn, err := gw.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("[gateway] Upgrade failed: %v", err)
+		log.Printf("[gateway] UPGRADE_FAILED connID=%d elapsed=%v err=%v", connID, time.Since(upgradeStart), err)
 		return
 	}
+	upgradeDur := time.Since(upgradeStart)
 
-	totalConnects.Add(1)
 	activeClients.Add(1)
+	currentClients := activeClients.Load()
+	if connID%100 == 0 || upgradeDur > 100*time.Millisecond {
+		log.Printf("[gateway] CONNECTED connID=%d active_clients=%d upgrade_ms=%d", connID, currentClients, upgradeDur.Milliseconds())
+	}
+
 	defer func() {
 		activeClients.Add(-1)
 		clientConn.Close()
 	}()
 
 	// Step 1: Read the first message to determine routing
+	readStart := time.Now()
 	clientConn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	_, firstMsg, err := clientConn.ReadMessage()
 	if err != nil {
-		log.Printf("[gateway] Failed to read first message: %v", err)
+		log.Printf("[gateway] FIRST_MSG_FAILED connID=%d elapsed=%v err=%v", connID, time.Since(readStart), err)
 		totalErrors.Add(1)
 		return
 	}
 	clientConn.SetReadDeadline(time.Time{}) // Clear deadline
+	readDur := time.Since(readStart)
 
 	// Step 2: Parse to determine which backend owns this room
+	routeStart := time.Now()
 	backendAddr := gw.routeConnection(firstMsg)
+	routeDur := time.Since(routeStart)
 	if backendAddr == "" {
-		log.Printf("[gateway] No backend found for message")
+		log.Printf("[gateway] NO_BACKEND connID=%d route_ms=%d msg=%s", connID, routeDur.Milliseconds(), string(firstMsg[:min(len(firstMsg), 100)]))
 		totalErrors.Add(1)
 		sendError(clientConn, "NO_BACKEND", "No available backend worker")
 		return
 	}
 
-	// Step 3: Connect to the backend worker
-	backendURL := url.URL{Scheme: "ws", Host: backendAddr, Path: "/ws"}
-	backendConn, _, err := websocket.DefaultDialer.Dial(backendURL.String(), nil)
-	if err != nil {
-		log.Printf("[gateway] Backend dial failed (%s): %v", backendAddr, err)
+	// Step 3: Connect to backend with fallback (direct dial, no nginx)
+	dialStart := time.Now()
+	backendConn, finalAddr, dialErr := gw.dialWithFallback(backendAddr)
+	dialDur := time.Since(dialStart)
+	if dialErr != nil {
+		log.Printf("[gateway] DIAL_FAILED connID=%d primary=%s total_ms=%d err=%v", connID, backendAddr, dialDur.Milliseconds(), dialErr)
 		totalErrors.Add(1)
 		sendError(clientConn, "BACKEND_UNAVAILABLE", "Backend worker unavailable")
 		return
 	}
+
 	activeBackends.Add(1)
+	currentBackends := activeBackends.Load()
+	if connID%100 == 0 || dialDur > 200*time.Millisecond || finalAddr != backendAddr {
+		log.Printf("[gateway] DIAL_OK connID=%d backend=%s dial_ms=%d read_ms=%d route_ms=%d active_backends=%d",
+			connID, finalAddr, dialDur.Milliseconds(), readDur.Milliseconds(), routeDur.Milliseconds(), currentBackends)
+	}
+
 	defer func() {
 		activeBackends.Add(-1)
 		backendConn.Close()
@@ -185,7 +214,7 @@ func (gw *Gateway) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Step 4: Forward the first message to the backend
 	if err := backendConn.WriteMessage(websocket.TextMessage, firstMsg); err != nil {
-		log.Printf("[gateway] Failed to forward first message: %v", err)
+		log.Printf("[gateway] FORWARD_FAILED connID=%d err=%v", connID, err)
 		totalErrors.Add(1)
 		return
 	}
@@ -219,9 +248,14 @@ func (gw *Gateway) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	<-done
+	sessionDur := time.Since(upgradeStart)
+	if connID%100 == 0 {
+		log.Printf("[gateway] SESSION_END connID=%d duration=%v", connID, sessionDur)
+	}
 }
 
-// routeConnection parses the first message and determines the backend address.
+// routeConnection parses the first message and determines the target worker ID.
+// Returns the resolved backend address, or empty string if no route found.
 func (gw *Gateway) routeConnection(firstMsg []byte) string {
 	var msg struct {
 		Type    string `json:"type"`
@@ -231,28 +265,32 @@ func (gw *Gateway) routeConnection(firstMsg []byte) string {
 	}
 
 	if err := json.Unmarshal(firstMsg, &msg); err != nil {
-		// Can't parse — use round-robin
+		// Can't parse — use round-robin fallback
 		return gw.roundRobin()
 	}
 
 	switch msg.Type {
 	case "create_room":
-		// New room: pick least-loaded worker (or round-robin)
+		// New room: pick least-loaded worker, resolve its address
 		if gw.redis != nil {
-			if addr := gw.leastLoadedWorker(); addr != "" {
-				return addr
+			if workerID := gw.leastLoadedWorkerID(); workerID != "" {
+				if addr := gw.resolveWorkerAddr(workerID); addr != "" {
+					return addr
+				}
 			}
 		}
 		return gw.roundRobin()
 
 	case "join_room", "reconnect":
-		// Existing room: lookup owner in Redis
+		// Existing room: lookup owner, resolve its address
 		if gw.redis != nil && msg.Payload.RoomCode != "" {
-			if addr := gw.lookupRoomOwner(msg.Payload.RoomCode); addr != "" {
-				return addr
+			if workerID := gw.lookupRoomOwnerID(msg.Payload.RoomCode); workerID != "" {
+				if addr := gw.resolveWorkerAddr(workerID); addr != "" {
+					return addr
+				}
 			}
 		}
-		// Fallback: round-robin (will work if workers handle cross-worker routing)
+		// Fallback: round-robin
 		return gw.roundRobin()
 
 	default:
@@ -260,28 +298,29 @@ func (gw *Gateway) routeConnection(firstMsg []byte) string {
 	}
 }
 
-// lookupRoomOwner finds the backend worker that owns a room via Redis.
-func (gw *Gateway) lookupRoomOwner(roomCode string) string {
+// lookupRoomOwnerID finds which worker ID owns a room via Redis.
+// Returns the worker ID string, not an address.
+func (gw *Gateway) lookupRoomOwnerID(roomCode string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	// Try per-room key first (has TTL)
 	owner, err := gw.redis.Get(ctx, "room_owner:"+roomCode).Result()
 	if err == nil && owner != "" {
-		return gw.workerIDToAddr(owner)
+		return owner
 	}
 
 	// Fallback to hash
 	owner, err = gw.redis.HGet(ctx, "room_workers", roomCode).Result()
 	if err == nil && owner != "" {
-		return gw.workerIDToAddr(owner)
+		return owner
 	}
 
 	return ""
 }
 
-// leastLoadedWorker queries the Redis sorted set for the least-loaded backend.
-func (gw *Gateway) leastLoadedWorker() string {
+// leastLoadedWorkerID queries the Redis sorted set for the least-loaded worker ID.
+func (gw *Gateway) leastLoadedWorkerID() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -290,23 +329,84 @@ func (gw *Gateway) leastLoadedWorker() string {
 		return ""
 	}
 
-	return gw.workerIDToAddr(result[0])
+	return result[0]
 }
 
-// workerIDToAddr maps a Redis worker_id (e.g., "worker_abc123") to a reachable address.
-// In Docker Compose, all workers share the same service name and port.
-// The worker_id stored in Redis is just an identifier — we need the actual address.
-//
-// Strategy: If we have Redis, workers register their gRPC/HTTP address.
-// For now, use round-robin among known backends since Docker DNS handles routing.
-func (gw *Gateway) workerIDToAddr(workerID string) string {
-	// In a Kubernetes setup, workerID would be a pod IP.
-	// In Docker Compose, all workers are behind the same service DNS.
-	// For now, map any known worker ID to the first backend (Docker DNS resolves to a random container).
-	if len(gw.backends) > 0 {
-		return gw.backends[0]
+// resolveWorkerAddr resolves a worker ID to its reachable address via the WorkerResolver.
+// Falls back to round-robin among static backends if resolution fails.
+func (gw *Gateway) resolveWorkerAddr(workerID string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	addr, err := gw.resolver.Resolve(ctx, workerID)
+	if err != nil {
+		log.Printf("[gateway] RESOLVE_FAILED worker=%s err=%v", workerID, err)
+		return ""
 	}
-	return ""
+	return addr
+}
+
+// dialWithFallback attempts to connect to the primary backend address.
+// If it fails, checks liveness and falls back to the least-loaded alternative.
+// Returns the connected WebSocket and the address it connected to.
+// Maximum 2 attempts: primary + 1 fallback.
+func (gw *Gateway) dialWithFallback(primaryAddr string) (*websocket.Conn, string, error) {
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 5 * time.Second,
+		ReadBufferSize:   4096,
+		WriteBufferSize:  4096,
+	}
+
+	// Attempt 1: dial the primary address
+	backendURL := url.URL{Scheme: "ws", Host: primaryAddr, Path: "/ws"}
+	conn, _, err := dialer.Dial(backendURL.String(), nil)
+	if err == nil {
+		return conn, primaryAddr, nil
+	}
+
+	log.Printf("[gateway] DIAL_FALLBACK primary=%s err=%v, trying fallback...", primaryAddr, err)
+
+	// Evict the failed address from resolver cache (if it came from resolver)
+	// We don't have the workerID here, but the resolver will re-resolve on next use
+	// Try fallback: pick least-loaded worker
+	if gw.redis != nil {
+		fallbackID := gw.leastLoadedWorkerID()
+		if fallbackID != "" {
+			fallbackAddr := gw.resolveWorkerAddr(fallbackID)
+			if fallbackAddr != "" && fallbackAddr != primaryAddr {
+				// Check liveness before dialing fallback
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				alive, _ := gw.resolver.IsAlive(ctx, fallbackID)
+				cancel()
+
+				if alive {
+					backendURL = url.URL{Scheme: "ws", Host: fallbackAddr, Path: "/ws"}
+					conn, _, err = dialer.Dial(backendURL.String(), nil)
+					if err == nil {
+						return conn, fallbackAddr, nil
+					}
+					log.Printf("[gateway] DIAL_FALLBACK_FAILED fallback=%s err=%v", fallbackAddr, err)
+				} else {
+					// Clean up dead worker
+					ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+					gw.resolver.CleanupDeadWorker(ctx2, fallbackID)
+					cancel2()
+				}
+			}
+		}
+	}
+
+	// All attempts exhausted — try round-robin as last resort
+	rrAddr := gw.roundRobin()
+	if rrAddr != "" && rrAddr != primaryAddr {
+		backendURL = url.URL{Scheme: "ws", Host: rrAddr, Path: "/ws"}
+		conn, _, err = dialer.Dial(backendURL.String(), nil)
+		if err == nil {
+			return conn, rrAddr, nil
+		}
+	}
+
+	return nil, "", fmt.Errorf("all backends unreachable (primary=%s, last_err=%v)", primaryAddr, err)
 }
 
 // roundRobin returns the next backend in rotation.
@@ -335,4 +435,81 @@ func sendError(conn *websocket.Conn, code, message string) {
 		},
 	})
 	conn.WriteMessage(websocket.TextMessage, msg)
+}
+
+// ─── Coordination Endpoints ──────────────────────────────────────────────────
+// Replaces the separate Python coord_server.py.
+// Hosts POST room codes, joiners GET them. Stored in Redis or in-memory.
+
+// HandleCoord handles GET/POST /rooms/{index} for k6 test coordination.
+func (gw *Gateway) HandleCoord(w http.ResponseWriter, r *http.Request) {
+	// Extract room index from path: /rooms/123
+	path := strings.TrimPrefix(r.URL.Path, "/rooms/")
+	if path == "" || path == r.URL.Path {
+		http.Error(w, `{"error":"missing room index"}`, http.StatusBadRequest)
+		return
+	}
+	roomIndex := path
+
+	switch r.Method {
+	case http.MethodPost:
+		gw.coordPost(w, r, roomIndex)
+	case http.MethodGet:
+		gw.coordGet(w, r, roomIndex)
+	default:
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+func (gw *Gateway) coordPost(w http.ResponseWriter, r *http.Request, roomIndex string) {
+	var body struct {
+		RoomCode string `json:"room_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RoomCode == "" {
+		http.Error(w, `{"error":"missing room_code"}`, http.StatusBadRequest)
+		return
+	}
+
+	if gw.redis != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		gw.redis.Set(ctx, "coord:room:"+roomIndex, body.RoomCode, 10*time.Minute)
+	} else {
+		gw.mu.Lock()
+		if gw.coordMap == nil {
+			gw.coordMap = make(map[string]string)
+		}
+		gw.coordMap[roomIndex] = body.RoomCode
+		gw.mu.Unlock()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"status":"published","room_index":"%s","room_code":"%s"}`, roomIndex, body.RoomCode)
+}
+
+func (gw *Gateway) coordGet(w http.ResponseWriter, r *http.Request, roomIndex string) {
+	var code string
+
+	if gw.redis != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		val, err := gw.redis.Get(ctx, "coord:room:"+roomIndex).Result()
+		if err == nil {
+			code = val
+		}
+	} else {
+		gw.mu.Lock()
+		if gw.coordMap != nil {
+			code = gw.coordMap[roomIndex]
+		}
+		gw.mu.Unlock()
+	}
+
+	if code == "" {
+		http.Error(w, `{"error":"Room not yet created","room_index":"`+roomIndex+`"}`, http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"room_code":"%s","room_index":"%s"}`, code, roomIndex)
 }

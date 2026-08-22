@@ -244,10 +244,10 @@ async def set_rpc_response(request_id: str, response: dict) -> None:
 
 
 async def report_worker_load(room_count: int, connection_count: int) -> None:
-    """Report this worker's current load to a Redis sorted set.
+    """Report this worker's current load and refresh service discovery registration.
 
-    Used by the room creation logic to pick the least-loaded worker
-    for new rooms (prevents hotspots under round-robin routing).
+    Combined heartbeat: updates load metrics, worker address, and liveness key
+    in a single cycle. Called every 10 seconds by the periodic reporter.
 
     Args:
         room_count: Number of active rooms on this worker.
@@ -261,6 +261,12 @@ async def report_worker_load(room_count: int, connection_count: int) -> None:
     await _redis_client.hset("worker_rooms", WORKER_ID, room_count)
     # TTL: if a worker crashes, its entry expires after 60s
     await _redis_client.expire("worker_load", 120)
+
+    # Refresh service discovery: address + liveness
+    hostname = os.environ.get("HOSTNAME", "localhost")
+    address = f"{hostname}:8000"
+    await _redis_client.hset("worker_addresses", WORKER_ID, address)
+    await _redis_client.set(f"worker_alive:{WORKER_ID}", "1", ex=30)
 
 
 async def get_least_loaded_worker() -> Optional[str]:
@@ -347,6 +353,45 @@ async def unregister_room_with_ttl(room_code: str) -> None:
     await _redis_client.hdel("room_workers", room_code)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Worker Address Registration (Service Discovery)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+async def register_worker_address(hostname: str, port: int = 8000) -> None:
+    """Register this worker's reachable network address in Redis.
+
+    Called on startup so the Go gateway can discover and connect to this
+    worker directly (bypassing nginx). Also sets the liveness key.
+
+    Args:
+        hostname: Docker container hostname (e.g., 'skribbl-app-app-7').
+        port: The port this worker listens on (default 8000).
+    """
+    if _redis_client is None:
+        return
+    address = f"{hostname}:{port}"
+    await _redis_client.hset("worker_addresses", WORKER_ID, address)
+    await _redis_client.set(f"worker_alive:{WORKER_ID}", "1", ex=30)
+    logger.info("Registered worker address: %s (id=%s)", address, WORKER_ID)
+
+
+async def unregister_worker_address() -> None:
+    """Remove this worker's address from Redis on shutdown.
+
+    Called during graceful shutdown (SIGTERM) so the gateway stops
+    routing new connections to this worker immediately.
+    """
+    if _redis_client is None:
+        return
+    try:
+        await _redis_client.hdel("worker_addresses", WORKER_ID)
+        await _redis_client.delete(f"worker_alive:{WORKER_ID}")
+        logger.info("Unregistered worker address (id=%s)", WORKER_ID)
+    except Exception as e:
+        logger.warning("Failed to unregister worker address: %s", e)
+
+
 def is_redis_enabled() -> bool:
     """Check if Redis is configured and connected."""
     return _redis_client is not None
@@ -360,12 +405,13 @@ def get_worker_id() -> str:
 async def shutdown_redis() -> None:
     """Clean shutdown of Redis connections.
 
-    Also removes this worker's load entry from the sorted set.
+    Unregisters worker address and removes load entry before closing.
     """
     global _subscriber_task, _pubsub, _redis_client
-    # Remove load entry before shutting down
+    # Unregister address and remove load entry before shutting down
     if _redis_client:
         try:
+            await unregister_worker_address()
             await _redis_client.zrem("worker_load", WORKER_ID)
         except Exception:
             pass

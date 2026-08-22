@@ -27,6 +27,11 @@ async def lifespan(app: FastAPI):
     await redis_pubsub.init_redis(room_manager.handle_redis_message)
     logger.info("Application started (worker_id=%s)", redis_pubsub.get_worker_id())
 
+    # Register worker address for direct gateway routing
+    if redis_pubsub.is_redis_enabled():
+        hostname = os.environ.get("HOSTNAME", "localhost")
+        await redis_pubsub.register_worker_address(hostname, 8000)
+
     # Start periodic load reporter (every 10 seconds)
     async def _report_load_periodically():
         while True:
