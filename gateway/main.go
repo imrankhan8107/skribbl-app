@@ -45,6 +45,7 @@ var (
 	redisURL     = flag.String("redis", "", "Redis URL (e.g. redis://redis:6379)")
 	backendAddrs = flag.String("backends", "localhost:8000", "Comma-separated backend worker addresses (host:port)")
 	defaultAddr  = flag.String("default-backend", "", "Default backend for create_room (least-loaded if Redis available)")
+	staticDir    = flag.String("static", "", "Path to static frontend files (e.g. /static)")
 )
 
 // ─── Metrics ─────────────────────────────────────────────────────────────────
@@ -103,6 +104,20 @@ func main() {
 	mux.HandleFunc("/ws", gw.HandleWebSocket)
 	mux.HandleFunc("/health", gw.HandleHealth)
 	mux.HandleFunc("/rooms/", gw.HandleCoord) // Coord: GET/POST /rooms/{index}
+
+	// Serve static frontend (SPA with fallback to index.html)
+	if *staticDir != "" {
+		fs := http.FileServer(http.Dir(*staticDir))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			// Try serving the file; if not found, serve index.html (SPA routing)
+			path := *staticDir + r.URL.Path
+			if _, err := os.Stat(path); os.IsNotExist(err) && r.URL.Path != "/" {
+				http.ServeFile(w, r, *staticDir+"/index.html")
+				return
+			}
+			fs.ServeHTTP(w, r)
+		})
+	}
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", *listenPort),

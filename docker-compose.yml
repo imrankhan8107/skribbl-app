@@ -1,12 +1,13 @@
 version: "3.9"
 
-# Multi-worker setup with Go gateway for direct worker routing.
+# Production-like setup: Go gateway serves frontend + WebSocket on port 9000.
+# Python workers handle game logic only (not exposed to host).
+#
 # Usage:
 #   docker compose up --build
-#   docker compose up --build --scale app=12
+#   docker compose up --build --scale app=8
 #
-# Access: ws://localhost:9000/ws (via Go gateway, direct to workers)
-# Static: http://localhost:80 (via nginx, frontend only)
+# Access: http://localhost:9000 (frontend + WebSocket, single origin)
 
 services:
   redis:
@@ -39,8 +40,9 @@ services:
 
   gateway:
     build:
-      context: ./gateway
-    command: ["-port", "9000", "-redis", "redis://redis:6379", "-backends", "app:8000"]
+      context: .
+      dockerfile: gateway/Dockerfile
+    command: ["-port", "9000", "-redis", "redis://redis:6379", "-backends", "app:8000", "-static", "/static"]
     depends_on:
       redis:
         condition: service_healthy
@@ -48,17 +50,6 @@ services:
         condition: service_started
     ports:
       - "9000:9000"
-    networks:
-      - skribbl-net
-
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx-static.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - app
     networks:
       - skribbl-net
 
