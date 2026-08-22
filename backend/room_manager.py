@@ -624,8 +624,8 @@ class RoomManager:
     async def broadcast(self, room_code: str, message: dict) -> None:
         """Send a JSON message to all connected players in a room.
 
-        First sends to all LOCAL connected players, then publishes to Redis
-        so other workers can relay the message to their local clients.
+        Uses asyncio.gather for concurrent fan-out — prevents one slow client
+        from blocking broadcasts to all other players.
 
         Args:
             room_code: The room code to broadcast to.
@@ -635,16 +635,14 @@ class RoomManager:
         if room is None:
             return
 
-        # Step 1: Send to all local connected players
+        # Step 1: Send to all local connected players concurrently
         data = json.dumps(message)
+        tasks = []
         for player in room.players:
             if player.is_connected and player.websocket is not None:
-                try:
-                    await player.websocket.send_text(data)
-                except Exception:
-                    # If sending fails, mark player as disconnected but don't
-                    # remove them here to avoid modifying the list during iteration
-                    pass
+                tasks.append(player.websocket.send_text(data))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         # Step 2: Publish to Redis for cross-worker relay (no-op if Redis not configured)
         if redis_pubsub.is_redis_enabled():
@@ -682,12 +680,12 @@ class RoomManager:
             return
 
         json_data = json.dumps(message)
+        tasks = []
         for player in room.players:
             if player.is_connected and player.websocket is not None:
-                try:
-                    await player.websocket.send_text(json_data)
-                except Exception:
-                    pass
+                tasks.append(player.websocket.send_text(json_data))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _handle_rpc(self, data: dict) -> None:
         """Handle an RPC request from another worker.

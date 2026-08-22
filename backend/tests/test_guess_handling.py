@@ -99,14 +99,19 @@ class TestCorrectGuess:
 
     @pytest.mark.asyncio
     async def test_correct_guess_awards_score(self):
-        """A correct guess awards a positive score to the player."""
+        """A correct guess tracks the player but defers scoring to end_turn."""
         room = _make_room_with_turn("apple")
         room_manager = _make_room_manager()
 
         initial_score = room.players[1].score
         await handle_guess(room, "player-1", "apple", room_manager)
 
-        assert room.players[1].score > initial_score
+        # Score is not awarded immediately — it's computed in end_turn with position
+        assert room.players[1].score == initial_score
+        # But the player is marked as having guessed
+        assert room.players[1].has_guessed is True
+        # And they're tracked in guess_order for position-based scoring
+        assert "player-1" in room.turn.guess_order
 
 
 class TestIncorrectGuess:

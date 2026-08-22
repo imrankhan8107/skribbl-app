@@ -354,6 +354,10 @@ async def handle_guess(room: Room, player_id: str, text: str, room_manager) -> N
     if room.turn is None or room.state != RoomState.PLAYING:
         return
 
+    # Guard against oversized input (prevents Levenshtein DoS)
+    if len(text) > 100:
+        return
+
     # Find the player
     player = room.get_player(player_id)
     if player is None:
@@ -377,13 +381,8 @@ async def handle_guess(room: Room, player_id: str, text: str, room_manager) -> N
         player.has_guessed = True
         player._guess_time = time.time()
 
-        # Track guess order for position-based scoring (no sort needed at end_turn)
+        # Track guess order for position-based scoring (scored in end_turn)
         room.turn.guess_order.append(player.id)
-
-        # Compute score
-        elapsed = player._guess_time - room.turn.start_time
-        score = compute_guesser_score(elapsed, room.config.turn_duration)
-        player.score += score
 
         # Broadcast guess_correct — do NOT include the word (Requirement 6.3, 6.6)
         await room_manager.broadcast(room.code, {

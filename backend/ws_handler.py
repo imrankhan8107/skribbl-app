@@ -55,6 +55,10 @@ async def websocket_handler(websocket: WebSocket) -> None:
         # Main message loop
         async for raw in websocket.iter_text():
             try:
+                # Guard against oversized messages (prevents JSON parsing DoS)
+                if len(raw) > 65536:
+                    await _send_error(websocket, "MESSAGE_TOO_LARGE", "Message exceeds 64KB limit")
+                    continue
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 await _send_error(websocket, "INVALID_MESSAGE", "Invalid JSON")
