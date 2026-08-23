@@ -19,6 +19,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend code
 COPY backend/ ./backend/
 
+# Copy proto definition and regenerate Python stubs to match installed protobuf version
+COPY proto/ ./proto/
+RUN python -m grpc_tools.protoc \
+    --python_out=backend/proto \
+    --grpc_python_out=backend/proto \
+    --proto_path=proto \
+    proto/game.proto \
+    && touch backend/proto/__init__.py \
+    && sed -i 's/import game_pb2/from backend.proto import game_pb2/' backend/proto/game_pb2_grpc.py
+
 # Copy built frontend from stage 1
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 

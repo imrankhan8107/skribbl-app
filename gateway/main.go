@@ -469,10 +469,9 @@ func (gw *Gateway) checkGRPCEnabled() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// SCAN for any worker_grpc_alive:* keys — finding one means gRPC is available
-	var cursor uint64
-	keys, _, err := gw.redis.Scan(ctx, cursor, "worker_grpc_alive:*", 1).Result()
-	if err != nil || len(keys) == 0 {
+	// Check if worker_grpc_addresses hash has any entries
+	count, err := gw.redis.HLen(ctx, "worker_grpc_addresses").Result()
+	if err != nil || count == 0 {
 		return false
 	}
 
