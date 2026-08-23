@@ -148,13 +148,15 @@ func main() {
 
 // Gateway is a transparent WebSocket proxy with room-aware routing.
 type Gateway struct {
-	backends []string
-	redis    *redis.Client
-	resolver *WorkerResolver
-	upgrader websocket.Upgrader
-	rrIndex  atomic.Uint64 // round-robin counter
-	mu       sync.Mutex
-	coordMap map[string]string // in-memory fallback for coord (no Redis)
+	backends        []string
+	redis           *redis.Client
+	resolver        *WorkerResolver
+	upgrader        websocket.Upgrader
+	rrIndex         atomic.Uint64 // round-robin counter
+	mu              sync.Mutex
+	coordMap        map[string]string // in-memory fallback for coord (no Redis)
+	streamManager   *StreamManager    // gRPC stream manager (nil if gRPC not configured)
+	fallbackHandler *FallbackHandler  // Fallback handler for gRPC/WS routing (nil if gRPC not configured)
 }
 
 // HandleWebSocket accepts a client connection, reads the first message to
@@ -433,11 +435,64 @@ func (gw *Gateway) roundRobin() string {
 	return gw.backends[int(idx-1)%len(gw.backends)]
 }
 
-// HandleHealth returns gateway metrics.
+// HandleHealth returns gateway metrics including gRPC status.
 func (gw *Gateway) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"status":"ok","active_clients":%d,"active_backends":%d,"total_connects":%d,"total_errors":%d}`,
-		activeClients.Load(), activeBackends.Load(), totalConnects.Load(), totalErrors.Load())
+
+	grpcEnabled := gw.checkGRPCEnabled()
+	streamsActive := gw.getActiveStreamCount()
+	fallbackRooms := gw.getFallbackRoomCount()
+
+	resp := map[string]interface{}{
+		"status":              "ok",
+		"active_clients":      activeClients.Load(),
+		"active_backends":     activeBackends.Load(),
+		"total_connects":      totalConnects.Load(),
+		"total_errors":        totalErrors.Load(),
+		"grpc_enabled":        grpcEnabled,
+		"grpc_streams_active": streamsActive,
+		"grpc_fallback_rooms": fallbackRooms,
+	}
+
+	data, _ := json.Marshal(resp)
+	w.Write(data)
+}
+
+// checkGRPCEnabled returns true if at least one worker has a valid
+// `worker_grpc_alive:*` liveness key in Redis. This indicates that gRPC
+// connectivity is operational.
+func (gw *Gateway) checkGRPCEnabled() bool {
+	if gw.redis == nil {
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// SCAN for any worker_grpc_alive:* keys — finding one means gRPC is available
+	var cursor uint64
+	keys, _, err := gw.redis.Scan(ctx, cursor, "worker_grpc_alive:*", 1).Result()
+	if err != nil || len(keys) == 0 {
+		return false
+	}
+
+	return true
+}
+
+// getActiveStreamCount returns the number of currently active gRPC Room_Streams.
+func (gw *Gateway) getActiveStreamCount() int {
+	if gw.streamManager == nil {
+		return 0
+	}
+	return gw.streamManager.ActiveStreamCount()
+}
+
+// getFallbackRoomCount returns the number of rooms currently in WS fallback mode.
+func (gw *Gateway) getFallbackRoomCount() int {
+	if gw.fallbackHandler == nil {
+		return 0
+	}
+	return gw.fallbackHandler.state.FallbackRoomCount()
 }
 
 // sendError sends a JSON error to a WebSocket client.

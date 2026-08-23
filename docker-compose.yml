@@ -26,11 +26,14 @@ services:
     build: .
     environment:
       - REDIS_URL=redis://redis:6379
+      - GRPC_ENABLED=true
+      - GRPC_PORT=50051
     depends_on:
       redis:
         condition: service_healthy
     expose:
       - "8000"
+      - "50051"
     ulimits:
       nofile:
         soft: 65535

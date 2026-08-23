@@ -1,0 +1,28 @@
+syntax = "proto3";
+package skribbl.gateway.v1;
+
+option go_package = "gateway/proto";
+
+// GameService provides bidirectional streaming for room-level communication.
+// One stream per room carries multiplexed messages for all players in that room.
+service GameService {
+  // Bidirectional stream: one per room.
+  // Gateway sends GameMessage (player actions), Worker sends BroadcastMessage (responses/broadcasts).
+  rpc RoomStream(stream GameMessage) returns (stream BroadcastMessage);
+}
+
+// Envelope for client→worker messages (multiplexed by player_id)
+message GameMessage {
+  string player_id = 1;
+  string room_code = 2;
+  string message_type = 3;    // "join_room", "guess", "stroke", etc.
+  bytes payload = 4;           // Original JSON payload from client
+}
+
+// Envelope for worker→client messages (broadcast or targeted)
+message BroadcastMessage {
+  string room_code = 1;
+  string message_type = 2;    // "player_list", "stroke", "chat_message", etc.
+  bytes payload = 3;           // JSON payload to deliver to client(s)
+  repeated string target_player_ids = 4;  // Empty = all players in room
+}

@@ -12,6 +12,7 @@ WORKDIR /app
 COPY gateway/go.mod gateway/go.sum ./
 RUN go mod download
 COPY gateway/*.go ./
+COPY gateway/proto/ ./proto/
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /gateway .
 
 # Stage 3: Runtime — gateway + frontend static files

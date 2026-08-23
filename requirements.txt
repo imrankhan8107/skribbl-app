@@ -4,3 +4,6 @@ uvloop==0.21.0
 websockets==13.1
 redis[hiredis]==5.0.0
 aiohttp
+grpcio==1.68.1
+grpcio-tools==1.68.1
+protobuf==5.29.2

@@ -22,8 +22,8 @@ COPY backend/ ./backend/
 # Copy built frontend from stage 1
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
-# Expose port
-EXPOSE 8000
+# Expose ports (8000 = HTTP/WS, 50051 = gRPC)
+EXPOSE 8000 50051
 
 # Run with uvicorn — tuned for high connection bursts
 CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --backlog 4096 --timeout-keep-alive 120 --loop uvloop"]

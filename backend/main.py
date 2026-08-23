@@ -15,6 +15,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.ws_handler import websocket_handler
 from backend import redis_pubsub
+from backend import grpc_registry
+from backend.grpc_metrics import get_grpc_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,27 @@ async def lifespan(app: FastAPI):
     if redis_pubsub.is_redis_enabled():
         hostname = os.environ.get("HOSTNAME", "localhost")
         await redis_pubsub.register_worker_address(hostname, 8000)
+
+    # Start gRPC server alongside FastAPI (same asyncio event loop)
+    grpc_server = None
+    grpc_ready = False
+    if grpc_registry.GRPC_ENABLED:
+        try:
+            from backend.grpc_server import start_grpc_server
+            grpc_server = await start_grpc_server(grpc_registry.GRPC_PORT)
+            logger.info("gRPC server started on port %d", grpc_registry.GRPC_PORT)
+
+            # Register in Redis if available
+            if redis_pubsub.is_redis_enabled():
+                hostname = os.environ.get("HOSTNAME", "localhost")
+                await grpc_registry.register_grpc_worker(
+                    redis_pubsub.get_worker_id(),
+                    hostname,
+                )
+                grpc_ready = grpc_registry.is_grpc_registered()
+        except Exception as e:
+            logger.error("Failed to start gRPC server: %s (continuing in WebSocket-only mode)", e)
+            grpc_server = None
 
     # Start periodic load reporter (every 10 seconds)
     async def _report_load_periodically():
@@ -59,6 +82,15 @@ async def lifespan(app: FastAPI):
             await load_task
         except asyncio.CancelledError:
             pass
+    # Unregister gRPC address before shutting down Redis
+    if grpc_ready:
+        await grpc_registry.unregister_grpc_worker(
+            redis_pubsub.get_worker_id(),
+        )
+    # Stop gRPC server
+    if grpc_server:
+        await grpc_server.stop(grace=5)
+        logger.info("gRPC server stopped")
     await redis_pubsub.shutdown_redis()
     logger.info("Application shutdown (worker_id=%s)", redis_pubsub.get_worker_id())
 
@@ -101,6 +133,20 @@ class StickySessionMiddleware(BaseHTTPMiddleware):
 # Only add sticky session middleware when Redis is configured (multi-worker mode)
 if redis_pubsub.REDIS_URL:
     app.add_middleware(StickySessionMiddleware)
+
+
+# Health endpoint — exposes worker status and gRPC metrics
+@app.get("/health")
+async def health_endpoint():
+    """Health check with gRPC stream metrics for operational dashboards."""
+    from backend.ws_handler import room_manager
+    grpc_metrics = get_grpc_metrics()
+    return {
+        "status": "ok",
+        "worker_id": redis_pubsub.get_worker_id(),
+        "grpc_enabled": grpc_registry.GRPC_ENABLED,
+        **grpc_metrics,
+    }
 
 
 # WebSocket endpoint — delegates to ws_handler for full message dispatch
