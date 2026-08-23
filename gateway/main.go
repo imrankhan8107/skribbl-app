@@ -95,6 +95,20 @@ func main() {
 		},
 	}
 
+	// Initialize gRPC multiplexing components if Redis is available
+	if rdb != nil {
+		config := DefaultStreamConfig()
+		gw.streamManager = NewStreamManager(gw.resolver, rdb, config)
+		sessionRegistry := NewSessionRegistry()
+		fanOut := NewFanOutDispatcher(sessionRegistry)
+		gw.streamManager.fanOut = fanOut
+		gw.streamManager.registry = sessionRegistry
+		gw.sessionRegistry = sessionRegistry
+		gw.fanOut = fanOut
+		gw.multiplexer = NewMultiplexer(gw.streamManager, sessionRegistry, gw.resolver, gw)
+		log.Printf("[gateway] gRPC multiplexing components initialized")
+	}
+
 	// Start resolver cache cleanup goroutine
 	if rdb != nil {
 		go gw.resolver.StartCleanup(context.Background())
@@ -156,11 +170,15 @@ type Gateway struct {
 	mu              sync.Mutex
 	coordMap        map[string]string // in-memory fallback for coord (no Redis)
 	streamManager   *StreamManager    // gRPC stream manager (nil if gRPC not configured)
+	sessionRegistry *SessionRegistry  // Player session registry for gRPC path
+	fanOut          *FanOutDispatcher // Fan-out dispatcher for gRPC broadcasts
+	multiplexer     *Multiplexer      // Client→worker message multiplexer
 	fallbackHandler *FallbackHandler  // Fallback handler for gRPC/WS routing (nil if gRPC not configured)
 }
 
-// HandleWebSocket accepts a client connection, reads the first message to
-// determine routing, then pipes bidirectionally to the backend worker.
+// HandleWebSocket accepts a client connection. If gRPC multiplexing is available,
+// it routes through the Multiplexer (shared Room_Streams). Otherwise, falls back
+// to the legacy per-player WebSocket proxy.
 func (gw *Gateway) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	connID := totalConnects.Add(1)
 	upgradeStart := time.Now()
@@ -182,6 +200,60 @@ func (gw *Gateway) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		activeClients.Add(-1)
 		clientConn.Close()
 	}()
+
+	// Try gRPC multiplexing path if components are initialized and gRPC is enabled
+	if gw.multiplexer != nil && gw.checkGRPCEnabled() {
+		gw.handleGRPCPath(clientConn, connID)
+		return
+	}
+
+	// Fall back to legacy per-player WebSocket proxy
+	gw.handleWSProxyPath(clientConn, connID, upgradeStart)
+}
+
+// handleGRPCPath handles a client connection via the gRPC multiplexing path.
+// Multiple players in the same room share a single gRPC stream to the worker.
+func (gw *Gateway) handleGRPCPath(clientConn *websocket.Conn, connID int64) {
+	// Create a temporary session for this client (identity assigned after create/join)
+	session := &PlayerSession{
+		PlayerID: fmt.Sprintf("pending_%d", connID),
+		Conn:     clientConn,
+		SendCh:   make(chan []byte, sendChBufferSize),
+		done:     make(chan struct{}),
+	}
+
+	// Start the write pump that drains SendCh to the client WebSocket
+	go gw.sessionRegistry.writePump(session)
+
+	defer func() {
+		close(session.done)
+		// Notify worker of disconnect if session was identified
+		if session.RoomCode != "" {
+			handleClientDisconnect(gw.sessionRegistry, gw.streamManager, session)
+		}
+		if connID%100 == 0 {
+			log.Printf("[gateway] GRPC_SESSION_END connID=%d player=%s room=%s", connID, session.PlayerID, session.RoomCode)
+		}
+	}()
+
+	// Read loop: read messages from client and route through the Multiplexer
+	for {
+		clientConn.SetReadDeadline(time.Now().Add(120 * time.Second))
+		_, msg, err := clientConn.ReadMessage()
+		if err != nil {
+			return
+		}
+		clientConn.SetReadDeadline(time.Time{})
+
+		if err := gw.multiplexer.HandleClientMessage(session, msg); err != nil {
+			log.Printf("[gateway] MULTIPLEXER_ERROR connID=%d err=%v", connID, err)
+			return
+		}
+	}
+}
+
+// handleWSProxyPath is the legacy per-player WebSocket proxy fallback.
+func (gw *Gateway) handleWSProxyPath(clientConn *websocket.Conn, connID int64, upgradeStart time.Time) {
 
 	// Step 1: Read the first message to determine routing
 	readStart := time.Now()

@@ -82,7 +82,9 @@ type StreamManager struct {
 	resolver   *WorkerResolver
 	redis      *redis.Client
 	config     StreamConfig
-	directAddr string // Direct gRPC address (bypasses Redis discovery)
+	directAddr string          // Direct gRPC address (bypasses Redis discovery)
+	fanOut     *FanOutDispatcher // For starting receive loops on new streams
+	registry   *SessionRegistry  // For receiver disconnect handling
 }
 
 // NewStreamManager creates a StreamManager with the given resolver and config.
@@ -164,6 +166,11 @@ func (sm *StreamManager) GetOrCreate(roomCode string, workerID string) (*RoomStr
 
 	// Start the send loop goroutine
 	go sm.sendLoop(rs)
+
+	// Start the receive loop goroutine (delivers worker broadcasts to clients)
+	if sm.fanOut != nil {
+		go startStreamReceiver(sm, sm.fanOut, sm.registry, rs)
+	}
 
 	log.Printf("[stream_manager] Stream opened room=%s worker=%s addr=%s", roomCode, workerID, addr)
 	return rs, nil
