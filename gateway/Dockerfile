@@ -7,7 +7,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Build Go gateway
-FROM golang:1.22-alpine AS go-build
+FROM golang:1.25-alpine AS go-build
 WORKDIR /app
 COPY gateway/go.mod gateway/go.sum ./
 RUN go mod download
