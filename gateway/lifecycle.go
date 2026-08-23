@@ -20,6 +20,10 @@ import (
 //
 // The keepalive message uses a special GameMessage with message_type="keepalive".
 // The worker is expected to echo back a BroadcastMessage with message_type="pong".
+//
+// Pong detection relies on rs.lastActivity being updated by the receiver goroutine
+// when any message (including pong) arrives. This avoids calling Recv() from
+// the keepalive goroutine which would race with the receiver.
 func startKeepalive(sm *StreamManager, rs *RoomStream) {
 	interval := sm.config.KeepaliveInterval
 	timeout := sm.config.KeepaliveTimeout
@@ -35,6 +39,9 @@ func startKeepalive(sm *StreamManager, rs *RoomStream) {
 				return
 			}
 
+			// Record the time before sending the ping
+			pingTime := time.Now()
+
 			// Send keepalive ping
 			ping := &proto.GameMessage{
 				RoomCode:    rs.roomCode,
@@ -48,37 +55,43 @@ func startKeepalive(sm *StreamManager, rs *RoomStream) {
 				return
 			}
 
-			// Wait for pong with timeout
-			pongReceived := make(chan struct{}, 1)
+			// Wait for activity from the receiver goroutine (which handles pong).
+			// Instead of calling Recv() here (which races with startStreamReceiver),
+			// we poll lastActivity to see if the receiver got any message after our ping.
+			deadline := time.After(timeout)
+			pongDetected := false
+			pollTicker := time.NewTicker(100 * time.Millisecond)
 
-			go func() {
-				// Attempt to receive a message — we expect a pong back
-				msg, err := rs.stream.Recv()
-				if err != nil {
+		waitLoop:
+			for {
+				select {
+				case <-deadline:
+					break waitLoop
+				case <-pollTicker.C:
+					// Check if any activity occurred after we sent the ping
+					if lastAct, ok := rs.lastActivity.Load().(time.Time); ok {
+						if lastAct.After(pingTime) {
+							pongDetected = true
+							break waitLoop
+						}
+					}
+				case <-rs.done:
+					pollTicker.Stop()
 					return
 				}
-				if msg.GetMessageType() == "pong" {
-					select {
-					case pongReceived <- struct{}{}:
-					default:
-					}
-				}
-			}()
+			}
+			pollTicker.Stop()
 
-			select {
-			case <-pongReceived:
-				// Pong received — stream is healthy
-				rs.markActivity()
-			case <-time.After(timeout):
-				// No pong within timeout — mark stream dead
+			if !pongDetected {
+				// No response within timeout — mark stream dead
 				log.Printf("[lifecycle] keepalive timeout room=%s (no pong within %v)", rs.roomCode, timeout)
 				rs.state.Store(streamStateDead)
 				go handleStreamDisconnect(sm, rs)
 				return
-			case <-rs.done:
-				// Stream closed externally
-				return
 			}
+
+			// Pong detected — stream is healthy
+			rs.markActivity()
 
 		case <-rs.done:
 			// Stream closed — stop keepalive

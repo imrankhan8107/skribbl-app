@@ -214,22 +214,27 @@ func (gw *Gateway) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 // handleGRPCPath handles a client connection via the gRPC multiplexing path.
 // Multiple players in the same room share a single gRPC stream to the worker.
 func (gw *Gateway) handleGRPCPath(clientConn *websocket.Conn, connID int64) {
-	// Create a temporary session for this client (identity assigned after create/join)
-	session := &PlayerSession{
-		PlayerID: fmt.Sprintf("pending_%d", connID),
-		Conn:     clientConn,
-		SendCh:   make(chan []byte, sendChBufferSize),
-		done:     make(chan struct{}),
+	// Generate a pending player ID for this connection
+	pendingPlayerID := fmt.Sprintf("pending_%d", connID)
+
+	// Register the session in the registry immediately. This starts the writePump
+	// and makes the session discoverable by fan-out when responses arrive.
+	gw.sessionRegistry.Register(pendingPlayerID, "", clientConn)
+
+	// Get the session object from the registry (owned by the registry)
+	session := gw.sessionRegistry.GetByPlayer(pendingPlayerID)
+	if session == nil {
+		// Should not happen, but defensive
+		return
 	}
 
-	// Start the write pump that drains SendCh to the client WebSocket
-	go gw.sessionRegistry.writePump(session)
-
 	defer func() {
-		close(session.done)
 		// Notify worker of disconnect if session was identified
 		if session.RoomCode != "" {
 			handleClientDisconnect(gw.sessionRegistry, gw.streamManager, session)
+		} else {
+			// Clean up the pending session
+			gw.sessionRegistry.Unregister(session.PlayerID)
 		}
 		if connID%100 == 0 {
 			log.Printf("[gateway] GRPC_SESSION_END connID=%d player=%s room=%s", connID, session.PlayerID, session.RoomCode)

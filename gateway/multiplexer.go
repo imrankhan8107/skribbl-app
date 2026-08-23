@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -15,15 +14,16 @@ import (
 // Multiplexer handles wrapping client WebSocket messages into gRPC GameMessage
 // envelopes and routing them through the StreamManager to the correct worker.
 // It implements the client-to-worker message multiplexing path (Requirement 4).
+//
+// All responses (including room_created, room_joined, reconnected) flow back
+// through the receiver goroutine → fan-out dispatcher → session SendCh.
+// The multiplexer never calls Recv() — this eliminates the race condition
+// between waitForRoomCreated and startStreamReceiver.
 type Multiplexer struct {
 	streamMgr *StreamManager
 	registry  *SessionRegistry
 	resolver  *WorkerResolver
 	gateway   *Gateway
-
-	// creationMu serializes create_room operations to prevent duplicate streams
-	// being opened for the same (not-yet-known) room_code.
-	creationMu sync.Mutex
 }
 
 // NewMultiplexer creates a Multiplexer with all required dependencies.
@@ -94,18 +94,16 @@ func (m *Multiplexer) HandleClientMessage(session *PlayerSession, rawMsg []byte)
 	return m.streamMgr.Send(session.RoomCode, envelope)
 }
 
-// handleCreateRoom handles the create_room flow:
+// handleCreateRoom handles the create_room flow asynchronously:
 // 1. Select the least-loaded worker
-// 2. Open a new Room_Stream to that worker (with creation lock)
+// 2. Open a Room_Stream to the worker (keyed by workerID for create_room)
 // 3. Send the create_room envelope
-// 4. Wait for the room_created response to extract room_code
-// 5. Register the stream under the new room_code
-// 6. Register the player session
+// 4. Return immediately — the response arrives via receiver → fan-out → SendCh
+//
+// The session is already registered in the registry by handleGRPCPath with the
+// pending PlayerID. The response interceptor in the receiver updates the session's
+// PlayerID and RoomCode when the room_created response arrives.
 func (m *Multiplexer) handleCreateRoom(session *PlayerSession, rawMsg []byte, payloadRaw json.RawMessage) error {
-	// Hold creation lock to prevent concurrent create_room racing on stream assignment
-	m.creationMu.Lock()
-	defer m.creationMu.Unlock()
-
 	// Select the least-loaded worker
 	workerID := m.selectLeastLoadedWorker()
 	if workerID == "" {
@@ -120,76 +118,47 @@ func (m *Multiplexer) handleCreateRoom(session *PlayerSession, rawMsg []byte, pa
 		return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Backend worker gRPC unavailable")
 	}
 
-	// Use a temporary room code for stream creation. We'll re-register
-	// once we know the real room_code from the worker response.
-	tempRoomCode := fmt.Sprintf("_pending_%s_%d", session.PlayerID, time.Now().UnixNano())
-
-	// Open a new Room_Stream to the worker
-	rs, err := m.streamMgr.GetOrCreate(tempRoomCode, workerID)
+	// Use workerID as the stream key for create_room since room_code is unknown.
+	// Multiple create_room requests to the same worker share one stream.
+	_, err = m.streamMgr.GetOrCreate(workerID, workerID)
 	if err != nil {
 		return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Failed to open stream to worker")
 	}
 
-	// Send the create_room envelope
+	// Send the create_room envelope — response arrives via receiver → fan-out
 	envelope := &proto.GameMessage{
 		PlayerId:    session.PlayerID,
-		RoomCode:    "", // Will be assigned by worker
+		RoomCode:    "",
 		MessageType: "create_room",
 		Payload:     rawMsg,
 	}
 
-	if err := rs.stream.Send(envelope); err != nil {
-		m.streamMgr.MarkUnhealthy(tempRoomCode)
+	if err := m.streamMgr.Send(workerID, envelope); err != nil {
 		return m.sendErrorToClient(session.Conn, "STREAM_ERROR", "Failed to send create_room to worker")
 	}
 
-	// Wait for the room_created response from the worker
-	resp, err := m.waitForRoomCreated(rs, 10*time.Second)
-	if err != nil {
-		m.streamMgr.MarkUnhealthy(tempRoomCode)
-		return m.sendErrorToClient(session.Conn, "TIMEOUT", "Timed out waiting for room creation")
-	}
+	// Track the player on this worker stream for proper cleanup
+	m.streamMgr.AddPlayer(workerID)
 
-	roomCode := resp.RoomCode
-	if roomCode == "" {
-		m.streamMgr.MarkUnhealthy(tempRoomCode)
-		return m.sendErrorToClient(session.Conn, "STREAM_ERROR", "Worker returned empty room_code")
-	}
+	// Store the workerID on the session so the response interceptor knows
+	// which worker stream to associate with the new room.
+	// RoomCode is temporarily set to workerID; the interceptor replaces it
+	// with the real room_code when room_created arrives.
+	session.RoomCode = workerID
 
-	// Re-register the stream under the real room_code
-	m.streamMgr.Close(tempRoomCode)
-	_, err = m.streamMgr.GetOrCreate(roomCode, workerID)
-	if err != nil {
-		return m.sendErrorToClient(session.Conn, "STREAM_ERROR", "Failed to register stream for room")
-	}
-	m.streamMgr.AddPlayer(roomCode)
-
-	// Extract player_id from the response payload
-	playerID := extractPlayerID(resp.Payload)
-	if playerID == "" {
-		playerID = session.PlayerID // fallback: use existing if set
-	}
-
-	// Update session with player identity
-	session.PlayerID = playerID
-	session.RoomCode = roomCode
-
-	// Register in session registry
-	m.registry.Register(playerID, roomCode, session.Conn)
-
-	// Deliver the response to the client
-	if resp.Payload != nil {
-		m.deliverToClient(session, resp.Payload)
-	}
-
-	log.Printf("[multiplexer] create_room complete player=%s room=%s worker=%s", playerID, roomCode, workerID)
+	log.Printf("[multiplexer] create_room sent player=%s worker=%s (async)", session.PlayerID, workerID)
 	return nil
 }
 
-// handleJoinRoom handles the join_room and reconnect flow:
+// handleJoinRoom handles the join_room and reconnect flow asynchronously:
 // 1. Resolve the worker owning the room via Redis
 // 2. Get or create the Room_Stream for that room
 // 3. Send the envelope over the stream
+// 4. Return immediately — the response arrives via receiver → fan-out → SendCh
+//
+// The session is already registered in the registry by handleGRPCPath with the
+// pending PlayerID. The response interceptor in the receiver updates the session's
+// PlayerID when the room_joined/reconnected response arrives.
 func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, roomCode string) error {
 	// Resolve which worker owns this room
 	workerID := m.resolveRoomOwner(roomCode)
@@ -205,6 +174,10 @@ func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, room
 		return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Backend worker gRPC unavailable for room "+roomCode)
 	}
 
+	// Update the session's room in the registry so fan-out can find it
+	// for room-wide broadcasts after join.
+	m.registry.UpdateIdentity(session.PlayerID, session.PlayerID, roomCode)
+
 	// Get or create the Room_Stream for this room
 	_, err = m.streamMgr.GetOrCreate(roomCode, workerID)
 	if err != nil {
@@ -212,14 +185,8 @@ func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, room
 	}
 
 	// Send the envelope over the stream
-	// Use a temporary player_id until the worker confirms identity
-	playerID := session.PlayerID
-	if playerID == "" {
-		playerID = fmt.Sprintf("pending_%d", time.Now().UnixNano())
-	}
-
 	envelope := &proto.GameMessage{
-		PlayerId:    playerID,
+		PlayerId:    session.PlayerID,
 		RoomCode:    roomCode,
 		MessageType: "join_room",
 		Payload:     rawMsg,
@@ -229,13 +196,11 @@ func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, room
 		return m.sendErrorToClient(session.Conn, "STREAM_ERROR", "Failed to send message to worker")
 	}
 
-	// Optimistically set room_code on session so subsequent messages route correctly.
-	// The session registry registration will be finalized when the worker responds
-	// with a success message (handled by the receive loop / fan-out dispatcher).
+	// Set room_code on session so subsequent messages route correctly
 	session.RoomCode = roomCode
 	m.streamMgr.AddPlayer(roomCode)
 
-	log.Printf("[multiplexer] join_room sent player=%s room=%s worker=%s", playerID, roomCode, workerID)
+	log.Printf("[multiplexer] join_room sent player=%s room=%s worker=%s (async)", session.PlayerID, roomCode, workerID)
 	return nil
 }
 
@@ -296,32 +261,6 @@ func (m *Multiplexer) isGRPCAlive(ctx context.Context, workerID string) (bool, e
 	return exists > 0, nil
 }
 
-// waitForRoomCreated blocks until a BroadcastMessage with message_type
-// containing room creation confirmation is received on the stream, or
-// until the timeout expires.
-func (m *Multiplexer) waitForRoomCreated(rs *RoomStream, timeout time.Duration) (*proto.BroadcastMessage, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	// Read from the stream until we get a response
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("timeout waiting for room_created response")
-		default:
-			resp, err := rs.stream.Recv()
-			if err != nil {
-				return nil, fmt.Errorf("stream recv error: %w", err)
-			}
-			// Check if this is the room creation response
-			if resp.MessageType == "room_created" || resp.RoomCode != "" {
-				return resp, nil
-			}
-			// Not the response we want — continue reading
-		}
-	}
-}
-
 // extractPlayerID extracts the player_id from a BroadcastMessage JSON payload.
 func extractPlayerID(payload []byte) string {
 	if payload == nil {
@@ -345,6 +284,30 @@ func extractPlayerID(payload []byte) string {
 		return flat.PlayerID
 	}
 	return resp.Payload.PlayerID
+}
+
+// extractRoomCode extracts the room_code from a BroadcastMessage JSON payload.
+func extractRoomCode(payload []byte) string {
+	if payload == nil {
+		return ""
+	}
+
+	var resp struct {
+		Type    string `json:"type"`
+		Payload struct {
+			RoomCode string `json:"room_code"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(payload, &resp); err != nil {
+		var flat struct {
+			RoomCode string `json:"room_code"`
+		}
+		if err := json.Unmarshal(payload, &flat); err != nil {
+			return ""
+		}
+		return flat.RoomCode
+	}
+	return resp.Payload.RoomCode
 }
 
 // deliverToClient sends a raw message to the client's WebSocket via their SendCh.

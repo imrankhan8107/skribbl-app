@@ -125,6 +125,45 @@ func (sr *SessionRegistry) Update(playerID string, conn *websocket.Conn) {
 	go sr.writePump(newSession)
 }
 
+// UpdateIdentity re-indexes a session from an old player_id to a new player_id
+// and/or room_code. This is used when the worker confirms identity after
+// create_room/join_room — the session transitions from "pending_X" to the
+// real player_id and room_code.
+//
+// The session's SendCh and writePump are preserved (no new goroutines).
+// Only the registry indices are updated.
+func (sr *SessionRegistry) UpdateIdentity(oldPlayerID, newPlayerID, newRoomCode string) {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+
+	session, ok := sr.sessions[oldPlayerID]
+	if !ok {
+		return
+	}
+
+	// Remove from old indices
+	delete(sr.sessions, oldPlayerID)
+	if roomMap := sr.byRoom[session.RoomCode]; roomMap != nil {
+		delete(roomMap, oldPlayerID)
+		if len(roomMap) == 0 {
+			delete(sr.byRoom, session.RoomCode)
+		}
+	}
+
+	// Update the session fields in-place
+	session.PlayerID = newPlayerID
+	if newRoomCode != "" {
+		session.RoomCode = newRoomCode
+	}
+
+	// Re-insert under new indices
+	sr.sessions[newPlayerID] = session
+	if sr.byRoom[session.RoomCode] == nil {
+		sr.byRoom[session.RoomCode] = make(map[string]*PlayerSession)
+	}
+	sr.byRoom[session.RoomCode][newPlayerID] = session
+}
+
 // GetByRoom returns a snapshot of all player sessions in the given room.
 // Returns nil if the room has no sessions.
 func (sr *SessionRegistry) GetByRoom(roomCode string) []*PlayerSession {
