@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"sync"
-	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -227,8 +226,6 @@ func (sr *SessionRegistry) writePump(session *PlayerSession) {
 			if !ok {
 				return
 			}
-			// Set a write deadline to avoid blocking indefinitely on slow clients
-			session.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := session.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 				log.Printf("[session] writePump error player=%s err=%v", session.PlayerID, err)
 				return

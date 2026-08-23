@@ -243,12 +243,11 @@ func (gw *Gateway) handleGRPCPath(clientConn *websocket.Conn, connID int64) {
 
 	// Read loop: read messages from client and route through the Multiplexer
 	for {
-		clientConn.SetReadDeadline(time.Now().Add(120 * time.Second))
 		_, msg, err := clientConn.ReadMessage()
 		if err != nil {
+			log.Printf("[gateway] GRPC_READ_ERROR connID=%d player=%s room=%s err=%v", connID, session.PlayerID, session.RoomCode, err)
 			return
 		}
-		clientConn.SetReadDeadline(time.Time{})
 
 		if err := gw.multiplexer.HandleClientMessage(session, msg); err != nil {
 			log.Printf("[gateway] MULTIPLEXER_ERROR connID=%d err=%v", connID, err)

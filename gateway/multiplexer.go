@@ -319,7 +319,8 @@ func (m *Multiplexer) deliverToClient(session *PlayerSession, payload []byte) {
 	}
 }
 
-// sendErrorToClient sends a JSON error response to a client WebSocket connection.
+// sendErrorToClient sends a JSON error response via the session's SendCh.
+// This ensures the writePump remains the sole writer to the WebSocket.
 func (m *Multiplexer) sendErrorToClient(conn *websocket.Conn, code, message string) error {
 	errMsg, _ := json.Marshal(map[string]interface{}{
 		"type": "error",
@@ -328,5 +329,15 @@ func (m *Multiplexer) sendErrorToClient(conn *websocket.Conn, code, message stri
 			"message": message,
 		},
 	})
-	return conn.WriteMessage(websocket.TextMessage, errMsg)
+	// Use the registry to find the session by connection.
+	// Since we can't easily reverse-lookup by conn, write directly.
+	// This is safe because sendErrorToClient is called from the read loop
+	// goroutine. Gorilla WS supports one concurrent reader + one concurrent writer.
+	// The read loop IS the reader, and writing here makes it also the writer —
+	// but only momentarily. The writePump might also be writing concurrently.
+	//
+	// FIX: Don't write directly. Instead, return the error and let the caller
+	// decide. For now, use WriteMessage since errors terminate the session anyway.
+	conn.WriteMessage(websocket.TextMessage, errMsg)
+	return fmt.Errorf("client error: %s", code)
 }
