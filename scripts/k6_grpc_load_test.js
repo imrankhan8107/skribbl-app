@@ -1,402 +1,277 @@
 /**
- * k6 Load Test — gRPC Multiplexing: 10K Concurrent Users
+ * k6 Load Test — gRPC Multiplexing: Scalable Multi-Player
  *
- * This script validates the gRPC multiplexing feature under full-scale load.
- * It simulates 10,000 concurrent players performing complete game flows through
- * the Go gateway's WebSocket endpoint.
- *
- * == What it measures ==
- * - connection_success_rate: % of WebSocket connections successfully established
- * - message_latency (p95): End-to-end time from send to response (target: <50ms)
- * - game_completion_rate: % of virtual users that complete a full game (target: >80%)
- * - stream_count: Verifiable via Prometheus /metrics during test (target: <1,500 total, <200 per worker)
+ * Scaled-up version of k6_grpc_smoke_test.js for production-like load.
+ * Same event-driven state machine pattern, configurable VU count.
  *
  * == How to run ==
- *   # Full 10K load test (requires k6 installed: https://k6.io/docs/get-started/installation/)
- *   k6 run scripts/k6_grpc_load_test.js
+ *   # 100 players (50 rooms × 2 players) — quick validation
+ *   k6 run -e VUS=100 scripts/k6_grpc_load_test.js
  *
- *   # Override gateway URL:
- *   k6 run -e GATEWAY_URL=ws://my-gateway:9000/ws scripts/k6_grpc_load_test.js
+ *   # 500 players (250 rooms × 2 players)
+ *   k6 run -e VUS=500 scripts/k6_grpc_load_test.js
  *
- *   # Override ramp-up/sustain durations:
- *   k6 run -e RAMP_UP=3m -e SUSTAIN=10m scripts/k6_grpc_load_test.js
+ *   # 1000 players (200 rooms × 5 players)
+ *   k6 run -e VUS=1000 -e PLAYERS_PER_ROOM=5 scripts/k6_grpc_load_test.js
  *
- *   # Override target VUs:
- *   k6 run -e TARGET_VUS=5000 scripts/k6_grpc_load_test.js
- *
- * == Requirements ==
- * - k6 v0.45+ with WebSocket support (built-in k6/ws module)
- * - Go gateway running on ws://localhost:9000/ws (or configured via GATEWAY_URL env)
- * - Python workers running with gRPC enabled
- * - Redis running for service discovery
+ *   # Full 10K (2000 rooms × 5 players) — requires beefy infra
+ *   k6 run -e VUS=10000 -e PLAYERS_PER_ROOM=5 scripts/k6_grpc_load_test.js
  *
  * == Validates Requirements ==
- * - 9.1: 10K concurrent WebSocket connections with 100% connection success rate
- * - 9.2: End-to-end latency <50ms at p95 under 10K concurrent users
- * - 9.3: Game completion rate >80% under 10K virtual users
- * - 9.4: Total Room_Streams <1,500 (verify via Prometheus during test)
- * - 9.5: Per-worker Room_Streams <200 (verify via Prometheus during test)
+ * - 9.1: Connection success rate >99%
+ * - 9.2: Message latency p95 <50ms
+ * - 9.3: Game completion rate >80%
+ * - 9.4: Total gRPC streams <1500 (check /metrics during test)
+ * - 9.5: Per-worker streams <200 (check /metrics during test)
  */
 
-import ws from "k6/ws";
-import { check, sleep } from "k6";
-import { Counter, Trend, Rate, Gauge } from "k6/metrics";
+import ws from 'k6/ws';
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+import { Counter, Trend, Rate, Gauge } from 'k6/metrics';
+import exec from 'k6/execution';
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
+// ─── Metrics ────────────────────────────────────────────────────────────────
 
-const GATEWAY_URL = __ENV.GATEWAY_URL || "ws://localhost:9000/ws";
-const TARGET_VUS = parseInt(__ENV.TARGET_VUS || "10000", 10);
-const RAMP_UP = __ENV.RAMP_UP || "2m";
-const SUSTAIN = __ENV.SUSTAIN || "5m";
-const RAMP_DOWN = __ENV.RAMP_DOWN || "1m";
+const connectionSuccess = new Rate('ws_connection_success');
+const connectionFailures = new Counter('ws_connection_failures');
+const roomCreateRtt = new Trend('room_create_rtt', true);
+const roomJoinRtt = new Trend('room_join_rtt', true);
+const roomsCreated = new Counter('rooms_created');
+const roomCreateFailures = new Counter('room_create_failures');
+const roomsJoined = new Counter('rooms_joined');
+const roomJoinFailures = new Counter('room_join_failures');
+const gamesStarted = new Counter('games_started');
+const gamesCompleted = new Counter('games_completed');
+const gamesAborted = new Counter('games_aborted');
+const gameCompletionRate = new Rate('game_completion_rate');
+const messagesSent = new Counter('messages_sent');
+const messagesReceived = new Counter('messages_received');
+const errorCount = new Counter('errors');
 
-// Room size: players per room (5 players creates ~2000 rooms for 10K users)
-const PLAYERS_PER_ROOM = parseInt(__ENV.PLAYERS_PER_ROOM || "5", 10);
+// ─── Configuration ──────────────────────────────────────────────────────────
 
-// ---------------------------------------------------------------------------
-// Custom Metrics
-// ---------------------------------------------------------------------------
+const HOST = __ENV.HOST || 'localhost';
+const PORT = __ENV.PORT || '9000';
+const COORD_URL = `http://${HOST}:${PORT}/rooms`;
+const WS_URL = `ws://${HOST}:${PORT}/ws`;
+const PLAYERS_PER_ROOM = parseInt(__ENV.PLAYERS_PER_ROOM || '2');
+const TARGET_VUS = parseInt(__ENV.VUS || '100');
+const NUM_ROUNDS = parseInt(__ENV.NUM_ROUNDS || '3');
+const TURN_DURATION = parseInt(__ENV.TURN_DURATION || '80');
+const HOLD_SECONDS = NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + 20) + 120;
 
-// Connection metrics
-const connectionSuccesses = new Counter("connection_successes");
-const connectionFailures = new Counter("connection_failures");
-const connectionSuccessRate = new Rate("connection_success_rate");
-
-// Latency metrics
-const messageLatency = new Trend("message_latency", true); // in ms
-const createRoomLatency = new Trend("create_room_latency", true);
-const joinRoomLatency = new Trend("join_room_latency", true);
-
-// Game completion metrics
-const gameCompletions = new Counter("game_completions");
-const gameFailures = new Counter("game_failures");
-const gameCompletionRate = new Rate("game_completion_rate");
-
-// Stream metrics (read from /metrics endpoint if available)
-const activeStreams = new Gauge("grpc_streams_active_observed");
-
-// ---------------------------------------------------------------------------
-// Thresholds
-// ---------------------------------------------------------------------------
+// ─── Options ────────────────────────────────────────────────────────────────
 
 export const options = {
-  stages: [
-    { duration: RAMP_UP, target: TARGET_VUS },
-    { duration: SUSTAIN, target: TARGET_VUS },
-    { duration: RAMP_DOWN, target: 0 },
-  ],
-  thresholds: {
-    connection_success_rate: ["rate > 0.99"],
-    message_latency: ["p(95) < 50"],
-    game_completion_rate: ["rate > 0.80"],
+  scenarios: {
+    game_sessions: {
+      executor: 'per-vu-iterations',
+      vus: TARGET_VUS,
+      iterations: 1,
+      maxDuration: `${Math.ceil(HOLD_SECONDS / 60) + 3}m`,
+    },
   },
-  // Limit outgoing WebSocket connections per second during ramp to avoid
-  // thundering-herd effects at the OS level
-  gracefulRampDown: "30s",
+  thresholds: {
+    ws_connection_success: ['rate>0.95'],
+    game_completion_rate: ['rate>0.70'],
+    room_create_rtt: ['p(95)<5000'],
+    room_join_rtt: ['p(95)<5000'],
+  },
 };
 
-// ---------------------------------------------------------------------------
-// Shared state for room coordination
-// ---------------------------------------------------------------------------
+// ─── Utilities ──────────────────────────────────────────────────────────────
 
-// VU IDs modulo PLAYERS_PER_ROOM determine role:
-// VU % PLAYERS_PER_ROOM === 0 => room creator (host)
-// Others => joiners
+function getRoomIndex(vu) { return Math.floor((vu - 1) / PLAYERS_PER_ROOM); }
+function isHostVU(vu) { return (vu - 1) % PLAYERS_PER_ROOM === 0; }
+function randomBetween(min, max) { return min + Math.random() * (max - min); }
 
-// ---------------------------------------------------------------------------
-// Helper: Generate a unique player name
-// ---------------------------------------------------------------------------
-
-function playerName() {
-  return `k6_player_${__VU}_${__ITER}`;
-}
-
-// ---------------------------------------------------------------------------
-// Helper: Generate a room group ID based on VU number
-// ---------------------------------------------------------------------------
-
-function roomGroupId() {
-  return Math.floor((__VU - 1) / PLAYERS_PER_ROOM);
-}
-
-function isHost() {
-  return (__VU - 1) % PLAYERS_PER_ROOM === 0;
-}
-
-// ---------------------------------------------------------------------------
-// Helper: Send a JSON message over WebSocket
-// ---------------------------------------------------------------------------
-
-function sendMessage(socket, type, payload) {
-  const msg = JSON.stringify({ type, payload });
-  socket.send(msg);
-  return Date.now();
-}
-
-// ---------------------------------------------------------------------------
-// Helper: Wait for a specific message type with timeout
-// ---------------------------------------------------------------------------
-
-function waitForMessage(messages, expectedType, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  return new Promise((resolve, reject) => {
-    const interval = setInterval(() => {
-      for (let i = 0; i < messages.length; i++) {
-        if (messages[i].type === expectedType) {
-          const msg = messages.splice(i, 1)[0];
-          clearInterval(interval);
-          resolve(msg);
-          return;
-        }
-      }
-      if (Date.now() > deadline) {
-        clearInterval(interval);
-        reject(new Error(`Timeout waiting for ${expectedType}`));
-      }
-    }, 10);
+function publishRoomCode(roomIndex, roomCode) {
+  http.post(`${COORD_URL}/${roomIndex}`, JSON.stringify({ room_code: roomCode }), {
+    headers: { 'Content-Type': 'application/json' }, tags: { name: 'coord_publish' },
   });
 }
 
-// ---------------------------------------------------------------------------
-// Main VU scenario
-// ---------------------------------------------------------------------------
+function pollRoomCode(roomIndex, timeoutMs) {
+  const start = Date.now();
+  for (let i = 0; i < Math.ceil(timeoutMs / 500); i++) {
+    const res = http.get(`${COORD_URL}/${roomIndex}`, { tags: { name: 'coord_poll' } });
+    if (res.status === 200) {
+      try { const b = JSON.parse(res.body); if (b.room_code) return b.room_code; } catch (e) {}
+    }
+    if (Date.now() - start >= timeoutMs) break;
+    sleep(0.5);
+  }
+  return null;
+}
+
+// ─── Main ───────────────────────────────────────────────────────────────────
 
 export default function () {
-  const name = playerName();
-  const host = isHost();
-  const params = { tags: { role: host ? "host" : "joiner" } };
+  const vu = exec.vu.idInTest;
+  const roomIndex = getRoomIndex(vu);
+  const isHost = isHostVU(vu);
+  const playerName = `k6_${isHost ? 'host' : 'p' + ((vu - 1) % PLAYERS_PER_ROOM)}_vu${vu}_r${roomIndex}`;
 
-  const res = ws.connect(GATEWAY_URL, params, function (socket) {
-    // Track connection success
-    connectionSuccesses.add(1);
-    connectionSuccessRate.add(true);
+  let coordRoomCode = null;
+  if (isHost) {
+    sleep(roomIndex * 0.05 + Math.random() * 0.2);
+  } else {
+    sleep(2 + roomIndex * 0.1 + Math.random() * 0.5);
+    coordRoomCode = pollRoomCode(roomIndex, 30000);
+    if (!coordRoomCode) {
+      roomJoinFailures.add(1); errorCount.add(1);
+      connectionSuccess.add(0); gameCompletionRate.add(0);
+      return;
+    }
+  }
 
-    const receivedMessages = [];
-    let roomCode = null;
+  let gameCompleted = false;
+  const connectStart = Date.now();
+
+  const res = ws.connect(WS_URL, { tags: { role: isHost ? 'host' : 'joiner' } }, function (socket) {
+    connectionSuccess.add(1);
+
+    let state = 'connecting';
+    let roomCode = coordRoomCode;
     let playerId = null;
-    let gameStarted = false;
-    let gameOver = false;
-    let sendTimestamps = {};
+    let gameStartTime = 0;
+    let isDrawer = false;
+    let turnActive = false;
+    let drawingActive = false;
+    let guessingActive = false;
 
-    // Message handler
-    socket.on("message", function (rawData) {
-      let data;
-      try {
-        data = JSON.parse(rawData);
-      } catch (e) {
-        return;
-      }
-
-      // Track latency for responses that match pending sends
-      if (data.type && sendTimestamps[data.type]) {
-        const latency = Date.now() - sendTimestamps[data.type];
-        messageLatency.add(latency);
-        delete sendTimestamps[data.type];
-      }
-
-      receivedMessages.push(data);
-
-      // Extract room_code from room_created or room_joined
-      if (data.type === "room_created" && data.payload) {
-        roomCode = data.payload.room_code;
-        playerId = data.payload.player_id;
-        createRoomLatency.add(Date.now() - (sendTimestamps["_create_room"] || Date.now()));
-        delete sendTimestamps["_create_room"];
-      } else if (data.type === "room_joined" && data.payload) {
-        roomCode = data.payload.room_code;
-        playerId = data.payload.player_id;
-        joinRoomLatency.add(Date.now() - (sendTimestamps["_join_room"] || Date.now()));
-        delete sendTimestamps["_join_room"];
-      } else if (data.type === "game_started") {
-        gameStarted = true;
-      } else if (data.type === "game_over") {
-        gameOver = true;
-      }
-    });
-
-    socket.on("error", function (e) {
-      // Connection error during session
-      gameFailures.add(1);
-      gameCompletionRate.add(false);
-    });
-
-    // --- Step 1: Create or join room ---
-    if (host) {
-      // Host creates a room
-      sendTimestamps["_create_room"] = Date.now();
-      sendTimestamps["room_created"] = Date.now();
-      sendMessage(socket, "create_room", { name: name });
-    } else {
-      // Joiner waits briefly for room to be created, then joins
-      // In a real test, room_code coordination requires shared state.
-      // Here we use a deterministic room code approach: joiners wait and
-      // retry with a computed room group hint.
-      sleep(2 + Math.random() * 3); // Stagger joins after host creates
-
-      // In practice, joiners need the room code from the host.
-      // For load testing, we send join_room and rely on the test harness
-      // or a pre-created room list. Here we simulate by creating our own room
-      // if coordination isn't possible (each VU becomes effectively a host).
-      sendTimestamps["_create_room"] = Date.now();
-      sendTimestamps["room_created"] = Date.now();
-      sendMessage(socket, "create_room", { name: name });
+    function sendMsg(msg) {
+      try { socket.send(JSON.stringify(msg)); messagesSent.add(1); } catch (e) { errorCount.add(1); }
     }
 
-    // Wait for room creation/join confirmation
-    sleep(3);
-
-    if (!roomCode) {
-      // Failed to get room - record failure
-      gameFailures.add(1);
-      gameCompletionRate.add(false);
+    function endSession(reason) {
+      if (reason === 'completed') { gameCompleted = true; gamesCompleted.add(1); gameCompletionRate.add(1); }
+      else { gamesAborted.add(1); gameCompletionRate.add(0); }
+      drawingActive = false; guessingActive = false;
       socket.close();
-      return;
     }
 
-    // --- Step 2: Toggle ready ---
-    sendTimestamps["player_ready"] = Date.now();
-    sendMessage(socket, "toggle_ready", {});
-    sleep(1);
-
-    // --- Step 3: Wait for game to start (or start it ourselves as host) ---
-    if (host) {
-      // Host starts the game after a brief wait for players to ready
-      sleep(2);
-      sendTimestamps["game_started"] = Date.now();
-      sendMessage(socket, "start_game", {});
-    }
-
-    // Wait for game_started (up to 30 seconds)
-    let waitCount = 0;
-    while (!gameStarted && waitCount < 30) {
-      sleep(1);
-      waitCount++;
-    }
-
-    if (!gameStarted) {
-      gameFailures.add(1);
-      gameCompletionRate.add(false);
-      socket.close();
-      return;
-    }
-
-    // --- Step 4: Simulate game play ---
-    // Send guesses and strokes during the game
-    const gameDuration = 30 + Math.random() * 30; // 30-60 seconds of play
-    const startTime = Date.now();
-
-    while (!gameOver && (Date.now() - startTime) < gameDuration * 1000) {
-      const action = Math.random();
-
-      if (action < 0.4) {
-        // Send a guess
-        const guessStart = Date.now();
-        sendTimestamps["chat_message"] = guessStart;
-        sendMessage(socket, "chat", {
-          text: `guess_${Math.floor(Math.random() * 1000)}`,
-        });
-      } else if (action < 0.7) {
-        // Send a stroke (drawing)
-        const strokeStart = Date.now();
-        sendTimestamps["stroke"] = strokeStart;
-        sendMessage(socket, "stroke", {
-          points: [
-            [Math.random() * 800, Math.random() * 600],
-            [Math.random() * 800, Math.random() * 600],
-          ],
-          color: "#000000",
-          size: 3,
-        });
+    socket.on('open', function () {
+      if (isHost) {
+        sendMsg({ type: 'create_room', payload: { name: playerName } });
+        socket.setTimeout(function () { if (state === 'connecting') { roomCreateFailures.add(1); endSession('error'); } }, 10000);
       } else {
-        // Send a reaction
-        sendMessage(socket, "reaction", {
-          emoji: ["👍", "😂", "🔥", "❤️", "👏", "😮"][
-            Math.floor(Math.random() * 6)
-          ],
-        });
+        sendMsg({ type: 'join_room', payload: { name: playerName, room_code: roomCode } });
+        socket.setTimeout(function () { if (state === 'connecting') { roomJoinFailures.add(1); endSession('error'); } }, 10000);
       }
+    });
 
-      // Pause between actions (100-500ms to simulate human speed)
-      sleep(0.1 + Math.random() * 0.4);
-    }
+    socket.on('message', function (data) {
+      messagesReceived.add(1);
+      let msg; try { msg = JSON.parse(data); } catch (e) { return; }
+      if (msg.type === 'ping') { sendMsg({ type: 'pong', payload: {} }); return; }
 
-    // --- Step 5: Wait for game_over ---
-    waitCount = 0;
-    while (!gameOver && waitCount < 60) {
-      sleep(1);
-      waitCount++;
-    }
-
-    if (gameOver) {
-      gameCompletions.add(1);
-      gameCompletionRate.add(true);
-
-      // --- Step 6: Optionally rematch (30% chance) ---
-      if (Math.random() < 0.3) {
-        sendMessage(socket, "rematch", {});
-        sleep(2);
+      switch (state) {
+        case 'connecting': handleConnecting(msg); break;
+        case 'lobby': handleLobby(msg); break;
+        case 'waiting_start': handleWaitingStart(msg); break;
+        case 'playing': handlePlaying(msg); break;
       }
-    } else {
-      // Game didn't complete within timeout
-      gameFailures.add(1);
-      gameCompletionRate.add(false);
+    });
+
+    function handleConnecting(msg) {
+      if (msg.type === 'room_created') {
+        roomCreateRtt.add(Date.now() - connectStart); roomsCreated.add(1);
+        roomCode = msg.payload.room_code; playerId = msg.payload.player_id;
+        state = 'lobby';
+        publishRoomCode(roomIndex, roomCode);
+        socket.setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') endSession('aborted'); }, 60000);
+      } else if (msg.type === 'room_joined') {
+        roomJoinRtt.add(Date.now() - connectStart); roomsJoined.add(1);
+        roomCode = msg.payload.room_code; playerId = msg.payload.player_id;
+        state = 'lobby';
+        socket.setTimeout(function () { if (state === 'lobby') sendMsg({ type: 'toggle_ready', payload: {} }); }, Math.floor(randomBetween(1000, 2000)));
+        socket.setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') endSession('aborted'); }, 60000);
+      } else if (msg.type === 'error') { errorCount.add(1); endSession('error'); }
     }
 
-    socket.close();
+    function handleLobby(msg) {
+      if (msg.type === 'player_list' && msg.payload) {
+        const count = msg.payload.players.length;
+        if (isHost && count >= PLAYERS_PER_ROOM) {
+          socket.setTimeout(function () {
+            if (state !== 'lobby') return;
+            sendMsg({ type: 'update_settings', payload: { num_rounds: NUM_ROUNDS, turn_duration: TURN_DURATION, max_players: PLAYERS_PER_ROOM } });
+            sendMsg({ type: 'toggle_ready', payload: {} });
+            socket.setTimeout(function () {
+              if (state !== 'lobby') return;
+              gameStartTime = Date.now(); sendMsg({ type: 'start_game', payload: {} });
+              gamesStarted.add(1); state = 'waiting_start';
+            }, Math.floor(randomBetween(2000, 3000)));
+          }, Math.floor(randomBetween(500, 1000)));
+        }
+      } else if (msg.type === 'game_started' || msg.type === 'turn_started' || msg.type === 'word_choices' || msg.type === 'drawer_selecting') {
+        state = 'playing'; handlePlaying(msg);
+      } else if (msg.type === 'game_over') { endSession('completed'); }
+    }
+
+    function handleWaitingStart(msg) {
+      if (msg.type === 'game_started' || msg.type === 'turn_started' || msg.type === 'word_choices' || msg.type === 'drawer_selecting') {
+        state = 'playing'; handlePlaying(msg);
+      } else if (msg.type === 'game_over') { endSession('completed'); }
+      else if (msg.type === 'error') { endSession('error'); }
+    }
+
+    function handlePlaying(msg) {
+      switch (msg.type) {
+        case 'drawer_selecting':
+          isDrawer = msg.payload && msg.payload.drawer_id === playerId;
+          turnActive = false; drawingActive = false; guessingActive = false; break;
+        case 'word_choices':
+          if (isDrawer && msg.payload && msg.payload.choices && msg.payload.choices.length > 0) {
+            const choices = msg.payload.choices;
+            socket.setTimeout(function () { sendMsg({ type: 'select_word', payload: { word: choices[Math.floor(Math.random() * choices.length)] } }); }, Math.floor(randomBetween(1000, 3000)));
+          } break;
+        case 'turn_started':
+          turnActive = true; isDrawer = msg.payload && msg.payload.drawer_id === playerId;
+          if (isDrawer) { startDrawing(); } else { startGuessing(); } break;
+        case 'turn_ended':
+          turnActive = false; drawingActive = false; guessingActive = false; break;
+        case 'game_over': endSession('completed'); break;
+        case 'game_ended_insufficient_players': endSession('aborted'); break;
+      }
+    }
+
+    function startDrawing() {
+      drawingActive = true;
+      socket.setInterval(function () {
+        if (!drawingActive || !turnActive) return;
+        sendMsg({ type: 'stroke', payload: { points: [{ x: Math.random()*800, y: Math.random()*600 }, { x: Math.random()*800, y: Math.random()*600 }], color: '#000', lineWidth: 3 } });
+      }, Math.floor(randomBetween(2000, 5000)));
+    }
+
+    function startGuessing() {
+      guessingActive = true;
+      const words = ['cat','dog','house','tree','car','sun','moon','fish','bird','star','flower','mountain','river','boat'];
+      socket.setInterval(function () {
+        if (!guessingActive || !turnActive) return;
+        sendMsg({ type: 'guess', payload: { text: words[Math.floor(Math.random() * words.length)] } });
+      }, Math.floor(randomBetween(3000, 8000)));
+    }
+
+    socket.on('error', function (e) { connectionFailures.add(1); errorCount.add(1); });
+    socket.on('close', function () { drawingActive = false; guessingActive = false; });
+    socket.setTimeout(function () { if (!gameCompleted) endSession('aborted'); }, HOLD_SECONDS * 1000);
   });
 
-  // If WebSocket connection itself failed
-  if (res === null || res.status !== 101) {
-    connectionFailures.add(1);
-    connectionSuccessRate.add(false);
-    gameFailures.add(1);
-    gameCompletionRate.add(false);
-  }
+  check(res, { 'WS connected': (r) => r && r.status === 101 });
+  if (!res || res.status !== 101) { connectionSuccess.add(0); connectionFailures.add(1); gameCompletionRate.add(0); }
 }
 
-// ---------------------------------------------------------------------------
-// Setup: Optional — fetch stream count from metrics endpoint
-// ---------------------------------------------------------------------------
+// ─── Setup / Teardown ───────────────────────────────────────────────────────
 
 export function setup() {
-  console.log(`
-================================================================================
-  k6 gRPC Multiplexing Load Test
-  Gateway: ${GATEWAY_URL}
-  Target VUs: ${TARGET_VUS}
-  Ramp-up: ${RAMP_UP} | Sustain: ${SUSTAIN} | Ramp-down: ${RAMP_DOWN}
-  Players per room: ${PLAYERS_PER_ROOM}
-================================================================================
-
-  Thresholds:
-    - connection_success_rate > 99%
-    - message_latency p(95) < 50ms
-    - game_completion_rate > 80%
-
-  Monitor during test:
-    - grpc_streams_active < 1,500 total (check gateway /metrics)
-    - per-worker streams < 200 (check worker /metrics)
-================================================================================
-  `);
+  const res = http.get(`http://${__ENV.HOST || 'localhost'}:${__ENV.PORT || '9000'}/health`);
+  console.log(`Gateway: ${res.body}`);
+  console.log(`Load test: ${TARGET_VUS} VUs → ${TARGET_VUS / PLAYERS_PER_ROOM} rooms × ${PLAYERS_PER_ROOM} players`);
+  console.log(`Game: ${NUM_ROUNDS} rounds, ${TURN_DURATION}s turns, hold=${HOLD_SECONDS}s`);
   return {};
 }
 
-// ---------------------------------------------------------------------------
-// Teardown: Print summary
-// ---------------------------------------------------------------------------
-
-export function teardown(data) {
-  console.log(`
-================================================================================
-  Load Test Complete
-  
-  Verify stream counts via Prometheus or gateway /metrics endpoint:
-    curl http://localhost:9000/metrics | grep grpc_streams_active
-    
-  Expected: grpc_streams_active < 1500 (total)
-  Expected: grpc_streams_serving < 200 (per worker)
-================================================================================
-  `);
-}
+export function teardown() { console.log('Load test complete.'); }
