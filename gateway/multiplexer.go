@@ -60,7 +60,7 @@ func (m *Multiplexer) HandleClientMessage(session *PlayerSession, rawMsg []byte)
 		return m.sendErrorToClient(session.Conn, "INVALID_JSON", "Could not parse message")
 	}
 
-	log.Printf("[mux:handle] player=%s room=%s type=%s identified=%t", session.PlayerID, session.RoomCode, msg.Type, session.RoomCode != "")
+	debugf("[mux:handle] player=%s room=%s type=%s identified=%t", session.PlayerID, session.RoomCode, msg.Type, session.RoomCode != "")
 	tracef("[trace] GW_MUX_IN player=%s room=%s type=%s", session.PlayerID, session.RoomCode, msg.Type)
 
 	// Before identification, only allow create_room, join_room, reconnect
@@ -94,7 +94,7 @@ func (m *Multiplexer) HandleClientMessage(session *PlayerSession, rawMsg []byte)
 		Payload:     rawMsg,
 	}
 
-	log.Printf("[mux:forward] player=%s room=%s type=%s → streamMgr.Send", session.PlayerID, session.RoomCode, msg.Type)
+	debugf("[mux:forward] player=%s room=%s type=%s → streamMgr.Send", session.PlayerID, session.RoomCode, msg.Type)
 	tracef("[trace] GW_MUX_FORWARD player=%s room=%s type=%s", session.PlayerID, session.RoomCode, msg.Type)
 	if err := m.streamMgr.Send(session.RoomCode, envelope); err != nil {
 		log.Printf("[mux:forward] player=%s room=%s type=%s Send error: %v", session.PlayerID, session.RoomCode, msg.Type, err)

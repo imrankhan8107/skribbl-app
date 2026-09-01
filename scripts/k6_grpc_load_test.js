@@ -59,6 +59,11 @@ const PLAYERS_PER_ROOM = parseInt(__ENV.PLAYERS_PER_ROOM || '2');
 const TARGET_VUS = parseInt(__ENV.VUS || '100');
 const NUM_ROUNDS = parseInt(__ENV.NUM_ROUNDS || '3');
 const TURN_DURATION = parseInt(__ENV.TURN_DURATION || '80');
+// Stroke storm config — simulate a real drawer dragging on the canvas.
+// STROKE_HZ strokes/sec per active drawer (default 30 ≈ requestAnimationFrame-ish).
+// Set STROKE_HZ=0 to restore the old low-rate behaviour.
+const STROKE_HZ = parseInt(__ENV.STROKE_HZ || '30');
+const STROKE_POINTS = parseInt(__ENV.STROKE_POINTS || '4'); // points batched per stroke msg
 const HOLD_SECONDS = NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + 20) + 120;
 
 // ─── Options ────────────────────────────────────────────────────────────────
@@ -240,10 +245,31 @@ export default function () {
 
     function startDrawing() {
       drawingActive = true;
+      if (STROKE_HZ <= 0) {
+        // Legacy low-rate behaviour (kept for A/B comparison).
+        socket.setInterval(function () {
+          if (!drawingActive || !turnActive) return;
+          sendMsg({ type: 'stroke', payload: { points: [{ x: Math.random()*800, y: Math.random()*600 }, { x: Math.random()*800, y: Math.random()*600 }], color: '#000', lineWidth: 3 } });
+        }, Math.floor(randomBetween(2000, 5000)));
+        return;
+      }
+      // Stroke storm: emit STROKE_HZ messages/sec, each carrying STROKE_POINTS
+      // points, mimicking a human dragging the cursor continuously. This is the
+      // real fan-out hot path — every stroke is broadcast to all guessers.
+      const intervalMs = Math.max(1, Math.floor(1000 / STROKE_HZ));
+      let lastX = Math.random() * 800;
+      let lastY = Math.random() * 600;
       socket.setInterval(function () {
         if (!drawingActive || !turnActive) return;
-        sendMsg({ type: 'stroke', payload: { points: [{ x: Math.random()*800, y: Math.random()*600 }, { x: Math.random()*800, y: Math.random()*600 }], color: '#000', lineWidth: 3 } });
-      }, Math.floor(randomBetween(2000, 5000)));
+        const points = [];
+        for (let i = 0; i < STROKE_POINTS; i++) {
+          // Small deltas so it looks like a continuous line, not teleporting.
+          lastX = Math.max(0, Math.min(800, lastX + randomBetween(-15, 15)));
+          lastY = Math.max(0, Math.min(600, lastY + randomBetween(-15, 15)));
+          points.push({ x: lastX, y: lastY });
+        }
+        sendMsg({ type: 'stroke', payload: { points: points, color: '#000', lineWidth: 3 } });
+      }, intervalMs);
     }
 
     function startGuessing() {
@@ -271,6 +297,13 @@ export function setup() {
   console.log(`Gateway: ${res.body}`);
   console.log(`Load test: ${TARGET_VUS} VUs → ${TARGET_VUS / PLAYERS_PER_ROOM} rooms × ${PLAYERS_PER_ROOM} players`);
   console.log(`Game: ${NUM_ROUNDS} rounds, ${TURN_DURATION}s turns, hold=${HOLD_SECONDS}s`);
+  if (STROKE_HZ > 0) {
+    const rooms = TARGET_VUS / PLAYERS_PER_ROOM;
+    const fanoutPerSec = rooms * STROKE_HZ * (PLAYERS_PER_ROOM - 1);
+    console.log(`Stroke storm: ${STROKE_HZ} strokes/s/drawer × ${STROKE_POINTS} pts → ~${fanoutPerSec} broadcast writes/s at gateway (peak, all rooms drawing)`);
+  } else {
+    console.log('Stroke storm: DISABLED (legacy 2-5s stroke interval)');
+  }
   return {};
 }
 

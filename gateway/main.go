@@ -53,6 +53,28 @@ func tracef(format string, args ...interface{}) {
 	}
 }
 
+// debugEnabled gates per-message hot-path logging (fan-out, receive, mux).
+// These logs fire on EVERY message, so under a stroke storm they dominate CPU
+// via log's global mutex + synchronous stderr writes. Off by default.
+// Enable with DEBUG_ENABLED=1 (or TRACE_ENABLED, which implies debug).
+var debugEnabled = func() bool {
+	v := strings.ToLower(os.Getenv("DEBUG_ENABLED"))
+	if v == "true" || v == "1" || v == "yes" {
+		return true
+	}
+	// TRACE implies DEBUG.
+	tv := strings.ToLower(os.Getenv("TRACE_ENABLED"))
+	return tv == "true" || tv == "1" || tv == "yes"
+}()
+
+// debugf logs only when DEBUG_ENABLED (or TRACE_ENABLED) is set. Skips
+// formatting entirely when disabled so the hot path stays allocation-free.
+func debugf(format string, args ...interface{}) {
+	if debugEnabled {
+		log.Printf(format, args...)
+	}
+}
+
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 var (
