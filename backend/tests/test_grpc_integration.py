@@ -34,12 +34,29 @@ _TEST_PORT = 50061
 def _make_game_message(
     player_id: str, room_code: str, message_type: str, payload: dict | None = None
 ) -> GameMessage:
-    """Construct a GameMessage protobuf."""
+    """Construct a GameMessage protobuf (bare inner payload — test convenience)."""
     return GameMessage(
         player_id=player_id,
         room_code=room_code,
         message_type=message_type,
         payload=json.dumps(payload or {}).encode("utf-8"),
+    )
+
+
+def _make_gateway_message(
+    player_id: str, room_code: str, message_type: str, payload: dict | None = None
+) -> GameMessage:
+    """Construct a GameMessage the way the REAL Go gateway does — the envelope
+    payload is the FULL client message: {"type": ..., "payload": {...}}.
+
+    The gRPC server must unwrap the inner payload before dispatching.
+    """
+    full_message = {"type": message_type, "payload": payload or {}}
+    return GameMessage(
+        player_id=player_id,
+        room_code=room_code,
+        message_type=message_type,
+        payload=json.dumps(full_message).encode("utf-8"),
     )
 
 
@@ -440,3 +457,96 @@ class TestGRPCRoomLifecycle:
         # Clean up
         await host_stream.done_writing()
         await player2_stream.done_writing()
+
+
+class TestGRPCGatewayMessageFormat:
+    """Validate the gRPC server correctly unwraps the FULL client message
+    envelope that the real Go gateway forwards ({"type": ..., "payload": {...}}).
+
+    This is the format the actual gateway sends — distinct from the bare-payload
+    format used by the other tests. It exercises the payload-unwrapping fix.
+
+    Validates: Requirements 2.2, 4.1
+    """
+
+    async def test_create_room_with_gateway_format(self, stub):
+        """create_room sent as a full gateway message extracts the name correctly."""
+        player_id = str(uuid.uuid4())
+        stream = stub.RoomStream()
+
+        # Gateway-style: payload is the FULL client message
+        await stream.write(
+            _make_gateway_message(player_id, "", "create_room", {"name": "GatewayAlice"})
+        )
+
+        msg = await _read_until_type(stream, "room_created", timeout=5.0)
+        payload = _decode_payload(msg)
+        assert payload["type"] == "room_created"
+        assert len(payload["payload"]["room_code"]) == 6
+
+        await stream.done_writing()
+
+    async def test_correct_guess_ends_turn_gateway_format(self, stub):
+        """A CORRECT guess (gateway format) must be extracted and end the turn.
+
+        This is the critical regression test: if the payload isn't unwrapped,
+        the guess text is empty and the turn never ends via a correct guess.
+        """
+        host_id = str(uuid.uuid4())
+        player2_id = str(uuid.uuid4())
+
+        # Host creates room (gateway format)
+        host_stream = stub.RoomStream()
+        await host_stream.write(
+            _make_gateway_message(host_id, "", "create_room", {"name": "GHost"})
+        )
+        msg = await _read_until_type(host_stream, "room_created", timeout=5.0)
+        room_code = _decode_payload(msg)["payload"]["room_code"]
+        actual_host_id = _decode_payload(msg)["payload"]["player_id"]
+
+        # Player 2 joins (gateway format)
+        p2_stream = stub.RoomStream()
+        await p2_stream.write(
+            _make_gateway_message(
+                player2_id, room_code, "join_room", {"name": "GGuesser", "room_code": room_code}
+            )
+        )
+        msg = await _read_until_type(p2_stream, "room_joined", timeout=5.0)
+        actual_p2_id = _decode_payload(msg)["payload"]["player_id"]
+
+        await _read_until_type(host_stream, "player_list", timeout=5.0)
+
+        # Ready up both (gateway format)
+        await host_stream.write(_make_gateway_message(actual_host_id, room_code, "toggle_ready", {}))
+        await _read_until_type(host_stream, "player_list", timeout=5.0)
+        await p2_stream.write(_make_gateway_message(actual_p2_id, room_code, "toggle_ready", {}))
+        await _read_until_type(p2_stream, "player_list", timeout=5.0)
+
+        # Start game (gateway format)
+        await host_stream.write(_make_gateway_message(actual_host_id, room_code, "start_game", {}))
+        await _read_until_type(host_stream, "game_started", timeout=5.0)
+
+        # Host (drawer) gets word_choices and selects the first word (gateway format)
+        msg = await _read_until_type(host_stream, "word_choices", timeout=5.0)
+        chosen_word = _decode_payload(msg)["payload"]["choices"][0]
+        await host_stream.write(
+            _make_gateway_message(actual_host_id, room_code, "select_word", {"word": chosen_word})
+        )
+
+        # Wait for turn_started on the guesser's stream
+        await _read_until_type(p2_stream, "turn_started", timeout=5.0)
+
+        # Player 2 submits the CORRECT word as a guess (gateway format)
+        await p2_stream.write(
+            _make_gateway_message(actual_p2_id, room_code, "guess", {"text": chosen_word})
+        )
+
+        # If the payload was unwrapped correctly, the guess matches → guess_correct.
+        # If NOT unwrapped, the guess text is empty → no guess_correct → this times out.
+        msg = await _read_until_type(p2_stream, "guess_correct", timeout=5.0)
+        payload = _decode_payload(msg)
+        assert payload["type"] == "guess_correct"
+        assert payload["payload"]["player_name"] == "GGuesser"
+
+        await host_stream.done_writing()
+        await p2_stream.done_writing()

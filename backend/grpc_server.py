@@ -152,9 +152,20 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                 message_type = game_msg.message_type
                 payload_bytes = game_msg.payload
 
-                # Parse JSON payload
+                # Parse the JSON message. The gateway forwards the FULL client
+                # message ({"type": ..., "payload": {...}}) as the envelope payload,
+                # so we must unwrap the inner "payload" dict — matching the WS
+                # handler (msg.get("payload", {})). The envelope's message_type
+                # is authoritative, but fall back to the JSON "type" if present.
                 try:
-                    payload = json.loads(payload_bytes) if payload_bytes else {}
+                    outer = json.loads(payload_bytes) if payload_bytes else {}
+                    if isinstance(outer, dict) and ("type" in outer or "payload" in outer):
+                        # Standard client message shape: unwrap inner payload
+                        message_type = outer.get("type", message_type)
+                        payload = outer.get("payload", {})
+                    else:
+                        # Already a bare payload dict (defensive)
+                        payload = outer if isinstance(outer, dict) else {}
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     # Send error back to the specific player
                     error_msg = BroadcastMessage(
