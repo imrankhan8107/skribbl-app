@@ -228,6 +228,8 @@ func (gw *Gateway) handleGRPCPath(clientConn *websocket.Conn, connID int64) {
 		return
 	}
 
+	log.Printf("[gw:conn] OPEN connID=%d", connID)
+
 	defer func() {
 		// Notify worker of disconnect if session was identified
 		if session.RoomCode != "" {
@@ -248,6 +250,21 @@ func (gw *Gateway) handleGRPCPath(clientConn *websocket.Conn, connID int64) {
 			log.Printf("[gateway] GRPC_READ_ERROR connID=%d player=%s room=%s err=%v", connID, session.PlayerID, session.RoomCode, err)
 			return
 		}
+
+		// Log every raw message received from the client BEFORE dispatch.
+		// Parse only the JSON "type" field to keep this cheap.
+		var probe struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(msg, &probe)
+		log.Printf("[gw:recv] connID=%d player=%s room=%s type=%s bytes=%d", connID, session.PlayerID, session.RoomCode, probe.Type, len(msg))
+
+		// TRACE: raw message read from the client WebSocket
+		traceMsg := string(msg)
+		if len(traceMsg) > 200 {
+			traceMsg = traceMsg[:200]
+		}
+		log.Printf("[trace] GW_RECV_CLIENT connID=%d player=%s room=%s bytes=%d msg=%s", connID, session.PlayerID, session.RoomCode, len(msg), traceMsg)
 
 		if err := gw.multiplexer.HandleClientMessage(session, msg); err != nil {
 			log.Printf("[gateway] MULTIPLEXER_ERROR connID=%d err=%v", connID, err)

@@ -70,6 +70,18 @@ func startStreamReceiver(sm *StreamManager, fanOut *FanOutDispatcher, registry *
 			continue
 		}
 
+		// Log every BroadcastMessage received from the worker. Parse the inner
+		// JSON "type" for readability (falls back to the envelope message_type).
+		innerType := msg.GetMessageType()
+		var probe struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(msg.Payload, &probe) == nil && probe.Type != "" {
+			innerType = probe.Type
+		}
+		log.Printf("[rx:recv] room=%s type=%s targets=%d bytes=%d", msg.GetRoomCode(), innerType, len(msg.TargetPlayerIds), len(msg.Payload))
+		log.Printf("[trace] GW_GRPC_IN room=%s type=%s targets=%v bytes=%d", msg.GetRoomCode(), msg.GetMessageType(), msg.TargetPlayerIds, len(msg.Payload))
+
 		// Deliver the broadcast message to the appropriate client(s)
 		fanOut.Deliver(msg)
 
@@ -130,6 +142,8 @@ func interceptIdentityResponse(registry *SessionRegistry, sm *StreamManager, rs 
 	realPlayerID := extractPlayerID(msg.Payload)
 	realRoomCode := extractRoomCode(msg.Payload)
 
+	log.Printf("[rx:identity] pending=%s real=%s room=%s", pendingPlayerID, realPlayerID, realRoomCode)
+
 	if realPlayerID == "" && realRoomCode == "" {
 		return
 	}
@@ -137,7 +151,8 @@ func interceptIdentityResponse(registry *SessionRegistry, sm *StreamManager, rs 
 	// Look up the existing session by the pending player_id
 	session := registry.GetByPlayer(pendingPlayerID)
 	if session == nil {
-		// Session might have disconnected already
+		// Session might have disconnected already — key failure signal.
+		log.Printf("[rx:identity] SESSION NOT FOUND pending=%s", pendingPlayerID)
 		return
 	}
 

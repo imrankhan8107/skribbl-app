@@ -631,6 +631,8 @@ class RoomManager:
             room_code: The room code to broadcast to.
             message: The message dict to serialize and send.
         """
+        logger.info("[trace] BE_BROADCAST room=%s type=%s", room_code, message.get("type"))
+
         room = self.rooms.get(room_code)
         if room is None:
             return
@@ -644,6 +646,12 @@ class RoomManager:
                 except (asyncio.TimeoutError, Exception):
                     # Send timed out or failed — skip this player, don't block others
                     pass
+
+        logger.info(
+            "[trace] BE_BROADCAST_LOCAL room=%s type=%s recipients=%d",
+            room_code, message.get("type"),
+            sum(1 for p in room.players if p.is_connected and p.websocket is not None),
+        )
 
         # Step 2: Publish to Redis for cross-worker relay (no-op if Redis not configured)
         if redis_pubsub.is_redis_enabled():

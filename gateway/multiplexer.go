@@ -60,6 +60,9 @@ func (m *Multiplexer) HandleClientMessage(session *PlayerSession, rawMsg []byte)
 		return m.sendErrorToClient(session.Conn, "INVALID_JSON", "Could not parse message")
 	}
 
+	log.Printf("[mux:handle] player=%s room=%s type=%s identified=%t", session.PlayerID, session.RoomCode, msg.Type, session.RoomCode != "")
+	log.Printf("[trace] GW_MUX_IN player=%s room=%s type=%s", session.PlayerID, session.RoomCode, msg.Type)
+
 	// Before identification, only allow create_room, join_room, reconnect
 	if session.RoomCode == "" {
 		switch msg.Type {
@@ -91,7 +94,13 @@ func (m *Multiplexer) HandleClientMessage(session *PlayerSession, rawMsg []byte)
 		Payload:     rawMsg,
 	}
 
-	return m.streamMgr.Send(session.RoomCode, envelope)
+	log.Printf("[mux:forward] player=%s room=%s type=%s → streamMgr.Send", session.PlayerID, session.RoomCode, msg.Type)
+	log.Printf("[trace] GW_MUX_FORWARD player=%s room=%s type=%s", session.PlayerID, session.RoomCode, msg.Type)
+	if err := m.streamMgr.Send(session.RoomCode, envelope); err != nil {
+		log.Printf("[mux:forward] player=%s room=%s type=%s Send error: %v", session.PlayerID, session.RoomCode, msg.Type, err)
+		return err
+	}
+	return nil
 }
 
 // handleCreateRoom handles the create_room flow asynchronously:
@@ -107,23 +116,29 @@ func (m *Multiplexer) handleCreateRoom(session *PlayerSession, rawMsg []byte, pa
 	// Select the least-loaded worker
 	workerID := m.selectLeastLoadedWorker()
 	if workerID == "" {
+		log.Printf("[mux:create] player=%s NO worker selected", session.PlayerID)
 		return m.sendErrorToClient(session.Conn, "NO_BACKEND", "No available backend worker")
 	}
+	log.Printf("[mux:create] player=%s worker selected=%s", session.PlayerID, workerID)
 
 	// Verify worker gRPC is alive
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	alive, err := m.isGRPCAlive(ctx, workerID)
 	if err != nil || !alive {
+		log.Printf("[mux:create] player=%s worker=%s gRPC alive check failed alive=%t err=%v", session.PlayerID, workerID, alive, err)
 		return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Backend worker gRPC unavailable")
 	}
+	log.Printf("[mux:create] player=%s worker=%s gRPC alive ok", session.PlayerID, workerID)
 
 	// Use workerID as the stream key for create_room since room_code is unknown.
 	// Multiple create_room requests to the same worker share one stream.
 	_, err = m.streamMgr.GetOrCreate(workerID, workerID)
 	if err != nil {
+		log.Printf("[mux:create] player=%s worker=%s GetOrCreate failed err=%v", session.PlayerID, workerID, err)
 		return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Failed to open stream to worker")
 	}
+	log.Printf("[mux:create] player=%s worker=%s GetOrCreate ok", session.PlayerID, workerID)
 
 	// Send the create_room envelope — response arrives via receiver → fan-out
 	envelope := &proto.GameMessage{
@@ -133,9 +148,12 @@ func (m *Multiplexer) handleCreateRoom(session *PlayerSession, rawMsg []byte, pa
 		Payload:     rawMsg,
 	}
 
+	log.Printf("[trace] GW_MUX_CREATE_ROOM_SEND player=%s worker=%s", session.PlayerID, workerID)
 	if err := m.streamMgr.Send(workerID, envelope); err != nil {
+		log.Printf("[mux:create] player=%s worker=%s Send failed err=%v", session.PlayerID, workerID, err)
 		return m.sendErrorToClient(session.Conn, "STREAM_ERROR", "Failed to send create_room to worker")
 	}
+	log.Printf("[mux:create] player=%s worker=%s envelope sent", session.PlayerID, workerID)
 
 	// Track the player on this worker stream for proper cleanup
 	m.streamMgr.AddPlayer(workerID)
@@ -147,6 +165,7 @@ func (m *Multiplexer) handleCreateRoom(session *PlayerSession, rawMsg []byte, pa
 	session.RoomCode = workerID
 
 	log.Printf("[multiplexer] create_room sent player=%s worker=%s (async)", session.PlayerID, workerID)
+	log.Printf("[trace] GW_MUX_CREATE_ROOM_SENT player=%s worker=%s", session.PlayerID, workerID)
 	return nil
 }
 
@@ -163,16 +182,20 @@ func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, room
 	// Resolve which worker owns this room
 	workerID := m.resolveRoomOwner(roomCode)
 	if workerID == "" {
+		log.Printf("[mux:join] NO_BACKEND room=%s resolveRoomOwner returned empty", roomCode)
 		return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Cannot resolve worker for room "+roomCode)
 	}
+	log.Printf("[mux:join] player=%s room=%s resolveRoomOwner=%s", session.PlayerID, roomCode, workerID)
 
 	// Verify worker gRPC is alive
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	alive, err := m.isGRPCAlive(ctx, workerID)
 	if err != nil || !alive {
+		log.Printf("[mux:join] player=%s room=%s worker=%s gRPC alive check failed alive=%t err=%v", session.PlayerID, roomCode, workerID, alive, err)
 		return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Backend worker gRPC unavailable for room "+roomCode)
 	}
+	log.Printf("[mux:join] player=%s room=%s worker=%s gRPC alive ok", session.PlayerID, roomCode, workerID)
 
 	// Update the session's room in the registry so fan-out can find it
 	// for room-wide broadcasts after join.
@@ -181,8 +204,10 @@ func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, room
 	// Get or create the Room_Stream for this room
 	_, err = m.streamMgr.GetOrCreate(roomCode, workerID)
 	if err != nil {
+		log.Printf("[mux:join] player=%s room=%s worker=%s GetOrCreate failed err=%v", session.PlayerID, roomCode, workerID, err)
 		return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Failed to open stream for room "+roomCode)
 	}
+	log.Printf("[mux:join] player=%s room=%s worker=%s GetOrCreate ok", session.PlayerID, roomCode, workerID)
 
 	// Send the envelope over the stream
 	envelope := &proto.GameMessage{
@@ -192,9 +217,12 @@ func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, room
 		Payload:     rawMsg,
 	}
 
+	log.Printf("[trace] GW_MUX_JOIN_SEND player=%s room=%s worker=%s", session.PlayerID, roomCode, workerID)
 	if err := m.streamMgr.Send(roomCode, envelope); err != nil {
+		log.Printf("[mux:join] player=%s room=%s worker=%s Send failed err=%v", session.PlayerID, roomCode, workerID, err)
 		return m.sendErrorToClient(session.Conn, "STREAM_ERROR", "Failed to send message to worker")
 	}
+	log.Printf("[mux:join] player=%s room=%s worker=%s envelope sent", session.PlayerID, roomCode, workerID)
 
 	// Set room_code on session so subsequent messages route correctly
 	session.RoomCode = roomCode
@@ -209,8 +237,10 @@ func (m *Multiplexer) selectLeastLoadedWorker() string {
 	if m.gateway.redis == nil {
 		// No Redis — fall back to first backend
 		if len(m.gateway.backends) > 0 {
+			log.Printf("[trace] GW_SELECT_WORKER worker=%s", m.gateway.backends[0])
 			return m.gateway.backends[0]
 		}
+		log.Printf("[trace] GW_SELECT_WORKER worker=%s", "")
 		return ""
 	}
 
@@ -219,14 +249,17 @@ func (m *Multiplexer) selectLeastLoadedWorker() string {
 
 	result, err := m.gateway.redis.ZRange(ctx, "worker_load", 0, 0).Result()
 	if err != nil || len(result) == 0 {
+		log.Printf("[trace] GW_SELECT_WORKER worker=%s", "")
 		return ""
 	}
+	log.Printf("[trace] GW_SELECT_WORKER worker=%s", result[0])
 	return result[0]
 }
 
 // resolveRoomOwner looks up which worker owns a room via Redis.
 func (m *Multiplexer) resolveRoomOwner(roomCode string) string {
 	if m.gateway.redis == nil {
+		log.Printf("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, "")
 		return ""
 	}
 
@@ -236,15 +269,18 @@ func (m *Multiplexer) resolveRoomOwner(roomCode string) string {
 	// Try per-room key first (has TTL)
 	owner, err := m.gateway.redis.Get(ctx, "room_owner:"+roomCode).Result()
 	if err == nil && owner != "" {
+		log.Printf("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, owner)
 		return owner
 	}
 
 	// Fallback to hash
 	owner, err = m.gateway.redis.HGet(ctx, "room_workers", roomCode).Result()
 	if err == nil && owner != "" {
+		log.Printf("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, owner)
 		return owner
 	}
 
+	log.Printf("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, "")
 	return ""
 }
 
@@ -256,8 +292,10 @@ func (m *Multiplexer) isGRPCAlive(ctx context.Context, workerID string) (bool, e
 
 	exists, err := m.gateway.redis.Exists(ctx, "worker_grpc_alive:"+workerID).Result()
 	if err != nil {
+		log.Printf("[trace] GW_GRPC_ALIVE worker=%s alive=%v", workerID, false)
 		return false, err
 	}
+	log.Printf("[trace] GW_GRPC_ALIVE worker=%s alive=%v", workerID, exists > 0)
 	return exists > 0, nil
 }
 
@@ -322,6 +360,7 @@ func (m *Multiplexer) deliverToClient(session *PlayerSession, payload []byte) {
 // sendErrorToClient sends a JSON error response via the session's SendCh.
 // This ensures the writePump remains the sole writer to the WebSocket.
 func (m *Multiplexer) sendErrorToClient(conn *websocket.Conn, code, message string) error {
+	log.Printf("[trace] GW_MUX_ERROR player=%s code=%s msg=%s", "", code, message)
 	errMsg, _ := json.Marshal(map[string]interface{}{
 		"type": "error",
 		"payload": map[string]string{

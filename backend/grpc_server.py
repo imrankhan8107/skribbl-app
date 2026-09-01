@@ -31,6 +31,9 @@ from backend.virtual_transport import VirtualTransport
 from backend.grpc_metrics import increment_streams, decrement_streams
 
 logger = logging.getLogger(__name__)
+# Ensure trace logs are visible in Docker — uvicorn's default config may
+# otherwise suppress INFO-level records from this module's logger.
+logger.setLevel(logging.INFO)
 
 # gRPC port from environment (default 50051)
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
@@ -75,6 +78,8 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
         # Track this stream in the grpc_streams_serving gauge
         increment_streams()
 
+        logger.info("[grpc:stream] opened")
+
         # Launch the inbound message processing coroutine
         inbound_task = asyncio.create_task(
             self._process_inbound(request_iterator, context, send_queue, transports, player_rooms)
@@ -115,6 +120,8 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             # Clean up all VirtualTransports for this stream
             await self._cleanup_stream(transports, player_rooms)
 
+            logger.info("[grpc:stream] closed")
+
     async def _process_inbound(
         self,
         request_iterator: AsyncIterator[GameMessage],
@@ -152,6 +159,8 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                 message_type = game_msg.message_type
                 payload_bytes = game_msg.payload
 
+                logger.info("[trace] BE_GRPC_IN player=%s room=%s type=%s", player_id, room_code, message_type)
+
                 # Parse the JSON message. The gateway forwards the FULL client
                 # message ({"type": ..., "payload": {...}}) as the envelope payload,
                 # so we must unwrap the inner "payload" dict — matching the WS
@@ -166,6 +175,19 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                     else:
                         # Already a bare payload dict (defensive)
                         payload = outer if isinstance(outer, dict) else {}
+                    # Log every inbound message with the unwrapped payload keys.
+                    # payload_keys confirms unwrapping worked (should show ['text']
+                    # for a guess, not ['type', 'payload']).
+                    payload_keys = list(payload.keys()) if isinstance(payload, dict) else []
+                    logger.info(
+                        "[grpc:in] player=%s room=%s type=%s payload_keys=%s",
+                        player_id, room_code, message_type, payload_keys,
+                    )
+                    logger.info(
+                        "[trace] BE_PAYLOAD_UNWRAP type=%s keys=%s",
+                        message_type,
+                        list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
+                    )
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     # Send error back to the specific player
                     error_msg = BroadcastMessage(
@@ -252,11 +274,20 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
         """
         from backend.models import RoomState
 
+        logger.info("[grpc:dispatch] type=%s player=%s", message_type, player_id)
+        logger.info("[trace] BE_DISPATCH player=%s room=%s type=%s", player_id, room_code, message_type)
+        logger.info("[trace] BE_HANDLE_%s player=%s", message_type.upper(), player_id)
+
         if message_type == "create_room":
             name = payload.get("name", "")
             result = await room_manager.create_room(name, transport)
             # Send the result back to the player via transport
             await transport.send_json(result)
+            logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type") if isinstance(result, dict) else None)
+            logger.info(
+                "[trace] BE_IDENTITY_RESULT type=%s player_id=%s room=%s",
+                result.get("type"), result.get("payload", {}).get("player_id"), result.get("payload", {}).get("room_code"),
+            )
             return result
 
         elif message_type == "join_room":
@@ -264,6 +295,11 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             rc = payload.get("room_code", room_code) or room_code
             result = await room_manager.join_room(name, rc, transport)
             await transport.send_json(result)
+            logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type") if isinstance(result, dict) else None)
+            logger.info(
+                "[trace] BE_IDENTITY_RESULT type=%s player_id=%s room=%s",
+                result.get("type"), result.get("payload", {}).get("player_id"), result.get("payload", {}).get("room_code"),
+            )
             return result
 
         elif message_type == "reconnect":
@@ -272,6 +308,11 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             result = await room_manager.handle_reconnect(name, rc, transport)
             # On successful reconnect, the transport is now set as the player's websocket
             await transport.send_json(result)
+            logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type") if isinstance(result, dict) else None)
+            logger.info(
+                "[trace] BE_IDENTITY_RESULT type=%s player_id=%s room=%s",
+                result.get("type"), result.get("payload", {}).get("player_id"), result.get("payload", {}).get("room_code"),
+            )
             return result
 
         elif message_type == "update_settings":
@@ -279,11 +320,13 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             result = await room_manager.update_settings(player_id, settings)
             if result.get("type") == "error":
                 await transport.send_json(result)
+                logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type"))
 
         elif message_type == "start_game":
             result = await room_manager.start_game(player_id)
             if result.get("type") == "error":
                 await transport.send_json(result)
+                logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type"))
             else:
                 room = room_manager._find_room_by_player(player_id)
                 if room is not None:
@@ -348,10 +391,12 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             result = await room_manager.kick_player(player_id, target_id)
             if result.get("type") == "error":
                 await transport.send_json(result)
+                logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type"))
 
         elif message_type == "leave_room":
             result = await room_manager.leave_room(player_id)
             await transport.send_json(result)
+            logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type") if isinstance(result, dict) else None)
 
         elif message_type == "reaction":
             room = room_manager._find_room_by_player(player_id)
@@ -371,11 +416,13 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             result = await room_manager.toggle_ready(player_id)
             if result.get("type") == "error":
                 await transport.send_json(result)
+                logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type"))
 
         elif message_type == "rematch":
             result = await room_manager.handle_rematch(player_id)
             if result.get("type") == "error":
                 await transport.send_json(result)
+                logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type"))
 
         elif message_type == "end_game_now":
             room = room_manager._find_room_by_player(player_id)
@@ -390,12 +437,14 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                     "type": "error",
                     "payload": {"code": "PERMISSION_DENIED", "message": "Only the host can end the game"},
                 })
+                logger.info("[grpc:out] player=%s type=error", player_id)
 
         else:
             await transport.send_json({
                 "type": "error",
                 "payload": {"code": "UNKNOWN_MESSAGE", "message": f"Unknown message type: {message_type}"},
             })
+            logger.info("[grpc:out] player=%s type=error", player_id)
 
     async def _cleanup_stream(
         self,
@@ -413,6 +462,8 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
         """
         from backend import game_engine
         from backend.ws_handler import room_manager
+
+        logger.info("[grpc:cleanup] players=%s", list(transports.keys()))
 
         for player_id in list(transports.keys()):
             try:
