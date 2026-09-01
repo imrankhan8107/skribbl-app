@@ -212,7 +212,7 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                 # Dispatch the message through existing game logic
                 try:
                     result = await self._dispatch_message(
-                        player_id, room_code, message_type, payload, transport, send_queue, room_manager, game_engine
+                        player_id, room_code, message_type, payload, transport, send_queue, room_manager, game_engine, transports
                     )
                     # Track actual player_ids assigned by identity messages
                     if result and isinstance(result, dict):
@@ -244,6 +244,45 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             # Signal the outbound loop to stop
             await send_queue.put(None)
 
+    def _rebind_transport(
+        self,
+        transport: VirtualTransport,
+        transports: dict | None,
+        result: dict,
+        old_player_id: str,
+    ) -> None:
+        """Rebind a VirtualTransport to the real player_id assigned by the worker.
+
+        After create_room/join_room/reconnect, the room_manager assigns a real
+        player_id (a UUID) that differs from the pending id the gateway sent in
+        the envelope. All FUTURE broadcasts routed through this transport must
+        target that real id — because the gateway re-indexes its session registry
+        under the real id once it receives the identity response.
+
+        This updates transport.player_id (used as target_player_ids) and re-keys
+        the per-stream transports map so subsequent messages resolve correctly.
+
+        The identity response itself is sent BEFORE this rebind, so it still
+        targets the pending id (which the gateway registry has at that instant).
+        """
+        if not isinstance(result, dict) or result.get("type") == "error":
+            return
+        real_player_id = result.get("payload", {}).get("player_id")
+        if not real_player_id or real_player_id == transport.player_id:
+            return
+
+        prev_id = transport.player_id
+        transport.player_id = real_player_id
+        if transports is not None:
+            # Re-key the transport map: real_player_id now maps to this transport.
+            transports[real_player_id] = transport
+            # Keep the pending id mapping too (defensive) so any in-flight lookup
+            # still resolves; it will be cleaned up on stream close.
+        logger.info(
+            "[trace] BE_TRANSPORT_REBIND old=%s new=%s (was_pending=%s)",
+            prev_id, real_player_id, old_player_id,
+        )
+
     async def _dispatch_message(
         self,
         player_id: str,
@@ -254,6 +293,7 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
         send_queue: asyncio.Queue,
         room_manager,
         game_engine,
+        transports: dict | None = None,
     ) -> None:
         """Dispatch a single GameMessage through the existing game logic.
 
@@ -281,13 +321,18 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
         if message_type == "create_room":
             name = payload.get("name", "")
             result = await room_manager.create_room(name, transport)
-            # Send the result back to the player via transport
+            # Send the result back to the player via transport. This response is
+            # still targeted at the CURRENT transport.player_id (the pending id),
+            # which matches the gateway's session registry at this instant.
             await transport.send_json(result)
             logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type") if isinstance(result, dict) else None)
             logger.info(
                 "[trace] BE_IDENTITY_RESULT type=%s player_id=%s room=%s",
                 result.get("type"), result.get("payload", {}).get("player_id"), result.get("payload", {}).get("room_code"),
             )
+            # Rebind the transport to the REAL assigned player_id so all future
+            # broadcasts target the id the gateway re-indexed the session under.
+            self._rebind_transport(transport, transports, result, player_id)
             return result
 
         elif message_type == "join_room":
@@ -300,6 +345,7 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                 "[trace] BE_IDENTITY_RESULT type=%s player_id=%s room=%s",
                 result.get("type"), result.get("payload", {}).get("player_id"), result.get("payload", {}).get("room_code"),
             )
+            self._rebind_transport(transport, transports, result, player_id)
             return result
 
         elif message_type == "reconnect":
@@ -313,6 +359,7 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                 "[trace] BE_IDENTITY_RESULT type=%s player_id=%s room=%s",
                 result.get("type"), result.get("payload", {}).get("player_id"), result.get("payload", {}).get("room_code"),
             )
+            self._rebind_transport(transport, transports, result, player_id)
             return result
 
         elif message_type == "update_settings":
