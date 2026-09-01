@@ -215,7 +215,7 @@ func (gw *Gateway) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	clientConn, err := gw.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("[gateway] UPGRADE_FAILED connID=%d elapsed=%v err=%v", connID, time.Since(upgradeStart), err)
+		debugf("[gateway] UPGRADE_FAILED connID=%d elapsed=%v err=%v", connID, time.Since(upgradeStart), err)
 		return
 	}
 	upgradeDur := time.Since(upgradeStart)
@@ -223,7 +223,7 @@ func (gw *Gateway) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	activeClients.Add(1)
 	currentClients := activeClients.Load()
 	if connID%100 == 0 || upgradeDur > 100*time.Millisecond {
-		log.Printf("[gateway] CONNECTED connID=%d active_clients=%d upgrade_ms=%d", connID, currentClients, upgradeDur.Milliseconds())
+		debugf("[gateway] CONNECTED connID=%d active_clients=%d upgrade_ms=%d", connID, currentClients, upgradeDur.Milliseconds())
 	}
 
 	defer func() {
@@ -258,7 +258,7 @@ func (gw *Gateway) handleGRPCPath(clientConn *websocket.Conn, connID int64) {
 		return
 	}
 
-	log.Printf("[gw:conn] OPEN connID=%d", connID)
+	debugf("[gw:conn] OPEN connID=%d", connID)
 
 	defer func() {
 		// Notify worker of disconnect if session was identified
@@ -269,7 +269,7 @@ func (gw *Gateway) handleGRPCPath(clientConn *websocket.Conn, connID int64) {
 			gw.sessionRegistry.Unregister(session.PlayerID)
 		}
 		if connID%100 == 0 {
-			log.Printf("[gateway] GRPC_SESSION_END connID=%d player=%s room=%s", connID, session.PlayerID, session.RoomCode)
+			debugf("[gateway] GRPC_SESSION_END connID=%d player=%s room=%s", connID, session.PlayerID, session.RoomCode)
 		}
 	}()
 
@@ -277,7 +277,7 @@ func (gw *Gateway) handleGRPCPath(clientConn *websocket.Conn, connID int64) {
 	for {
 		_, msg, err := clientConn.ReadMessage()
 		if err != nil {
-			log.Printf("[gateway] GRPC_READ_ERROR connID=%d player=%s room=%s err=%v", connID, session.PlayerID, session.RoomCode, err)
+			debugf("[gateway] GRPC_READ_ERROR connID=%d player=%s room=%s err=%v", connID, session.PlayerID, session.RoomCode, err)
 			return
 		}
 
@@ -287,7 +287,7 @@ func (gw *Gateway) handleGRPCPath(clientConn *websocket.Conn, connID int64) {
 			Type string `json:"type"`
 		}
 		_ = json.Unmarshal(msg, &probe)
-		log.Printf("[gw:recv] connID=%d player=%s room=%s type=%s bytes=%d", connID, session.PlayerID, session.RoomCode, probe.Type, len(msg))
+		debugf("[gw:recv] connID=%d player=%s room=%s type=%s bytes=%d", connID, session.PlayerID, session.RoomCode, probe.Type, len(msg))
 
 		// TRACE: raw message read from the client WebSocket
 		if traceEnabled {
@@ -299,7 +299,7 @@ func (gw *Gateway) handleGRPCPath(clientConn *websocket.Conn, connID int64) {
 		}
 
 		if err := gw.multiplexer.HandleClientMessage(session, msg); err != nil {
-			log.Printf("[gateway] MULTIPLEXER_ERROR connID=%d err=%v", connID, err)
+			debugf("[gateway] MULTIPLEXER_ERROR connID=%d err=%v", connID, err)
 			return
 		}
 	}
@@ -313,7 +313,7 @@ func (gw *Gateway) handleWSProxyPath(clientConn *websocket.Conn, connID int64, u
 	clientConn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	_, firstMsg, err := clientConn.ReadMessage()
 	if err != nil {
-		log.Printf("[gateway] FIRST_MSG_FAILED connID=%d elapsed=%v err=%v", connID, time.Since(readStart), err)
+		debugf("[gateway] FIRST_MSG_FAILED connID=%d elapsed=%v err=%v", connID, time.Since(readStart), err)
 		totalErrors.Add(1)
 		return
 	}
@@ -325,7 +325,7 @@ func (gw *Gateway) handleWSProxyPath(clientConn *websocket.Conn, connID int64, u
 	backendAddr := gw.routeConnection(firstMsg)
 	routeDur := time.Since(routeStart)
 	if backendAddr == "" {
-		log.Printf("[gateway] NO_BACKEND connID=%d route_ms=%d msg=%s", connID, routeDur.Milliseconds(), string(firstMsg[:min(len(firstMsg), 100)]))
+		debugf("[gateway] NO_BACKEND connID=%d route_ms=%d msg=%s", connID, routeDur.Milliseconds(), string(firstMsg[:min(len(firstMsg), 100)]))
 		totalErrors.Add(1)
 		sendError(clientConn, "NO_BACKEND", "No available backend worker")
 		return
@@ -336,7 +336,7 @@ func (gw *Gateway) handleWSProxyPath(clientConn *websocket.Conn, connID int64, u
 	backendConn, finalAddr, dialErr := gw.dialWithFallback(backendAddr)
 	dialDur := time.Since(dialStart)
 	if dialErr != nil {
-		log.Printf("[gateway] DIAL_FAILED connID=%d primary=%s total_ms=%d err=%v", connID, backendAddr, dialDur.Milliseconds(), dialErr)
+		debugf("[gateway] DIAL_FAILED connID=%d primary=%s total_ms=%d err=%v", connID, backendAddr, dialDur.Milliseconds(), dialErr)
 		totalErrors.Add(1)
 		sendError(clientConn, "BACKEND_UNAVAILABLE", "Backend worker unavailable")
 		return
@@ -345,7 +345,7 @@ func (gw *Gateway) handleWSProxyPath(clientConn *websocket.Conn, connID int64, u
 	activeBackends.Add(1)
 	currentBackends := activeBackends.Load()
 	if connID%100 == 0 || dialDur > 200*time.Millisecond || finalAddr != backendAddr {
-		log.Printf("[gateway] DIAL_OK connID=%d backend=%s dial_ms=%d read_ms=%d route_ms=%d active_backends=%d",
+		debugf("[gateway] DIAL_OK connID=%d backend=%s dial_ms=%d read_ms=%d route_ms=%d active_backends=%d",
 			connID, finalAddr, dialDur.Milliseconds(), readDur.Milliseconds(), routeDur.Milliseconds(), currentBackends)
 	}
 
@@ -356,7 +356,7 @@ func (gw *Gateway) handleWSProxyPath(clientConn *websocket.Conn, connID int64, u
 
 	// Step 4: Forward the first message to the backend
 	if err := backendConn.WriteMessage(websocket.TextMessage, firstMsg); err != nil {
-		log.Printf("[gateway] FORWARD_FAILED connID=%d err=%v", connID, err)
+		debugf("[gateway] FORWARD_FAILED connID=%d err=%v", connID, err)
 		totalErrors.Add(1)
 		return
 	}
@@ -392,7 +392,7 @@ func (gw *Gateway) handleWSProxyPath(clientConn *websocket.Conn, connID int64, u
 	<-done
 	sessionDur := time.Since(upgradeStart)
 	if connID%100 == 0 {
-		log.Printf("[gateway] SESSION_END connID=%d duration=%v", connID, sessionDur)
+		debugf("[gateway] SESSION_END connID=%d duration=%v", connID, sessionDur)
 	}
 }
 
@@ -482,7 +482,7 @@ func (gw *Gateway) resolveWorkerAddr(workerID string) string {
 
 	addr, err := gw.resolver.Resolve(ctx, workerID)
 	if err != nil {
-		log.Printf("[gateway] RESOLVE_FAILED worker=%s err=%v", workerID, err)
+		debugf("[gateway] RESOLVE_FAILED worker=%s err=%v", workerID, err)
 		return ""
 	}
 	return addr
@@ -506,7 +506,7 @@ func (gw *Gateway) dialWithFallback(primaryAddr string) (*websocket.Conn, string
 		return conn, primaryAddr, nil
 	}
 
-	log.Printf("[gateway] DIAL_FALLBACK primary=%s err=%v, trying fallback...", primaryAddr, err)
+	debugf("[gateway] DIAL_FALLBACK primary=%s err=%v, trying fallback...", primaryAddr, err)
 
 	// Evict the failed address from resolver cache (if it came from resolver)
 	// We don't have the workerID here, but the resolver will re-resolve on next use
@@ -527,7 +527,7 @@ func (gw *Gateway) dialWithFallback(primaryAddr string) (*websocket.Conn, string
 					if err == nil {
 						return conn, fallbackAddr, nil
 					}
-					log.Printf("[gateway] DIAL_FALLBACK_FAILED fallback=%s err=%v", fallbackAddr, err)
+					debugf("[gateway] DIAL_FALLBACK_FAILED fallback=%s err=%v", fallbackAddr, err)
 				} else {
 					// Clean up dead worker
 					ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)

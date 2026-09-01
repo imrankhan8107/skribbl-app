@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"io"
-	"log"
 	"strings"
 
 	"github.com/skribbl-app/gateway/proto"
@@ -28,7 +27,7 @@ import (
 // Requirements: 5.1, 5.2
 func startStreamReceiver(sm *StreamManager, fanOut *FanOutDispatcher, registry *SessionRegistry, rs *RoomStream) {
 	defer func() {
-		log.Printf("[receiver] recv loop exited room=%s worker=%s", rs.roomCode, rs.workerID)
+		debugf("[receiver] recv loop exited room=%s worker=%s", rs.roomCode, rs.workerID)
 	}()
 
 	for {
@@ -51,9 +50,9 @@ func startStreamReceiver(sm *StreamManager, fanOut *FanOutDispatcher, registry *
 
 			// Distinguish between graceful EOF and transport errors
 			if err == io.EOF {
-				log.Printf("[receiver] stream EOF room=%s worker=%s", rs.roomCode, rs.workerID)
+				debugf("[receiver] stream EOF room=%s worker=%s", rs.roomCode, rs.workerID)
 			} else {
-				log.Printf("[receiver] stream recv error room=%s worker=%s err=%v", rs.roomCode, rs.workerID, err)
+				debugf("[receiver] stream recv error room=%s worker=%s err=%v", rs.roomCode, rs.workerID, err)
 			}
 
 			// Mark the stream as unhealthy and trigger reconnection
@@ -144,7 +143,7 @@ func interceptIdentityResponse(registry *SessionRegistry, sm *StreamManager, rs 
 	realPlayerID := extractPlayerID(msg.Payload)
 	realRoomCode := extractRoomCode(msg.Payload)
 
-	log.Printf("[rx:identity] pending=%s real=%s room=%s", pendingPlayerID, realPlayerID, realRoomCode)
+	debugf("[rx:identity] pending=%s real=%s room=%s", pendingPlayerID, realPlayerID, realRoomCode)
 
 	if realPlayerID == "" && realRoomCode == "" {
 		return
@@ -154,7 +153,7 @@ func interceptIdentityResponse(registry *SessionRegistry, sm *StreamManager, rs 
 	session := registry.GetByPlayer(pendingPlayerID)
 	if session == nil {
 		// Session might have disconnected already — key failure signal.
-		log.Printf("[rx:identity] SESSION NOT FOUND pending=%s", pendingPlayerID)
+		debugf("[rx:identity] SESSION NOT FOUND pending=%s", pendingPlayerID)
 		return
 	}
 
@@ -173,7 +172,7 @@ func interceptIdentityResponse(registry *SessionRegistry, sm *StreamManager, rs 
 	if finalPlayerID != pendingPlayerID || finalRoomCode != session.RoomCode {
 		registry.UpdateIdentity(pendingPlayerID, finalPlayerID, finalRoomCode)
 
-		log.Printf("[receiver] identity updated pending=%s → player=%s room=%s",
+		debugf("[receiver] identity updated pending=%s → player=%s room=%s",
 			pendingPlayerID, finalPlayerID, finalRoomCode)
 	}
 
@@ -187,11 +186,11 @@ func interceptIdentityResponse(registry *SessionRegistry, sm *StreamManager, rs 
 		if strings.HasPrefix(pendingPlayerID, "pending_") {
 			_, err := sm.GetOrCreate(realRoomCode, rs.workerID)
 			if err != nil {
-				log.Printf("[receiver] failed to register room stream room=%s worker=%s err=%v",
+				debugf("[receiver] failed to register room stream room=%s worker=%s err=%v",
 					realRoomCode, rs.workerID, err)
 			} else {
 				sm.AddPlayer(realRoomCode)
-				log.Printf("[receiver] room stream registered room=%s worker=%s", realRoomCode, rs.workerID)
+				debugf("[receiver] room stream registered room=%s worker=%s", realRoomCode, rs.workerID)
 			}
 		}
 	}
@@ -239,10 +238,10 @@ func handleClientDisconnect(registry *SessionRegistry, sm *StreamManager, sessio
 	}
 
 	if err := sm.Send(roomCode, disconnectMsg); err != nil {
-		log.Printf("[receiver] failed to send disconnect notification player=%s room=%s err=%v",
+		debugf("[receiver] failed to send disconnect notification player=%s room=%s err=%v",
 			playerID, roomCode, err)
 	} else {
-		log.Printf("[receiver] disconnect notification sent player=%s room=%s", playerID, roomCode)
+		debugf("[receiver] disconnect notification sent player=%s room=%s", playerID, roomCode)
 	}
 
 	// Step 3: Decrement player count on stream (may trigger idle timeout)

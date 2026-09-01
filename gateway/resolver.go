@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -96,7 +95,7 @@ func (wr *WorkerResolver) CleanupDeadWorker(ctx context.Context, workerID string
 	wr.redis.HDel(ctx, "worker_addresses", workerID)
 	wr.redis.ZRem(ctx, "worker_load", workerID)
 	wr.cache.Delete(workerID)
-	log.Printf("[resolver] Cleaned up dead worker: %s", workerID)
+	debugf("[resolver] Cleaned up dead worker: %s", workerID)
 }
 
 // StartCleanup runs a background goroutine that prunes stale cache entries

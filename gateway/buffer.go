@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"sync"
 
 	"github.com/skribbl-app/gateway/proto"
@@ -41,7 +40,7 @@ func (b *MessageBuffer) Push(msg *proto.GameMessage) {
 		// Drop the oldest message (index 0) to make room
 		b.messages = b.messages[1:]
 		b.dropped++
-		log.Printf("[buffer] overflow room_code=%s dropped_total=%d: dropping oldest message to buffer new one",
+		debugf("[buffer] overflow room_code=%s dropped_total=%d: dropping oldest message to buffer new one",
 			msg.GetRoomCode(), b.dropped)
 	}
 

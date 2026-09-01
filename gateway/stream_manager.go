@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -106,7 +105,7 @@ func (sm *StreamManager) GetOrCreate(roomCode string, workerID string) (*RoomStr
 	if rs, ok := sm.streams[roomCode]; ok && rs.isHealthy() {
 		sm.mu.RUnlock()
 		rs.markActivity()
-		log.Printf("[sm:getorcreate] room=%s REUSED", roomCode)
+		debugf("[sm:getorcreate] room=%s REUSED", roomCode)
 		return rs, nil
 	}
 	sm.mu.RUnlock()
@@ -118,7 +117,7 @@ func (sm *StreamManager) GetOrCreate(roomCode string, workerID string) (*RoomStr
 	// Double-check after acquiring write lock
 	if rs, ok := sm.streams[roomCode]; ok && rs.isHealthy() {
 		rs.markActivity()
-		log.Printf("[sm:getorcreate] room=%s REUSED", roomCode)
+		debugf("[sm:getorcreate] room=%s REUSED", roomCode)
 		return rs, nil
 	}
 
@@ -174,8 +173,8 @@ func (sm *StreamManager) GetOrCreate(roomCode string, workerID string) (*RoomStr
 		go startStreamReceiver(sm, sm.fanOut, sm.registry, rs)
 	}
 
-	log.Printf("[stream_manager] Stream opened room=%s worker=%s addr=%s", roomCode, workerID, addr)
-	log.Printf("[sm:getorcreate] room=%s CREATED worker=%s", roomCode, workerID)
+	debugf("[stream_manager] Stream opened room=%s worker=%s addr=%s", roomCode, workerID, addr)
+	debugf("[sm:getorcreate] room=%s CREATED worker=%s", roomCode, workerID)
 	return rs, nil
 }
 
@@ -187,13 +186,13 @@ func (sm *StreamManager) Send(roomCode string, msg *proto.GameMessage) error {
 	sm.mu.RUnlock()
 
 	if !ok {
-		log.Printf("[sm:send] room=%s FAILED no stream", roomCode)
+		debugf("[sm:send] room=%s FAILED no stream", roomCode)
 		tracef("[trace] GW_STREAM_SEND_FAIL room=%s reason=no_stream", roomCode)
 		return fmt.Errorf("no stream for room %s", roomCode)
 	}
 
 	if !rs.isHealthy() {
-		log.Printf("[sm:send] room=%s FAILED unhealthy state=%d", roomCode, rs.state.Load())
+		debugf("[sm:send] room=%s FAILED unhealthy state=%d", roomCode, rs.state.Load())
 		tracef("[trace] GW_STREAM_SEND_FAIL room=%s reason=unhealthy", roomCode)
 		return fmt.Errorf("stream for room %s is unhealthy (state=%d)", roomCode, rs.state.Load())
 	}
@@ -202,11 +201,11 @@ func (sm *StreamManager) Send(roomCode string, msg *proto.GameMessage) error {
 	select {
 	case rs.sendCh <- msg:
 		rs.markActivity()
-		log.Printf("[sm:send] room=%s queued type ok", roomCode)
+		debugf("[sm:send] room=%s queued type ok", roomCode)
 		tracef("[trace] GW_STREAM_SEND room=%s type=%s player=%s", roomCode, msg.GetMessageType(), msg.GetPlayerId())
 		return nil
 	default:
-		log.Printf("[sm:send] room=%s FAILED buffer full", roomCode)
+		debugf("[sm:send] room=%s FAILED buffer full", roomCode)
 		tracef("[trace] GW_STREAM_SEND_FAIL room=%s reason=buffer_full", roomCode)
 		return fmt.Errorf("send buffer full for room %s", roomCode)
 	}
@@ -254,7 +253,7 @@ func (sm *StreamManager) Close(roomCode string) {
 
 	sm.closeStreamLocked(rs)
 	delete(sm.streams, roomCode)
-	log.Printf("[stream_manager] Stream closed room=%s", roomCode)
+	debugf("[stream_manager] Stream closed room=%s", roomCode)
 }
 
 // GetStream returns the RoomStream for a room, or nil if none exists.
@@ -279,7 +278,7 @@ func (sm *StreamManager) MarkUnhealthy(roomCode string) {
 	rs.state.Store(streamStateDead)
 	sm.closeStreamLocked(rs)
 	delete(sm.streams, roomCode)
-	log.Printf("[stream_manager] Stream evicted (unhealthy) room=%s worker=%s", roomCode, rs.workerID)
+	debugf("[stream_manager] Stream evicted (unhealthy) room=%s worker=%s", roomCode, rs.workerID)
 }
 
 // ActiveStreamCount returns the number of currently active streams.
@@ -320,7 +319,7 @@ func (sm *StreamManager) sendLoop(rs *RoomStream) {
 	for msg := range rs.sendCh {
 		tracef("[trace] GW_GRPC_OUT room=%s type=%s player=%s", rs.roomCode, msg.GetMessageType(), msg.GetPlayerId())
 		if err := rs.stream.Send(msg); err != nil {
-			log.Printf("[stream_manager] Send error room=%s err=%v", rs.roomCode, err)
+			debugf("[stream_manager] Send error room=%s err=%v", rs.roomCode, err)
 			rs.state.Store(streamStateDead)
 			sm.MarkUnhealthy(rs.roomCode)
 			return
@@ -340,7 +339,7 @@ func (sm *StreamManager) scheduleIdleClose(roomCode string, rs *RoomStream) {
 		// Check if players have reconnected during the timeout
 		if rs.playerCount.Load() <= 0 {
 			sm.Close(roomCode)
-			log.Printf("[stream_manager] Idle timeout expired room=%s", roomCode)
+			debugf("[stream_manager] Idle timeout expired room=%s", roomCode)
 		}
 	case <-rs.done:
 		// Stream already closed by other means

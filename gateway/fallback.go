@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/url"
 	"sync"
 	"time"
@@ -144,7 +143,7 @@ func (fh *FallbackHandler) retryStreamConnect(roomCode, workerID string) (*RoomS
 			lastErr = fmt.Errorf("stream unhealthy after creation (state=%d)", stream.state.Load())
 		}
 
-		log.Printf("[fallback] gRPC connect attempt %d/%d failed room=%s worker=%s err=%v",
+		debugf("[fallback] gRPC connect attempt %d/%d failed room=%s worker=%s err=%v",
 			attempt, maxRetries, roomCode, workerID, lastErr)
 
 		// Don't sleep after the last attempt
@@ -183,7 +182,7 @@ func handleWithFallback(
 ) {
 	// Fast path: room already in fallback mode — stay in WS proxy
 	if fh.state.IsInFallback(roomCode) {
-		log.Printf("[fallback] Room already in fallback mode room=%s worker=%s, using WS proxy",
+		debugf("[fallback] Room already in fallback mode room=%s worker=%s, using WS proxy",
 			roomCode, workerID)
 		handleWebSocketProxy(gw, clientConn, firstMsg, workerID)
 		return
@@ -193,7 +192,7 @@ func handleWithFallback(
 	if !fh.isGRPCAvailable(workerID) {
 		reason := "worker gRPC not available (alive key missing or no address registered)"
 		fh.state.EnterFallback(roomCode, workerID, reason)
-		log.Printf("[fallback] WARNING: Entering Fallback_Mode room=%s worker=%s reason=%q",
+		debugf("[fallback] WARNING: Entering Fallback_Mode room=%s worker=%s reason=%q",
 			roomCode, workerID, reason)
 		handleWebSocketProxy(gw, clientConn, firstMsg, workerID)
 		return
@@ -204,7 +203,7 @@ func handleWithFallback(
 	if err != nil {
 		reason := fmt.Sprintf("gRPC connection failed after %d retries: %v", maxRetries, err)
 		fh.state.EnterFallback(roomCode, workerID, reason)
-		log.Printf("[fallback] WARNING: Entering Fallback_Mode room=%s worker=%s reason=%q",
+		debugf("[fallback] WARNING: Entering Fallback_Mode room=%s worker=%s reason=%q",
 			roomCode, workerID, reason)
 		handleWebSocketProxy(gw, clientConn, firstMsg, workerID)
 		return
@@ -226,7 +225,7 @@ func handleGRPCPath(fh *FallbackHandler, clientConn *websocket.Conn, firstMsg []
 	// The actual gRPC message multiplexing is handled by the stream manager's
 	// send loop and the gateway's receive loop (implemented in task 10.1/10.2).
 	// This function establishes that the connection will use the gRPC path.
-	log.Printf("[fallback] Using gRPC path room=%s worker=%s stream_healthy=%v",
+	debugf("[fallback] Using gRPC path room=%s worker=%s stream_healthy=%v",
 		roomCode, stream.workerID, stream.isHealthy())
 }
 
@@ -239,7 +238,7 @@ func handleWebSocketProxy(gw *Gateway, clientConn *websocket.Conn, firstMsg []by
 
 	addr, err := gw.resolver.Resolve(ctx, workerID)
 	if err != nil {
-		log.Printf("[fallback] WS proxy resolve failed worker=%s err=%v", workerID, err)
+		debugf("[fallback] WS proxy resolve failed worker=%s err=%v", workerID, err)
 		sendError(clientConn, "BACKEND_UNAVAILABLE", "Backend worker unavailable")
 		return
 	}
@@ -253,7 +252,7 @@ func handleWebSocketProxy(gw *Gateway, clientConn *websocket.Conn, firstMsg []by
 	backendURL := url.URL{Scheme: "ws", Host: addr, Path: "/ws"}
 	backendConn, _, err := dialer.Dial(backendURL.String(), nil)
 	if err != nil {
-		log.Printf("[fallback] WS proxy dial failed worker=%s addr=%s err=%v", workerID, addr, err)
+		debugf("[fallback] WS proxy dial failed worker=%s addr=%s err=%v", workerID, addr, err)
 		sendError(clientConn, "BACKEND_UNAVAILABLE", "Backend worker unavailable")
 		return
 	}
@@ -261,11 +260,11 @@ func handleWebSocketProxy(gw *Gateway, clientConn *websocket.Conn, firstMsg []by
 
 	// Forward the first message to the backend
 	if err := backendConn.WriteMessage(websocket.TextMessage, firstMsg); err != nil {
-		log.Printf("[fallback] WS proxy forward first msg failed worker=%s err=%v", workerID, err)
+		debugf("[fallback] WS proxy forward first msg failed worker=%s err=%v", workerID, err)
 		return
 	}
 
-	log.Printf("[fallback] WS proxy active worker=%s addr=%s", workerID, addr)
+	debugf("[fallback] WS proxy active worker=%s addr=%s", workerID, addr)
 
 	// Bidirectional pipe: client ↔ backend
 	done := make(chan struct{})

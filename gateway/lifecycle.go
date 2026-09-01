@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/skribbl-app/gateway/proto"
@@ -49,7 +48,7 @@ func startKeepalive(sm *StreamManager, rs *RoomStream) {
 			}
 
 			if err := rs.stream.Send(ping); err != nil {
-				log.Printf("[lifecycle] keepalive send failed room=%s err=%v", rs.roomCode, err)
+				debugf("[lifecycle] keepalive send failed room=%s err=%v", rs.roomCode, err)
 				rs.state.Store(streamStateDead)
 				go handleStreamDisconnect(sm, rs)
 				return
@@ -84,7 +83,7 @@ func startKeepalive(sm *StreamManager, rs *RoomStream) {
 
 			if !pongDetected {
 				// No response within timeout — mark stream dead
-				log.Printf("[lifecycle] keepalive timeout room=%s (no pong within %v)", rs.roomCode, timeout)
+				debugf("[lifecycle] keepalive timeout room=%s (no pong within %v)", rs.roomCode, timeout)
 				rs.state.Store(streamStateDead)
 				go handleStreamDisconnect(sm, rs)
 				return
@@ -118,7 +117,7 @@ func handleStreamDisconnect(sm *StreamManager, rs *RoomStream) {
 		}
 	}
 
-	log.Printf("[lifecycle] stream disconnect detected room=%s worker=%s, starting reconnection",
+	debugf("[lifecycle] stream disconnect detected room=%s worker=%s, starting reconnection",
 		rs.roomCode, rs.workerID)
 
 	// Create a message buffer to hold outbound messages during reconnection
@@ -150,7 +149,7 @@ func handleStreamDisconnect(sm *StreamManager, rs *RoomStream) {
 
 	var reconnected bool
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		log.Printf("[lifecycle] reconnection attempt %d/%d room=%s worker=%s",
+		debugf("[lifecycle] reconnection attempt %d/%d room=%s worker=%s",
 			attempt+1, maxRetries, rs.roomCode, rs.workerID)
 
 		// Wait for backoff duration
@@ -159,13 +158,13 @@ func handleStreamDisconnect(sm *StreamManager, rs *RoomStream) {
 		// Attempt to establish a new stream
 		newStream, newConn, err := dialNewStream(sm, rs.workerID)
 		if err != nil {
-			log.Printf("[lifecycle] reconnection attempt %d failed room=%s err=%v",
+			debugf("[lifecycle] reconnection attempt %d failed room=%s err=%v",
 				attempt+1, rs.roomCode, err)
 			continue
 		}
 
 		// Success — replace the old stream with the new one
-		log.Printf("[lifecycle] reconnection successful room=%s worker=%s attempt=%d",
+		debugf("[lifecycle] reconnection successful room=%s worker=%s attempt=%d",
 			rs.roomCode, rs.workerID, attempt+1)
 
 		// Close old connection resources
@@ -193,20 +192,20 @@ func handleStreamDisconnect(sm *StreamManager, rs *RoomStream) {
 		// Restart keepalive on the new stream
 		go startKeepalive(sm, rs)
 
-		log.Printf("[lifecycle] stream fully restored room=%s buffered_msgs_replayed=%d",
+		debugf("[lifecycle] stream fully restored room=%s buffered_msgs_replayed=%d",
 			rs.roomCode, buffer.Len())
 	} else {
 		// All retries exhausted — transition to Fallback_Mode
 		rs.state.Store(streamStateDead)
 
-		log.Printf("[lifecycle] all reconnection attempts exhausted room=%s worker=%s, entering Fallback_Mode",
+		debugf("[lifecycle] all reconnection attempts exhausted room=%s worker=%s, entering Fallback_Mode",
 			rs.roomCode, rs.workerID)
 
 		// Evict the dead stream from the StreamManager
 		sm.MarkUnhealthy(rs.roomCode)
 
 		// Log the fallback activation with reason
-		log.Printf("[lifecycle] FALLBACK_ACTIVATED room=%s reason=reconnection_exhausted retries=%d",
+		debugf("[lifecycle] FALLBACK_ACTIVATED room=%s reason=reconnection_exhausted retries=%d",
 			rs.roomCode, maxRetries)
 	}
 }
@@ -256,11 +255,11 @@ func replayBuffer(rs *RoomStream, buffer *MessageBuffer) {
 		return
 	}
 
-	log.Printf("[lifecycle] replaying %d buffered messages room=%s", len(messages), rs.roomCode)
+	debugf("[lifecycle] replaying %d buffered messages room=%s", len(messages), rs.roomCode)
 
 	for i, msg := range messages {
 		if err := rs.stream.Send(msg); err != nil {
-			log.Printf("[lifecycle] buffer replay failed at message %d/%d room=%s err=%v",
+			debugf("[lifecycle] buffer replay failed at message %d/%d room=%s err=%v",
 				i+1, len(messages), rs.roomCode, err)
 			// Mark stream unhealthy again — reconnection didn't stick
 			rs.state.Store(streamStateDead)
@@ -268,6 +267,6 @@ func replayBuffer(rs *RoomStream, buffer *MessageBuffer) {
 		}
 	}
 
-	log.Printf("[lifecycle] buffer replay complete room=%s messages=%d dropped=%d",
+	debugf("[lifecycle] buffer replay complete room=%s messages=%d dropped=%d",
 		rs.roomCode, len(messages), buffer.Dropped())
 }

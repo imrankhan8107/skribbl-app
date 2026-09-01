@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -227,7 +226,7 @@ func (sr *SessionRegistry) writePump(session *PlayerSession) {
 				return
 			}
 			if err := session.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-				log.Printf("[session] writePump error player=%s err=%v", session.PlayerID, err)
+				debugf("[session] writePump error player=%s err=%v", session.PlayerID, err)
 				return
 			}
 		}

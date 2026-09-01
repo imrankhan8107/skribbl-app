@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"sync/atomic"
 
 	proto "github.com/skribbl-app/gateway/proto"
@@ -47,7 +46,7 @@ func (f *FanOutDispatcher) Deliver(msg *proto.BroadcastMessage) {
 				found++
 				f.enqueueNonBlocking(s, msg.Payload)
 			} else {
-				log.Printf("[fanout] TARGET MISS player=%s", pid)
+				debugf("[fanout] TARGET MISS player=%s", pid)
 			}
 		}
 		debugf("[fanout] room=%s targets=%d sessions_found=%d", msg.RoomCode, len(msg.TargetPlayerIds), found)
@@ -66,7 +65,7 @@ func (f *FanOutDispatcher) enqueueNonBlocking(s *PlayerSession, payload []byte) 
 	default:
 		// Channel full — drop message to avoid head-of-line blocking
 		f.droppedCount.Add(1)
-		log.Printf("[fanout] dropped message for player=%s room=%s: SendCh full", s.PlayerID, s.RoomCode)
+		debugf("[fanout] dropped message for player=%s room=%s: SendCh full", s.PlayerID, s.RoomCode)
 	}
 }
 
