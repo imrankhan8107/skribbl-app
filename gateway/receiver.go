@@ -80,7 +80,7 @@ func startStreamReceiver(sm *StreamManager, fanOut *FanOutDispatcher, registry *
 			innerType = probe.Type
 		}
 		log.Printf("[rx:recv] room=%s type=%s targets=%d bytes=%d", msg.GetRoomCode(), innerType, len(msg.TargetPlayerIds), len(msg.Payload))
-		log.Printf("[trace] GW_GRPC_IN room=%s type=%s targets=%v bytes=%d", msg.GetRoomCode(), msg.GetMessageType(), msg.TargetPlayerIds, len(msg.Payload))
+		tracef("[trace] GW_GRPC_IN room=%s type=%s targets=%v bytes=%d", msg.GetRoomCode(), msg.GetMessageType(), msg.TargetPlayerIds, len(msg.Payload))
 
 		// Deliver the broadcast message to the appropriate client(s)
 		fanOut.Deliver(msg)

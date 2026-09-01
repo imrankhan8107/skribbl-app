@@ -61,7 +61,7 @@ func (m *Multiplexer) HandleClientMessage(session *PlayerSession, rawMsg []byte)
 	}
 
 	log.Printf("[mux:handle] player=%s room=%s type=%s identified=%t", session.PlayerID, session.RoomCode, msg.Type, session.RoomCode != "")
-	log.Printf("[trace] GW_MUX_IN player=%s room=%s type=%s", session.PlayerID, session.RoomCode, msg.Type)
+	tracef("[trace] GW_MUX_IN player=%s room=%s type=%s", session.PlayerID, session.RoomCode, msg.Type)
 
 	// Before identification, only allow create_room, join_room, reconnect
 	if session.RoomCode == "" {
@@ -95,7 +95,7 @@ func (m *Multiplexer) HandleClientMessage(session *PlayerSession, rawMsg []byte)
 	}
 
 	log.Printf("[mux:forward] player=%s room=%s type=%s → streamMgr.Send", session.PlayerID, session.RoomCode, msg.Type)
-	log.Printf("[trace] GW_MUX_FORWARD player=%s room=%s type=%s", session.PlayerID, session.RoomCode, msg.Type)
+	tracef("[trace] GW_MUX_FORWARD player=%s room=%s type=%s", session.PlayerID, session.RoomCode, msg.Type)
 	if err := m.streamMgr.Send(session.RoomCode, envelope); err != nil {
 		log.Printf("[mux:forward] player=%s room=%s type=%s Send error: %v", session.PlayerID, session.RoomCode, msg.Type, err)
 		return err
@@ -148,7 +148,7 @@ func (m *Multiplexer) handleCreateRoom(session *PlayerSession, rawMsg []byte, pa
 		Payload:     rawMsg,
 	}
 
-	log.Printf("[trace] GW_MUX_CREATE_ROOM_SEND player=%s worker=%s", session.PlayerID, workerID)
+	tracef("[trace] GW_MUX_CREATE_ROOM_SEND player=%s worker=%s", session.PlayerID, workerID)
 	if err := m.streamMgr.Send(workerID, envelope); err != nil {
 		log.Printf("[mux:create] player=%s worker=%s Send failed err=%v", session.PlayerID, workerID, err)
 		return m.sendErrorToClient(session.Conn, "STREAM_ERROR", "Failed to send create_room to worker")
@@ -165,7 +165,7 @@ func (m *Multiplexer) handleCreateRoom(session *PlayerSession, rawMsg []byte, pa
 	session.RoomCode = workerID
 
 	log.Printf("[multiplexer] create_room sent player=%s worker=%s (async)", session.PlayerID, workerID)
-	log.Printf("[trace] GW_MUX_CREATE_ROOM_SENT player=%s worker=%s", session.PlayerID, workerID)
+	tracef("[trace] GW_MUX_CREATE_ROOM_SENT player=%s worker=%s", session.PlayerID, workerID)
 	return nil
 }
 
@@ -217,7 +217,7 @@ func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, room
 		Payload:     rawMsg,
 	}
 
-	log.Printf("[trace] GW_MUX_JOIN_SEND player=%s room=%s worker=%s", session.PlayerID, roomCode, workerID)
+	tracef("[trace] GW_MUX_JOIN_SEND player=%s room=%s worker=%s", session.PlayerID, roomCode, workerID)
 	if err := m.streamMgr.Send(roomCode, envelope); err != nil {
 		log.Printf("[mux:join] player=%s room=%s worker=%s Send failed err=%v", session.PlayerID, roomCode, workerID, err)
 		return m.sendErrorToClient(session.Conn, "STREAM_ERROR", "Failed to send message to worker")
@@ -237,10 +237,10 @@ func (m *Multiplexer) selectLeastLoadedWorker() string {
 	if m.gateway.redis == nil {
 		// No Redis — fall back to first backend
 		if len(m.gateway.backends) > 0 {
-			log.Printf("[trace] GW_SELECT_WORKER worker=%s", m.gateway.backends[0])
+			tracef("[trace] GW_SELECT_WORKER worker=%s", m.gateway.backends[0])
 			return m.gateway.backends[0]
 		}
-		log.Printf("[trace] GW_SELECT_WORKER worker=%s", "")
+		tracef("[trace] GW_SELECT_WORKER worker=%s", "")
 		return ""
 	}
 
@@ -249,17 +249,17 @@ func (m *Multiplexer) selectLeastLoadedWorker() string {
 
 	result, err := m.gateway.redis.ZRange(ctx, "worker_load", 0, 0).Result()
 	if err != nil || len(result) == 0 {
-		log.Printf("[trace] GW_SELECT_WORKER worker=%s", "")
+		tracef("[trace] GW_SELECT_WORKER worker=%s", "")
 		return ""
 	}
-	log.Printf("[trace] GW_SELECT_WORKER worker=%s", result[0])
+	tracef("[trace] GW_SELECT_WORKER worker=%s", result[0])
 	return result[0]
 }
 
 // resolveRoomOwner looks up which worker owns a room via Redis.
 func (m *Multiplexer) resolveRoomOwner(roomCode string) string {
 	if m.gateway.redis == nil {
-		log.Printf("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, "")
+		tracef("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, "")
 		return ""
 	}
 
@@ -269,18 +269,18 @@ func (m *Multiplexer) resolveRoomOwner(roomCode string) string {
 	// Try per-room key first (has TTL)
 	owner, err := m.gateway.redis.Get(ctx, "room_owner:"+roomCode).Result()
 	if err == nil && owner != "" {
-		log.Printf("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, owner)
+		tracef("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, owner)
 		return owner
 	}
 
 	// Fallback to hash
 	owner, err = m.gateway.redis.HGet(ctx, "room_workers", roomCode).Result()
 	if err == nil && owner != "" {
-		log.Printf("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, owner)
+		tracef("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, owner)
 		return owner
 	}
 
-	log.Printf("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, "")
+	tracef("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, "")
 	return ""
 }
 
@@ -292,10 +292,10 @@ func (m *Multiplexer) isGRPCAlive(ctx context.Context, workerID string) (bool, e
 
 	exists, err := m.gateway.redis.Exists(ctx, "worker_grpc_alive:"+workerID).Result()
 	if err != nil {
-		log.Printf("[trace] GW_GRPC_ALIVE worker=%s alive=%v", workerID, false)
+		tracef("[trace] GW_GRPC_ALIVE worker=%s alive=%v", workerID, false)
 		return false, err
 	}
-	log.Printf("[trace] GW_GRPC_ALIVE worker=%s alive=%v", workerID, exists > 0)
+	tracef("[trace] GW_GRPC_ALIVE worker=%s alive=%v", workerID, exists > 0)
 	return exists > 0, nil
 }
 
@@ -360,7 +360,7 @@ func (m *Multiplexer) deliverToClient(session *PlayerSession, payload []byte) {
 // sendErrorToClient sends a JSON error response via the session's SendCh.
 // This ensures the writePump remains the sole writer to the WebSocket.
 func (m *Multiplexer) sendErrorToClient(conn *websocket.Conn, code, message string) error {
-	log.Printf("[trace] GW_MUX_ERROR player=%s code=%s msg=%s", "", code, message)
+	tracef("[trace] GW_MUX_ERROR player=%s code=%s msg=%s", "", code, message)
 	errMsg, _ := json.Marshal(map[string]interface{}{
 		"type": "error",
 		"payload": map[string]string{

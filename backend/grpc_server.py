@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 # otherwise suppress INFO-level records from this module's logger.
 logger.setLevel(logging.INFO)
 
+# Gate [trace] logs behind the TRACE_ENABLED env flag (default OFF).
+_TRACE_ENABLED = os.environ.get("TRACE_ENABLED", "false").lower() in ("true", "1", "yes")
+
 # gRPC port from environment (default 50051)
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
 
@@ -159,7 +162,8 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                 message_type = game_msg.message_type
                 payload_bytes = game_msg.payload
 
-                logger.info("[trace] BE_GRPC_IN player=%s room=%s type=%s", player_id, room_code, message_type)
+                if _TRACE_ENABLED:
+                    logger.info("[trace] BE_GRPC_IN player=%s room=%s type=%s", player_id, room_code, message_type)
 
                 # Parse the JSON message. The gateway forwards the FULL client
                 # message ({"type": ..., "payload": {...}}) as the envelope payload,
@@ -183,11 +187,12 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                         "[grpc:in] player=%s room=%s type=%s payload_keys=%s",
                         player_id, room_code, message_type, payload_keys,
                     )
-                    logger.info(
-                        "[trace] BE_PAYLOAD_UNWRAP type=%s keys=%s",
-                        message_type,
-                        list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
-                    )
+                    if _TRACE_ENABLED:
+                        logger.info(
+                            "[trace] BE_PAYLOAD_UNWRAP type=%s keys=%s",
+                            message_type,
+                            list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
+                        )
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     # Send error back to the specific player
                     error_msg = BroadcastMessage(
@@ -278,10 +283,11 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             transports[real_player_id] = transport
             # Keep the pending id mapping too (defensive) so any in-flight lookup
             # still resolves; it will be cleaned up on stream close.
-        logger.info(
-            "[trace] BE_TRANSPORT_REBIND old=%s new=%s (was_pending=%s)",
-            prev_id, real_player_id, old_player_id,
-        )
+        if _TRACE_ENABLED:
+            logger.info(
+                "[trace] BE_TRANSPORT_REBIND old=%s new=%s (was_pending=%s)",
+                prev_id, real_player_id, old_player_id,
+            )
 
     async def _dispatch_message(
         self,
@@ -315,8 +321,9 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
         from backend.models import RoomState
 
         logger.info("[grpc:dispatch] type=%s player=%s", message_type, player_id)
-        logger.info("[trace] BE_DISPATCH player=%s room=%s type=%s", player_id, room_code, message_type)
-        logger.info("[trace] BE_HANDLE_%s player=%s", message_type.upper(), player_id)
+        if _TRACE_ENABLED:
+            logger.info("[trace] BE_DISPATCH player=%s room=%s type=%s", player_id, room_code, message_type)
+            logger.info("[trace] BE_HANDLE_%s player=%s", message_type.upper(), player_id)
 
         if message_type == "create_room":
             name = payload.get("name", "")
@@ -326,10 +333,11 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             # which matches the gateway's session registry at this instant.
             await transport.send_json(result)
             logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type") if isinstance(result, dict) else None)
-            logger.info(
-                "[trace] BE_IDENTITY_RESULT type=%s player_id=%s room=%s",
-                result.get("type"), result.get("payload", {}).get("player_id"), result.get("payload", {}).get("room_code"),
-            )
+            if _TRACE_ENABLED:
+                logger.info(
+                    "[trace] BE_IDENTITY_RESULT type=%s player_id=%s room=%s",
+                    result.get("type"), result.get("payload", {}).get("player_id"), result.get("payload", {}).get("room_code"),
+                )
             # Rebind the transport to the REAL assigned player_id so all future
             # broadcasts target the id the gateway re-indexed the session under.
             self._rebind_transport(transport, transports, result, player_id)
@@ -341,10 +349,11 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             result = await room_manager.join_room(name, rc, transport)
             await transport.send_json(result)
             logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type") if isinstance(result, dict) else None)
-            logger.info(
-                "[trace] BE_IDENTITY_RESULT type=%s player_id=%s room=%s",
-                result.get("type"), result.get("payload", {}).get("player_id"), result.get("payload", {}).get("room_code"),
-            )
+            if _TRACE_ENABLED:
+                logger.info(
+                    "[trace] BE_IDENTITY_RESULT type=%s player_id=%s room=%s",
+                    result.get("type"), result.get("payload", {}).get("player_id"), result.get("payload", {}).get("room_code"),
+                )
             self._rebind_transport(transport, transports, result, player_id)
             return result
 
@@ -355,10 +364,11 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             # On successful reconnect, the transport is now set as the player's websocket
             await transport.send_json(result)
             logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type") if isinstance(result, dict) else None)
-            logger.info(
-                "[trace] BE_IDENTITY_RESULT type=%s player_id=%s room=%s",
-                result.get("type"), result.get("payload", {}).get("player_id"), result.get("payload", {}).get("room_code"),
-            )
+            if _TRACE_ENABLED:
+                logger.info(
+                    "[trace] BE_IDENTITY_RESULT type=%s player_id=%s room=%s",
+                    result.get("type"), result.get("payload", {}).get("player_id"), result.get("payload", {}).get("room_code"),
+                )
             self._rebind_transport(transport, transports, result, player_id)
             return result
 

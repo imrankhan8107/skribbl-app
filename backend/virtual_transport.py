@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 
 from backend.proto.game_pb2 import BroadcastMessage
 
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 # Ensure trace logs are visible in Docker — uvicorn's default config may
 # otherwise suppress INFO-level records from this module's logger.
 logger.setLevel(logging.INFO)
+
+# Gate [trace] logs behind the TRACE_ENABLED env flag (default OFF).
+_TRACE_ENABLED = os.environ.get("TRACE_ENABLED", "false").lower() in ("true", "1", "yes")
 
 
 class VirtualTransport:
@@ -62,15 +66,16 @@ class VirtualTransport:
         Args:
             data: The string payload (typically JSON) to deliver to the player.
         """
-        try:
-            parsed = json.loads(data)
-            extracted_type = parsed.get("type", "?") if isinstance(parsed, dict) else "?"
-        except (ValueError, TypeError):
-            extracted_type = "?"
-        logger.info(
-            "[trace] VT_SEND player=%s room=%s type=%s",
-            self.player_id, self.room_code, extracted_type,
-        )
+        if _TRACE_ENABLED:
+            try:
+                parsed = json.loads(data)
+                extracted_type = parsed.get("type", "?") if isinstance(parsed, dict) else "?"
+            except (ValueError, TypeError):
+                extracted_type = "?"
+            logger.info(
+                "[trace] VT_SEND player=%s room=%s type=%s",
+                self.player_id, self.room_code, extracted_type,
+            )
 
         msg = BroadcastMessage(
             room_code=self.room_code,

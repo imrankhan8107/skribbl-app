@@ -38,6 +38,21 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// ─── Tracing ─────────────────────────────────────────────────────────────────
+
+// traceEnabled is set once at startup from the TRACE_ENABLED env var.
+var traceEnabled = func() bool {
+	v := strings.ToLower(os.Getenv("TRACE_ENABLED"))
+	return v == "true" || v == "1" || v == "yes"
+}()
+
+// tracef logs only when TRACE_ENABLED is set. Skips formatting when disabled.
+func tracef(format string, args ...interface{}) {
+	if traceEnabled {
+		log.Printf(format, args...)
+	}
+}
+
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 var (
@@ -260,11 +275,13 @@ func (gw *Gateway) handleGRPCPath(clientConn *websocket.Conn, connID int64) {
 		log.Printf("[gw:recv] connID=%d player=%s room=%s type=%s bytes=%d", connID, session.PlayerID, session.RoomCode, probe.Type, len(msg))
 
 		// TRACE: raw message read from the client WebSocket
-		traceMsg := string(msg)
-		if len(traceMsg) > 200 {
-			traceMsg = traceMsg[:200]
+		if traceEnabled {
+			traceMsg := string(msg)
+			if len(traceMsg) > 200 {
+				traceMsg = traceMsg[:200]
+			}
+			tracef("[trace] GW_RECV_CLIENT connID=%d player=%s room=%s bytes=%d msg=%s", connID, session.PlayerID, session.RoomCode, len(msg), traceMsg)
 		}
-		log.Printf("[trace] GW_RECV_CLIENT connID=%d player=%s room=%s bytes=%d msg=%s", connID, session.PlayerID, session.RoomCode, len(msg), traceMsg)
 
 		if err := gw.multiplexer.HandleClientMessage(session, msg); err != nil {
 			log.Printf("[gateway] MULTIPLEXER_ERROR connID=%d err=%v", connID, err)

@@ -188,13 +188,13 @@ func (sm *StreamManager) Send(roomCode string, msg *proto.GameMessage) error {
 
 	if !ok {
 		log.Printf("[sm:send] room=%s FAILED no stream", roomCode)
-		log.Printf("[trace] GW_STREAM_SEND_FAIL room=%s reason=no_stream", roomCode)
+		tracef("[trace] GW_STREAM_SEND_FAIL room=%s reason=no_stream", roomCode)
 		return fmt.Errorf("no stream for room %s", roomCode)
 	}
 
 	if !rs.isHealthy() {
 		log.Printf("[sm:send] room=%s FAILED unhealthy state=%d", roomCode, rs.state.Load())
-		log.Printf("[trace] GW_STREAM_SEND_FAIL room=%s reason=unhealthy", roomCode)
+		tracef("[trace] GW_STREAM_SEND_FAIL room=%s reason=unhealthy", roomCode)
 		return fmt.Errorf("stream for room %s is unhealthy (state=%d)", roomCode, rs.state.Load())
 	}
 
@@ -203,11 +203,11 @@ func (sm *StreamManager) Send(roomCode string, msg *proto.GameMessage) error {
 	case rs.sendCh <- msg:
 		rs.markActivity()
 		log.Printf("[sm:send] room=%s queued type ok", roomCode)
-		log.Printf("[trace] GW_STREAM_SEND room=%s type=%s player=%s", roomCode, msg.GetMessageType(), msg.GetPlayerId())
+		tracef("[trace] GW_STREAM_SEND room=%s type=%s player=%s", roomCode, msg.GetMessageType(), msg.GetPlayerId())
 		return nil
 	default:
 		log.Printf("[sm:send] room=%s FAILED buffer full", roomCode)
-		log.Printf("[trace] GW_STREAM_SEND_FAIL room=%s reason=buffer_full", roomCode)
+		tracef("[trace] GW_STREAM_SEND_FAIL room=%s reason=buffer_full", roomCode)
 		return fmt.Errorf("send buffer full for room %s", roomCode)
 	}
 }
@@ -318,7 +318,7 @@ func (sm *StreamManager) sendLoop(rs *RoomStream) {
 	defer close(rs.done)
 
 	for msg := range rs.sendCh {
-		log.Printf("[trace] GW_GRPC_OUT room=%s type=%s player=%s", rs.roomCode, msg.GetMessageType(), msg.GetPlayerId())
+		tracef("[trace] GW_GRPC_OUT room=%s type=%s player=%s", rs.roomCode, msg.GetMessageType(), msg.GetPlayerId())
 		if err := rs.stream.Send(msg); err != nil {
 			log.Printf("[stream_manager] Send error room=%s err=%v", rs.roomCode, err)
 			rs.state.Store(streamStateDead)

@@ -28,6 +28,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - GRPC_ENABLED=true
       - GRPC_PORT=50051
+      - TRACE_ENABLED=${TRACE_ENABLED:-false}
     depends_on:
       redis:
         condition: service_healthy
@@ -46,6 +47,8 @@ services:
       context: .
       dockerfile: gateway/Dockerfile
     command: ["-port", "9000", "-redis", "redis://redis:6379", "-backends", "app:8000", "-static", "/static"]
+    environment:
+      - TRACE_ENABLED=${TRACE_ENABLED:-false}
     depends_on:
       redis:
         condition: service_healthy
