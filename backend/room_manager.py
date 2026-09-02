@@ -642,25 +642,45 @@ class RoomManager:
         if room is None:
             return
 
-        # Step 1: Send to all local connected players
+        # Step 1: Send to all local connected players.
+        # Serialize once and reuse for every recipient and (if needed) the Redis
+        # relay. In the same pass, detect whether any player is remote — a remote
+        # player is added by the owner's join_room RPC with websocket=None, so a
+        # None websocket is our race-free signal that a cross-worker relay is
+        # actually needed. All-local rooms (the common gateway-routed case) skip
+        # the redundant publish + self-loopback entirely.
         data = json.dumps(message)
+        local_recipients = 0
+        has_remote_players = False
         for player in room.players:
-            if player.is_connected and player.websocket is not None:
-                try:
-                    await asyncio.wait_for(player.websocket.send_text(data), timeout=5.0)
-                except (asyncio.TimeoutError, Exception):
-                    # Send timed out or failed — skip this player, don't block others
-                    pass
+            if player.websocket is not None:
+                if player.is_connected:
+                    local_recipients += 1
+                    try:
+                        # No per-send timeout: the gateway/uvicorn send is a
+                        # non-blocking buffer write, and a 5s per-message timer
+                        # only added task/timer churn on the hot path. Backpressure
+                        # for genuinely slow clients belongs in a bounded per-conn
+                        # queue, not a per-message timeout.
+                        await player.websocket.send_text(data)
+                    except Exception:
+                        # Send failed — skip this player, don't block others.
+                        pass
+            else:
+                # websocket is None → player lives on another worker (proxy/remote).
+                has_remote_players = True
 
         if _TRACE_ENABLED:
             logger.info(
                 "[trace] BE_BROADCAST_LOCAL room=%s type=%s recipients=%d",
-                room_code, message.get("type"),
-                sum(1 for p in room.players if p.is_connected and p.websocket is not None),
+                room_code, message.get("type"), local_recipients,
             )
 
-        # Step 2: Publish to Redis for cross-worker relay (no-op if Redis not configured)
-        if redis_pubsub.is_redis_enabled():
+        # Step 2: Publish to Redis for cross-worker relay only when a remote
+        # player is actually present. This eliminates the redundant second
+        # json.dumps + PUBLISH + self-loopback json.loads/discard on every
+        # broadcast for all-local rooms (no-op if Redis not configured).
+        if has_remote_players and redis_pubsub.is_redis_enabled():
             try:
                 await redis_pubsub.publish_to_room(room_code, message)
             except Exception as e:

@@ -307,6 +307,59 @@ class TestBroadcast:
         ws1.send_text.assert_called_once()
         ws2.send_text.assert_not_called()
 
+    async def test_broadcast_skips_redis_publish_when_all_local(self, manager, monkeypatch):
+        """An all-local room must NOT publish to Redis (avoids redundant self-loopback).
+
+        In the gateway-routed model every player of a room lives on the owning
+        worker, so the cross-worker relay only loops back to the sender. broadcast
+        must skip publish_to_room entirely for such rooms.
+        """
+        from backend import redis_pubsub
+
+        publish_mock = AsyncMock()
+        monkeypatch.setattr(redis_pubsub, "is_redis_enabled", lambda: True)
+        monkeypatch.setattr(redis_pubsub, "publish_to_room", publish_mock)
+
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        create_result = await manager.create_room("Alice", ws1)
+        room_code = create_result["payload"]["room_code"]
+        await manager.join_room("Bob", room_code, ws2)
+
+        await manager.broadcast(room_code, {"type": "test"})
+
+        publish_mock.assert_not_called()
+
+    async def test_broadcast_publishes_to_redis_when_remote_player_present(self, manager, monkeypatch):
+        """A room with a remote player (websocket=None) MUST publish to Redis.
+
+        Remote players are added by the owner's join_room RPC with websocket=None.
+        Their broadcasts can only reach them via the cross-worker relay, so the
+        publish must still fire when such a player is present.
+        """
+        from backend import redis_pubsub
+        from backend.models import Player
+
+        publish_mock = AsyncMock()
+        monkeypatch.setattr(redis_pubsub, "is_redis_enabled", lambda: True)
+        monkeypatch.setattr(redis_pubsub, "publish_to_room", publish_mock)
+
+        ws1 = make_mock_ws()
+        create_result = await manager.create_room("Alice", ws1)
+        room_code = create_result["payload"]["room_code"]
+
+        # Simulate a remote player added via cross-worker join RPC: websocket=None.
+        room = manager.get_room(room_code)
+        remote = Player(id="remote-1", name="RemoteBob", websocket=None, is_connected=True)
+        room.add_player(remote)
+
+        await manager.broadcast(room_code, {"type": "test"})
+
+        # Local player still served exactly once...
+        ws1.send_text.assert_called_once()
+        # ...and the relay fired because a remote player is present.
+        publish_mock.assert_called_once()
+
 
 class TestUpdateSettings:
     """Tests for update_settings."""
