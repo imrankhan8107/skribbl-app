@@ -577,6 +577,23 @@ func (gw *Gateway) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		"grpc_enabled":        grpcEnabled,
 		"grpc_streams_active": streamsActive,
 		"grpc_fallback_rooms": fallbackRooms,
+		// Fan-out backpressure observability. fanout_dropped.control MUST stay 0;
+		// a nonzero value means must-deliver events (game_over/turn_started) are
+		// being dropped at a full client SendCh — the signal that priority
+		// delivery lanes are needed.
+		"fanout_dropped": map[string]float64{
+			"lossy":   getCounterVecValue(fanoutDroppedTotal, "lossy"),
+			"control": getCounterVecValue(fanoutDroppedTotal, "control"),
+		},
+		"fanout_delivered": map[string]float64{
+			"lossy":   getCounterVecValue(fanoutDeliveredTotal, "lossy"),
+			"control": getCounterVecValue(fanoutDeliveredTotal, "control"),
+		},
+		"grpc_stream_errors": map[string]float64{
+			"transport_error": getCounterVecValue(grpcStreamErrorsTotal, "transport_error"),
+			"timeout":         getCounterVecValue(grpcStreamErrorsTotal, "timeout"),
+			"buffer_overflow": getCounterVecValue(grpcStreamErrorsTotal, "buffer_overflow"),
+		},
 	}
 
 	data, _ := json.Marshal(resp)

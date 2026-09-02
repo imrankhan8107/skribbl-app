@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -113,29 +112,6 @@ func RegisterMetricsHandler(mux *http.ServeMux) {
 	mux.Handle("/metrics", promhttp.Handler())
 }
 
-// MetricsSummary returns a map of current gRPC metric values for inclusion
-// in the /health JSON response.
-func MetricsSummary() map[string]interface{} {
-	summary := map[string]interface{}{
-		"grpc_streams_active":            getGaugeValue(grpcStreamsActive),
-		"grpc_fallback_activations_total": getCounterValue(grpcFallbackActivationsTotal),
-		"grpc_stream_errors": map[string]float64{
-			"transport_error": getCounterVecValue(grpcStreamErrorsTotal, "transport_error"),
-			"timeout":         getCounterVecValue(grpcStreamErrorsTotal, "timeout"),
-			"buffer_overflow": getCounterVecValue(grpcStreamErrorsTotal, "buffer_overflow"),
-		},
-		"fanout_dropped": map[string]float64{
-			"lossy":   getCounterVecValue(fanoutDroppedTotal, "lossy"),
-			"control": getCounterVecValue(fanoutDroppedTotal, "control"),
-		},
-		"fanout_delivered": map[string]float64{
-			"lossy":   getCounterVecValue(fanoutDeliveredTotal, "lossy"),
-			"control": getCounterVecValue(fanoutDeliveredTotal, "control"),
-		},
-	}
-	return summary
-}
-
 // getGaugeValue reads the current value of a Prometheus gauge.
 func getGaugeValue(g prometheus.Gauge) float64 {
 	m := &dto.Metric{}
@@ -167,19 +143,4 @@ func getCounterVecValue(cv *prometheus.CounterVec, errorType string) float64 {
 	return m.GetCounter().GetValue()
 }
 
-// HandleHealthWithMetrics wraps the /health endpoint to include gRPC metrics summary.
-func HandleHealthWithMetrics(gw *Gateway) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		health := map[string]interface{}{
-			"status":          "ok",
-			"active_clients":  activeClients.Load(),
-			"active_backends": activeBackends.Load(),
-			"total_connects":  totalConnects.Load(),
-			"total_errors":    totalErrors.Load(),
-			"grpc_enabled":    true,
-			"grpc_metrics":    MetricsSummary(),
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(health)
-	}
-}
+
