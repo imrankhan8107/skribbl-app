@@ -95,7 +95,7 @@ class VirtualTransport:
         """
         await self.send_text(json.dumps(data))
 
-    async def send_room(self, data: str) -> None:
+    async def send_room(self, data: str, lossy: bool = False) -> None:
         """Enqueue a single room-wide BroadcastMessage (empty target list).
 
         This is the O(1) fan-out path: instead of emitting one targeted
@@ -108,12 +108,23 @@ class VirtualTransport:
         events, etc.). Identity responses, the private word, and errors must
         stay targeted via send_text/send_json.
 
+        The `lossy` flag tags the message class in the protobuf message_type so
+        the gateway can classify it for FREE (no JSON parse on the hot path):
+          - lossy=False → "broadcast": must-deliver control/game events
+            (turn_started, turn_ended, game_over, chat, hint_update, ...).
+          - lossy=True  → "broadcast_lossy": loss-tolerant, high-rate draw
+            events (stroke, fill, clear_canvas) that may be dropped under
+            backpressure without breaking the game.
+
+        This tag is what lets the gateway drop strokes but never drop game_over.
+
         Args:
             data: The already-serialized JSON string to deliver to the room.
+            lossy: True for droppable draw events; False for must-deliver events.
         """
         msg = BroadcastMessage(
             room_code=self.room_code,
-            message_type="broadcast",
+            message_type="broadcast_lossy" if lossy else "broadcast",
             payload=data.encode("utf-8"),
             target_player_ids=[],  # empty → gateway fans out to whole room
         )

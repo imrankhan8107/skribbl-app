@@ -29,43 +29,57 @@ func NewFanOutDispatcher(registry *SessionRegistry) *FanOutDispatcher {
 // Enqueue is non-blocking: if a player's SendCh is full, the message is dropped
 // and a warning is logged (backpressure for slow clients).
 func (f *FanOutDispatcher) Deliver(msg *proto.BroadcastMessage) {
+	// Classify the message for free from the protobuf message_type set by the
+	// worker (no JSON parse on the hot path):
+	//   "broadcast_lossy" → strokes/draw events, safe to drop under backpressure.
+	//   everything else   → must-deliver control/game events.
+	class := "control"
+	if msg.GetMessageType() == "broadcast_lossy" {
+		class = "lossy"
+	}
+
 	if len(msg.TargetPlayerIds) == 0 {
 		// Broadcast to all players in the room
 		sessions := f.registry.GetByRoom(msg.RoomCode)
-		debugf("[fanout] room=%s targets=0 sessions_found=%d", msg.RoomCode, len(sessions))
-		tracef("[trace] GW_FANOUT_ALL room=%s recipients=%d", msg.RoomCode, len(sessions))
+		debugf("[fanout] room=%s targets=0 sessions_found=%d class=%s", msg.RoomCode, len(sessions), class)
+		tracef("[trace] GW_FANOUT_ALL room=%s recipients=%d class=%s", msg.RoomCode, len(sessions), class)
 		for _, s := range sessions {
-			f.enqueueNonBlocking(s, msg.Payload)
+			f.enqueueNonBlocking(s, msg.Payload, class)
 		}
 	} else {
 		// Targeted delivery to specific players
-		tracef("[trace] GW_FANOUT_TARGET room=%s targets=%v", msg.RoomCode, msg.TargetPlayerIds)
+		tracef("[trace] GW_FANOUT_TARGET room=%s targets=%v class=%s", msg.RoomCode, msg.TargetPlayerIds, class)
 		found := 0
 		for _, pid := range msg.TargetPlayerIds {
 			if s := f.registry.GetByPlayer(pid); s != nil {
 				found++
-				f.enqueueNonBlocking(s, msg.Payload)
+				f.enqueueNonBlocking(s, msg.Payload, class)
 			} else {
 				debugf("[fanout] TARGET MISS player=%s", pid)
 			}
 		}
-		debugf("[fanout] room=%s targets=%d sessions_found=%d", msg.RoomCode, len(msg.TargetPlayerIds), found)
+		debugf("[fanout] room=%s targets=%d sessions_found=%d class=%s", msg.RoomCode, len(msg.TargetPlayerIds), found, class)
 	}
 }
 
 // enqueueNonBlocking attempts to send the payload to the player's SendCh
-// without blocking. If the channel is full, the message is dropped and logged.
-func (f *FanOutDispatcher) enqueueNonBlocking(s *PlayerSession, payload []byte) {
+// without blocking. If the channel is full, the message is dropped and the drop
+// is recorded against its class. A nonzero "control" drop count is the signal
+// that must-deliver events are being lost at the queue (i.e. priority lanes
+// would help); "lossy" drops are strokes and are expected under load.
+func (f *FanOutDispatcher) enqueueNonBlocking(s *PlayerSession, payload []byte, class string) {
 	select {
 	case s.SendCh <- payload:
 		f.deliveredCount.Add(1)
+		RecordFanoutDelivered(class)
 		if traceEnabled {
-			tracef("[trace] GW_FANOUT_DELIVER player=%s", s.PlayerID)
+			tracef("[trace] GW_FANOUT_DELIVER player=%s class=%s", s.PlayerID, class)
 		}
 	default:
 		// Channel full — drop message to avoid head-of-line blocking
 		f.droppedCount.Add(1)
-		debugf("[fanout] dropped message for player=%s room=%s: SendCh full", s.PlayerID, s.RoomCode)
+		RecordFanoutDropped(class)
+		debugf("[fanout] dropped message for player=%s room=%s class=%s: SendCh full", s.PlayerID, s.RoomCode, class)
 	}
 }
 

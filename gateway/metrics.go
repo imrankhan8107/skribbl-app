@@ -36,6 +36,26 @@ var (
 		Name: "grpc_fallback_activations_total",
 		Help: "Number of times Fallback_Mode was activated",
 	})
+
+	// fanoutDroppedTotal counts fan-out messages dropped due to a full per-client
+	// SendCh, labelled by message class. This is the disambiguating metric:
+	//   class="lossy"   → dropped strokes/draw events (expected under load, OK).
+	//   class="control" → dropped must-deliver events (turn_started, game_over,
+	//                      etc.). This MUST stay 0; any nonzero value proves that
+	//                      games fail because control messages are dropped at the
+	//                      queue (vs. never being generated due to event-loop
+	//                      starvation), which is what decides whether priority
+	//                      delivery lanes are actually needed.
+	fanoutDroppedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "grpc_fanout_dropped_total",
+		Help: "Fan-out messages dropped due to full client SendCh, by message class",
+	}, []string{"class"})
+
+	// fanoutDeliveredTotal counts fan-out messages successfully enqueued, by class.
+	fanoutDeliveredTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "grpc_fanout_delivered_total",
+		Help: "Fan-out messages enqueued to client SendCh, by message class",
+	}, []string{"class"})
 )
 
 func init() {
@@ -43,6 +63,18 @@ func init() {
 	prometheus.MustRegister(grpcStreamErrorsTotal)
 	prometheus.MustRegister(grpcMessagesPerStream)
 	prometheus.MustRegister(grpcFallbackActivationsTotal)
+	prometheus.MustRegister(fanoutDroppedTotal)
+	prometheus.MustRegister(fanoutDeliveredTotal)
+}
+
+// RecordFanoutDropped increments the dropped-message counter for a message class.
+func RecordFanoutDropped(class string) {
+	fanoutDroppedTotal.WithLabelValues(class).Inc()
+}
+
+// RecordFanoutDelivered increments the delivered-message counter for a message class.
+func RecordFanoutDelivered(class string) {
+	fanoutDeliveredTotal.WithLabelValues(class).Inc()
 }
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
@@ -91,6 +123,14 @@ func MetricsSummary() map[string]interface{} {
 			"transport_error": getCounterVecValue(grpcStreamErrorsTotal, "transport_error"),
 			"timeout":         getCounterVecValue(grpcStreamErrorsTotal, "timeout"),
 			"buffer_overflow": getCounterVecValue(grpcStreamErrorsTotal, "buffer_overflow"),
+		},
+		"fanout_dropped": map[string]float64{
+			"lossy":   getCounterVecValue(fanoutDroppedTotal, "lossy"),
+			"control": getCounterVecValue(fanoutDroppedTotal, "control"),
+		},
+		"fanout_delivered": map[string]float64{
+			"lossy":   getCounterVecValue(fanoutDeliveredTotal, "lossy"),
+			"control": getCounterVecValue(fanoutDeliveredTotal, "control"),
 		},
 	}
 	return summary

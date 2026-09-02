@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import random
 import re
 import time
@@ -9,6 +10,9 @@ from collections import deque
 
 from backend.models import Room, RoomState, TurnEndReason, TurnState
 from backend.words import WORDS
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 def _levenshtein_distance(s1: str, s2: str) -> int:
@@ -575,6 +579,12 @@ async def advance_turn_or_round(room: Room, room_manager) -> None:
             for p in ranked_players
         ]
 
+        # Disambiguator: this log confirms game_over was GENERATED. If load
+        # tests show low completion but this fires for every room, the loss is
+        # downstream (dropped at the gateway queue), not the game engine failing
+        # to advance. If it does NOT fire, the event loop is starved and timers
+        # never ran — a different problem that priority lanes wouldn't fix.
+        logger.info("[game] game_over emitted room=%s reason=rounds_complete", room.code)
         await room_manager.broadcast(room.code, {
             "type": "game_over",
             "payload": {"scores": final_scores},
@@ -599,6 +609,7 @@ async def advance_turn_or_round(room: Room, room_manager) -> None:
                     {"id": p.id, "name": p.name, "score": p.score}
                     for p in ranked_players
                 ]
+                logger.info("[game] game_over emitted room=%s reason=rounds_complete_skip", room.code)
                 await room_manager.broadcast(room.code, {
                     "type": "game_over",
                     "payload": {"scores": final_scores},
@@ -613,6 +624,7 @@ async def advance_turn_or_round(room: Room, room_manager) -> None:
             {"id": p.id, "name": p.name, "score": p.score}
             for p in ranked_players
         ]
+        logger.info("[game] game_over emitted room=%s reason=no_connected_players", room.code)
         await room_manager.broadcast(room.code, {
             "type": "game_over",
             "payload": {"scores": final_scores},

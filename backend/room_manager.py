@@ -32,6 +32,12 @@ _TRACE_ENABLED = os.environ.get("TRACE_ENABLED", "false").lower() in ("true", "1
 # Hard cap on players per room regardless of config
 MAX_PLAYERS_HARD_CAP = 12
 
+# Loss-tolerant, high-rate broadcast types. These are safe to drop under
+# backpressure at the gateway (a dropped stroke is superseded by the next one).
+# Everything else — turn_started, turn_ended, game_over, chat_message,
+# hint_update, player_list, etc. — is must-deliver and must NOT be dropped.
+LOSSY_BROADCAST_TYPES = frozenset({"stroke", "fill", "clear_canvas", "cursor"})
+
 # Display name constraints
 MIN_NAME_LENGTH = 1
 MAX_NAME_LENGTH = 20
@@ -694,8 +700,10 @@ class RoomManager:
         if len(seen_queues) == 1 and not has_real_websocket:
             # gRPC path, single shared stream (production invariant): ONE
             # room-wide fan-out message. Gateway expands to all room sessions.
+            # Tag the class so the gateway can drop strokes but never game_over.
+            lossy = message.get("type") in LOSSY_BROADCAST_TYPES
             try:
-                await single_queue_transport.send_room(data)
+                await single_queue_transport.send_room(data, lossy=lossy)
             except Exception:
                 pass
         else:
