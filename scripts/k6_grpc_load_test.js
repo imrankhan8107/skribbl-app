@@ -64,7 +64,23 @@ const TURN_DURATION = parseInt(__ENV.TURN_DURATION || '80');
 // Set STROKE_HZ=0 to restore the old low-rate behaviour.
 const STROKE_HZ = parseInt(__ENV.STROKE_HZ || '30');
 const STROKE_POINTS = parseInt(__ENV.STROKE_POINTS || '4'); // points batched per stroke msg
-const HOLD_SECONDS = NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + 20) + 120;
+// HOLD_SECONDS is the client's patience window: how long a VU waits for its
+// game to reach `game_over` before giving up and marking the session `aborted`.
+// It MUST comfortably exceed the real wall-clock length of a full game, or the
+// game_completion_rate metric measures the harness's patience instead of the
+// server.
+//
+// A full game is NUM_ROUNDS * PLAYERS_PER_ROOM turns. Each turn costs more than
+// TURN_DURATION: the drawer bot waits ~1-3s to pick a word (up to 15s auto-
+// select), plus drawer_selecting → word_choices → select_word round trips and
+// turn_ended → next-turn transitions. Observed overhead is ~25-45s/turn under
+// concurrent load, not the 20s the previous formula budgeted — which timed out
+// the slowest ~40% of games right at the ceiling. Budget 45s/turn of slack plus
+// a 180s fixed buffer for the lobby→start handshake and graceful finish.
+const PER_TURN_SLACK = parseInt(__ENV.PER_TURN_SLACK || '45');
+const HOLD_FIXED_BUFFER = parseInt(__ENV.HOLD_FIXED_BUFFER || '180');
+const HOLD_SECONDS =
+  NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + PER_TURN_SLACK) + HOLD_FIXED_BUFFER;
 
 // ─── Options ────────────────────────────────────────────────────────────────
 
