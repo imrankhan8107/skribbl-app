@@ -94,3 +94,27 @@ class VirtualTransport:
             data: Dictionary to serialize and send.
         """
         await self.send_text(json.dumps(data))
+
+    async def send_room(self, data: str) -> None:
+        """Enqueue a single room-wide BroadcastMessage (empty target list).
+
+        This is the O(1) fan-out path: instead of emitting one targeted
+        BroadcastMessage per player (which costs P protobuf allocations, P
+        queue puts, and P gRPC frames for a P-player room), we emit ONE message
+        with an empty target_player_ids. The gateway's FanOutDispatcher expands
+        it to every session in the room (GetByRoom) on already-serialized bytes.
+
+        Use this only for genuine room-wide broadcasts (stroke, chat, turn
+        events, etc.). Identity responses, the private word, and errors must
+        stay targeted via send_text/send_json.
+
+        Args:
+            data: The already-serialized JSON string to deliver to the room.
+        """
+        msg = BroadcastMessage(
+            room_code=self.room_code,
+            message_type="broadcast",
+            payload=data.encode("utf-8"),
+            target_player_ids=[],  # empty → gateway fans out to whole room
+        )
+        await self._send_queue.put(msg)

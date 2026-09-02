@@ -21,6 +21,7 @@ from uuid import uuid4
 
 from backend.models import GameConfig, Player, Room, RoomState
 from backend import redis_pubsub
+from backend.virtual_transport import VirtualTransport
 
 logger = logging.getLogger(__name__)
 
@@ -652,23 +653,70 @@ class RoomManager:
         data = json.dumps(message)
         local_recipients = 0
         has_remote_players = False
+
+        # Fast path (gRPC/gateway mode): when local players are gRPC-backed
+        # (VirtualTransport), the gateway owns connection fan-out. Instead of
+        # emitting one targeted BroadcastMessage per player (P protobufs + P queue
+        # puts + P gRPC frames for a P-player room), emit ONE room-wide message
+        # (empty target list) per distinct stream queue. The gateway's
+        # FanOutDispatcher then expands it to every session in the room on
+        # already-serialized bytes.
+        #
+        # In the production gateway all players of a room share a single
+        # RoomStream (one send_queue). An empty-target message tells the gateway
+        # to expand it to every session in the room (GetByRoom). We can therefore
+        # use this O(1) path ONLY when every connected gRPC player shares ONE
+        # queue. If players span multiple streams (reconnect races, or the
+        # multi-stream integration harness), emitting an empty-target message on
+        # each queue would make the gateway double-deliver to every client — so
+        # in that case we fall back to per-player targeted sends, which are
+        # unambiguous.
+        seen_queues: set[int] = set()
+        single_queue_transport: VirtualTransport | None = None
+        has_real_websocket = False
         for player in room.players:
-            if player.websocket is not None:
-                if player.is_connected:
-                    local_recipients += 1
+            ws = player.websocket
+            if ws is None:
+                # websocket is None → player lives on another worker (proxy/remote).
+                has_remote_players = True
+                continue
+            if not player.is_connected:
+                continue
+            local_recipients += 1
+            if isinstance(ws, VirtualTransport):
+                qid = id(ws._send_queue)
+                if qid not in seen_queues:
+                    seen_queues.add(qid)
+                    single_queue_transport = ws
+            else:
+                has_real_websocket = True
+
+        if len(seen_queues) == 1 and not has_real_websocket:
+            # gRPC path, single shared stream (production invariant): ONE
+            # room-wide fan-out message. Gateway expands to all room sessions.
+            try:
+                await single_queue_transport.send_room(data)
+            except Exception:
+                pass
+        else:
+            # FastAPI path (real WebSockets), mixed transports, or gRPC players
+            # spanning multiple streams: write to each recipient individually.
+            # For real WebSockets there is no multiplexer to expand a room-wide
+            # message; for multi-stream gRPC, per-player targeted sends avoid the
+            # double-delivery an empty-target message would cause.
+            for player in room.players:
+                ws = player.websocket
+                if ws is not None and player.is_connected:
                     try:
                         # No per-send timeout: the gateway/uvicorn send is a
                         # non-blocking buffer write, and a 5s per-message timer
-                        # only added task/timer churn on the hot path. Backpressure
-                        # for genuinely slow clients belongs in a bounded per-conn
-                        # queue, not a per-message timeout.
-                        await player.websocket.send_text(data)
+                        # only added task/timer churn on the hot path.
+                        # Backpressure for genuinely slow clients belongs in a
+                        # bounded per-conn queue, not a per-message timeout.
+                        await ws.send_text(data)
                     except Exception:
                         # Send failed — skip this player, don't block others.
                         pass
-            else:
-                # websocket is None → player lives on another worker (proxy/remote).
-                has_remote_players = True
 
         if _TRACE_ENABLED:
             logger.info(
