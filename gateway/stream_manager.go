@@ -201,10 +201,15 @@ func (sm *StreamManager) Send(roomCode string, msg *proto.GameMessage) error {
 	select {
 	case rs.sendCh <- msg:
 		rs.markActivity()
+		RecordSendQueued(msg.GetMessageType())
 		debugf("[sm:send] room=%s queued type ok", roomCode)
 		tracef("[trace] GW_STREAM_SEND room=%s type=%s player=%s", roomCode, msg.GetMessageType(), msg.GetPlayerId())
 		return nil
 	default:
+		// sendCh full: the per-room gRPC forwarding path can't keep up, so this
+		// inbound message is dropped here — upstream of the worker and fan-out.
+		// This is the suspected choke point for strokes under the storm.
+		RecordSendDropped(msg.GetMessageType())
 		debugf("[sm:send] room=%s FAILED buffer full", roomCode)
 		tracef("[trace] GW_STREAM_SEND_FAIL room=%s reason=buffer_full", roomCode)
 		return fmt.Errorf("send buffer full for room %s", roomCode)

@@ -594,6 +594,19 @@ func (gw *Gateway) HandleHealth(w http.ResponseWriter, r *http.Request) {
 			"timeout":         getCounterVecValue(grpcStreamErrorsTotal, "timeout"),
 			"buffer_overflow": getCounterVecValue(grpcStreamErrorsTotal, "buffer_overflow"),
 		},
+		// Inbound gateway->worker forwarding: dropped vs queued at StreamManager.Send.
+		// If send_dropped.stroke is large, strokes are dying at the per-room sendCh
+		// (upstream of the worker), which explains why fanout never sees them.
+		"send_dropped": map[string]float64{
+			"stroke": getCounterVecValue(sendDroppedTotal, "stroke"),
+			"fill":   getCounterVecValue(sendDroppedTotal, "fill"),
+			"guess":  getCounterVecValue(sendDroppedTotal, "guess"),
+		},
+		"send_queued": map[string]float64{
+			"stroke": getCounterVecValue(sendQueuedTotal, "stroke"),
+			"fill":   getCounterVecValue(sendQueuedTotal, "fill"),
+			"guess":  getCounterVecValue(sendQueuedTotal, "guess"),
+		},
 	}
 
 	data, _ := json.Marshal(resp)

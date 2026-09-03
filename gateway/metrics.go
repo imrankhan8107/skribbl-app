@@ -55,6 +55,24 @@ var (
 		Name: "grpc_fanout_delivered_total",
 		Help: "Fan-out messages enqueued to client SendCh, by message class",
 	}, []string{"class"})
+
+	// sendDroppedTotal counts INBOUND messages dropped at StreamManager.Send
+	// because the per-room gRPC sendCh buffer was full — i.e. the gateway->worker
+	// forwarding path couldn't keep up. Labelled by client message type. This is
+	// the choke point suspected for strokes: they die HERE, upstream of the
+	// worker and upstream of fan-out, which is why fanout counters never see them.
+	sendDroppedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "grpc_send_dropped_total",
+		Help: "Inbound messages dropped at StreamManager.Send due to full sendCh, by client message type",
+	}, []string{"type"})
+
+	// sendQueuedTotal counts inbound messages successfully queued to the per-room
+	// gRPC sendCh, labelled by client message type. Pairs with sendDroppedTotal to
+	// give a queued-vs-dropped ratio per type.
+	sendQueuedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "grpc_send_queued_total",
+		Help: "Inbound messages queued to per-room gRPC sendCh, by client message type",
+	}, []string{"type"})
 )
 
 func init() {
@@ -64,6 +82,18 @@ func init() {
 	prometheus.MustRegister(grpcFallbackActivationsTotal)
 	prometheus.MustRegister(fanoutDroppedTotal)
 	prometheus.MustRegister(fanoutDeliveredTotal)
+	prometheus.MustRegister(sendDroppedTotal)
+	prometheus.MustRegister(sendQueuedTotal)
+}
+
+// RecordSendDropped increments the inbound-drop counter for a client message type.
+func RecordSendDropped(msgType string) {
+	sendDroppedTotal.WithLabelValues(msgType).Inc()
+}
+
+// RecordSendQueued increments the inbound-queued counter for a client message type.
+func RecordSendQueued(msgType string) {
+	sendQueuedTotal.WithLabelValues(msgType).Inc()
 }
 
 // RecordFanoutDropped increments the dropped-message counter for a message class.
