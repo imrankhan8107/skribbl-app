@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -23,15 +24,47 @@ type Multiplexer struct {
 	registry  *SessionRegistry
 	resolver  *WorkerResolver
 	gateway   *Gateway
+
+	// Join-path caches. Under a connect burst (thousands of simultaneous
+	// join/create), the per-connection handshake was doing 2-3 serial Redis
+	// round-trips each (owner lookup + liveness + least-loaded), which serialize
+	// on single-threaded Redis and inflate room_join_rtt into multi-second
+	// territory. These caches collapse the steady-state per-join Redis cost to
+	// ~0 by reusing recent results, since:
+	//   - a room's owner is stable for the room's lifetime,
+	//   - worker liveness changes on a ~10s heartbeat,
+	//   - the least-loaded ranking changes slowly.
+	ownerCache    sync.Map      // roomCode -> ownerCacheEntry (worker id + fetch time)
+	liveCache     sync.Map      // workerID -> liveCacheEntry (alive + fetch time)
+	ownerCacheTTL time.Duration // how long to trust a cached room owner
+	liveCacheTTL  time.Duration // how long to trust a cached liveness result
+
+	leastLoadedMu  sync.Mutex
+	leastLoaded    string    // cached least-loaded worker id
+	leastLoadedAt  time.Time // when it was fetched
+	leastLoadedTTL time.Duration
+}
+
+type ownerCacheEntry struct {
+	worker    string
+	fetchedAt time.Time
+}
+
+type liveCacheEntry struct {
+	alive     bool
+	fetchedAt time.Time
 }
 
 // NewMultiplexer creates a Multiplexer with all required dependencies.
 func NewMultiplexer(streamMgr *StreamManager, registry *SessionRegistry, resolver *WorkerResolver, gw *Gateway) *Multiplexer {
 	return &Multiplexer{
-		streamMgr: streamMgr,
-		registry:  registry,
-		resolver:  resolver,
-		gateway:   gw,
+		streamMgr:      streamMgr,
+		registry:       registry,
+		resolver:       resolver,
+		gateway:        gw,
+		ownerCacheTTL:  60 * time.Second, // owners are stable for a room's life
+		liveCacheTTL:   5 * time.Second,  // liveness heartbeat is ~10s
+		leastLoadedTTL: 1 * time.Second,  // load ranking changes slowly
 	}
 }
 
@@ -243,6 +276,17 @@ func (m *Multiplexer) selectLeastLoadedWorker() string {
 		return ""
 	}
 
+	// Short-TTL cache: the load ranking changes slowly (workers report every
+	// ~10s), so caching for ~1s avoids a Redis ZRANGE per create during a burst.
+	m.leastLoadedMu.Lock()
+	if m.leastLoaded != "" && time.Since(m.leastLoadedAt) < m.leastLoadedTTL {
+		w := m.leastLoaded
+		m.leastLoadedMu.Unlock()
+		tracef("[trace] GW_SELECT_WORKER worker=%s (cached)", w)
+		return w
+	}
+	m.leastLoadedMu.Unlock()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -251,15 +295,33 @@ func (m *Multiplexer) selectLeastLoadedWorker() string {
 		tracef("[trace] GW_SELECT_WORKER worker=%s", "")
 		return ""
 	}
+
+	m.leastLoadedMu.Lock()
+	m.leastLoaded = result[0]
+	m.leastLoadedAt = time.Now()
+	m.leastLoadedMu.Unlock()
+
 	tracef("[trace] GW_SELECT_WORKER worker=%s", result[0])
 	return result[0]
 }
 
-// resolveRoomOwner looks up which worker owns a room via Redis.
+// resolveRoomOwner looks up which worker owns a room via Redis, with a local
+// cache. A room's owner is stable for the room's lifetime, so after the first
+// joiner resolves it, every subsequent joiner to the same room hits the cache
+// instead of Redis — the biggest win during a join burst where hundreds of
+// players pour into the same set of rooms.
 func (m *Multiplexer) resolveRoomOwner(roomCode string) string {
 	if m.gateway.redis == nil {
 		tracef("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, "")
 		return ""
+	}
+
+	// Cache hit?
+	if v, ok := m.ownerCache.Load(roomCode); ok {
+		e := v.(ownerCacheEntry)
+		if time.Since(e.fetchedAt) < m.ownerCacheTTL {
+			return e.worker
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -267,14 +329,12 @@ func (m *Multiplexer) resolveRoomOwner(roomCode string) string {
 
 	// Try per-room key first (has TTL)
 	owner, err := m.gateway.redis.Get(ctx, "room_owner:"+roomCode).Result()
-	if err == nil && owner != "" {
-		tracef("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, owner)
-		return owner
+	if err != nil || owner == "" {
+		// Fallback to hash
+		owner, err = m.gateway.redis.HGet(ctx, "room_workers", roomCode).Result()
 	}
-
-	// Fallback to hash
-	owner, err = m.gateway.redis.HGet(ctx, "room_workers", roomCode).Result()
 	if err == nil && owner != "" {
+		m.ownerCache.Store(roomCode, ownerCacheEntry{worker: owner, fetchedAt: time.Now()})
 		tracef("[trace] GW_RESOLVE_OWNER room=%s owner=%s", roomCode, owner)
 		return owner
 	}
@@ -283,10 +343,21 @@ func (m *Multiplexer) resolveRoomOwner(roomCode string) string {
 	return ""
 }
 
-// isGRPCAlive checks whether a worker's gRPC liveness key exists in Redis.
+// isGRPCAlive checks whether a worker's gRPC liveness key exists in Redis,
+// with a short-TTL local cache so a connect burst doesn't issue one Redis
+// EXISTS per connection. Liveness changes on a ~10s heartbeat, so a few
+// seconds of caching is safe and eliminates thousands of redundant round-trips.
 func (m *Multiplexer) isGRPCAlive(ctx context.Context, workerID string) (bool, error) {
 	if m.gateway.redis == nil {
 		return false, fmt.Errorf("redis not configured")
+	}
+
+	// Cache hit?
+	if v, ok := m.liveCache.Load(workerID); ok {
+		e := v.(liveCacheEntry)
+		if time.Since(e.fetchedAt) < m.liveCacheTTL {
+			return e.alive, nil
+		}
 	}
 
 	exists, err := m.gateway.redis.Exists(ctx, "worker_grpc_alive:"+workerID).Result()
@@ -294,8 +365,14 @@ func (m *Multiplexer) isGRPCAlive(ctx context.Context, workerID string) (bool, e
 		tracef("[trace] GW_GRPC_ALIVE worker=%s alive=%v", workerID, false)
 		return false, err
 	}
-	tracef("[trace] GW_GRPC_ALIVE worker=%s alive=%v", workerID, exists > 0)
-	return exists > 0, nil
+	alive := exists > 0
+	// Only cache positive results; a negative should be re-checked promptly so a
+	// recovering worker isn't excluded for the full TTL.
+	if alive {
+		m.liveCache.Store(workerID, liveCacheEntry{alive: true, fetchedAt: time.Now()})
+	}
+	tracef("[trace] GW_GRPC_ALIVE worker=%s alive=%v", workerID, alive)
+	return alive, nil
 }
 
 // extractPlayerID extracts the player_id from a BroadcastMessage JSON payload.
