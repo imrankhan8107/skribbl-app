@@ -697,11 +697,17 @@ class RoomManager:
             else:
                 has_real_websocket = True
 
+        # Classify the message ONCE: strokes/draw events are loss-tolerant and
+        # may be dropped at the gateway under backpressure; everything else
+        # (turn_started, turn_ended, game_over, chat, player_list, ...) is
+        # must-deliver. This tag is what lets the gateway drop strokes but never
+        # drop game_over — the fix for games failing to complete under a stroke
+        # flood (control messages were being dropped indiscriminately).
+        lossy = message.get("type") in LOSSY_BROADCAST_TYPES
+
         if len(seen_queues) == 1 and not has_real_websocket:
             # gRPC path, single shared stream (production invariant): ONE
             # room-wide fan-out message. Gateway expands to all room sessions.
-            # Tag the class so the gateway can drop strokes but never game_over.
-            lossy = message.get("type") in LOSSY_BROADCAST_TYPES
             try:
                 await single_queue_transport.send_room(data, lossy=lossy)
             except Exception:
@@ -711,7 +717,9 @@ class RoomManager:
             # spanning multiple streams: write to each recipient individually.
             # For real WebSockets there is no multiplexer to expand a room-wide
             # message; for multi-stream gRPC, per-player targeted sends avoid the
-            # double-delivery an empty-target message would cause.
+            # double-delivery an empty-target message would cause. We still tag
+            # strokes lossy on this path (VirtualTransport only) so the gateway
+            # can protect must-deliver events even when a room spans streams.
             for player in room.players:
                 ws = player.websocket
                 if ws is not None and player.is_connected:
@@ -721,7 +729,10 @@ class RoomManager:
                         # only added task/timer churn on the hot path.
                         # Backpressure for genuinely slow clients belongs in a
                         # bounded per-conn queue, not a per-message timeout.
-                        await ws.send_text(data)
+                        if isinstance(ws, VirtualTransport):
+                            await ws.send_text(data, lossy=lossy)
+                        else:
+                            await ws.send_text(data)
                     except Exception:
                         # Send failed — skip this player, don't block others.
                         pass

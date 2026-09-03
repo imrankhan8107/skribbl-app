@@ -56,15 +56,25 @@ class VirtualTransport:
         self.room_code = room_code
         self._send_queue = send_queue
 
-    async def send_text(self, data: str) -> None:
+    async def send_text(self, data: str, lossy: bool = False) -> None:
         """Enqueue a targeted BroadcastMessage for this player.
 
         This is the primary interface used by room_manager.broadcast() and
         game_engine targeted sends. It is awaitable and serializes writes
         through the shared queue to prevent interleaved frames.
 
+        The `lossy` flag tags the message class so the gateway can drop this
+        message under backpressure (full client SendCh) instead of dropping
+        must-deliver events. Strokes/draw events set lossy=True; everything else
+        (identity, control, game events) stays lossy=False (must-deliver).
+
+        Even on this per-player targeted path (used when a room's players span
+        more than one gRPC stream), tagging strokes lossy is what lets the
+        gateway protect game_over/turn_started from the drop.
+
         Args:
             data: The string payload (typically JSON) to deliver to the player.
+            lossy: True for droppable draw events; False for must-deliver.
         """
         if _TRACE_ENABLED:
             try:
@@ -73,13 +83,13 @@ class VirtualTransport:
             except (ValueError, TypeError):
                 extracted_type = "?"
             logger.info(
-                "[trace] VT_SEND player=%s room=%s type=%s",
-                self.player_id, self.room_code, extracted_type,
+                "[trace] VT_SEND player=%s room=%s type=%s lossy=%s",
+                self.player_id, self.room_code, extracted_type, lossy,
             )
 
         msg = BroadcastMessage(
             room_code=self.room_code,
-            message_type="targeted",
+            message_type="targeted_lossy" if lossy else "targeted",
             payload=data.encode("utf-8"),
             target_player_ids=[self.player_id],
         )
