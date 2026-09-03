@@ -81,9 +81,14 @@ type StreamManager struct {
 	resolver   *WorkerResolver
 	redis      *redis.Client
 	config     StreamConfig
-	directAddr string          // Direct gRPC address (bypasses Redis discovery)
+	directAddr string            // Direct gRPC address (bypasses Redis discovery)
 	fanOut     *FanOutDispatcher // For starting receive loops on new streams
 	registry   *SessionRegistry  // For receiver disconnect handling
+
+	// grpcAddrCache caches workerID -> gRPC address so resolveGRPCAddress isn't
+	// a Redis round-trip per new room during a connect burst. Worker gRPC
+	// addresses are stable for a worker's lifetime.
+	grpcAddrCache sync.Map // workerID -> string
 }
 
 // NewStreamManager creates a StreamManager with the given resolver and config.
@@ -110,30 +115,17 @@ func (sm *StreamManager) GetOrCreate(roomCode string, workerID string) (*RoomStr
 	}
 	sm.mu.RUnlock()
 
-	// Slow path: need to create or replace (write lock)
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if rs, ok := sm.streams[roomCode]; ok && rs.isHealthy() {
-		rs.markActivity()
-		debugf("[sm:getorcreate] room=%s REUSED", roomCode)
-		return rs, nil
-	}
-
-	// Evict any dead/unhealthy stream
-	if existing, ok := sm.streams[roomCode]; ok {
-		sm.closeStreamLocked(existing)
-		delete(sm.streams, roomCode)
-	}
-
-	// Resolve worker gRPC address
+	// Slow path: create the stream. CRITICAL: resolve + dial + open the stream
+	// OUTSIDE the write lock. Previously this I/O ran while holding the single
+	// global sm.mu, so under a connect burst hundreds of room creations
+	// serialized behind one lock each doing a Redis call + gRPC dial — the cause
+	// of multi-second room_join_rtt tails. Now all rooms dial concurrently, and
+	// the lock is held only for the O(1) map check-and-insert below.
 	addr, err := sm.resolveGRPCAddress(workerID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve worker %s gRPC address: %w", workerID, err)
 	}
 
-	// Dial the worker's gRPC endpoint
 	conn, err := grpc.NewClient(addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
@@ -141,7 +133,6 @@ func (sm *StreamManager) GetOrCreate(roomCode string, workerID string) (*RoomStr
 		return nil, fmt.Errorf("dial worker %s at %s: %w", workerID, addr, err)
 	}
 
-	// Open a bidirectional RoomStream
 	client := proto.NewGameServiceClient(conn)
 	ctx, cancel := context.WithCancel(context.Background())
 	stream, err := client.RoomStream(ctx)
@@ -163,12 +154,32 @@ func (sm *StreamManager) GetOrCreate(roomCode string, workerID string) (*RoomStr
 	rs.state.Store(streamStateHealthy)
 	rs.markActivity()
 
+	// Now take the write lock ONLY to check-and-insert into the map.
+	sm.mu.Lock()
+
+	// Double-create race: another goroutine may have created a healthy stream
+	// for this room while we were dialing. If so, discard ours (close the
+	// redundant connection) and return theirs.
+	if existing, ok := sm.streams[roomCode]; ok && existing.isHealthy() {
+		sm.mu.Unlock()
+		cancel()
+		conn.Close()
+		existing.markActivity()
+		debugf("[sm:getorcreate] room=%s REUSED (lost create race)", roomCode)
+		return existing, nil
+	}
+
+	// Evict any dead/unhealthy stream still mapped for this room.
+	if existing, ok := sm.streams[roomCode]; ok {
+		sm.closeStreamLocked(existing)
+		delete(sm.streams, roomCode)
+	}
+
 	sm.streams[roomCode] = rs
+	sm.mu.Unlock()
 
-	// Start the send loop goroutine
+	// Start the send + receive loop goroutines (outside the lock).
 	go sm.sendLoop(rs)
-
-	// Start the receive loop goroutine (delivers worker broadcasts to clients)
 	if sm.fanOut != nil {
 		go startStreamReceiver(sm, sm.fanOut, sm.registry, rs)
 	}
@@ -298,6 +309,12 @@ func (sm *StreamManager) ActiveStreamCount() int {
 // resolveGRPCAddress looks up the gRPC-specific address for a worker using
 // the worker_grpc_addresses Redis hash.
 func (sm *StreamManager) resolveGRPCAddress(workerID string) (string, error) {
+	// Cache hit: worker gRPC addresses are stable, so avoid a Redis round-trip
+	// per new room during a connect burst.
+	if v, ok := sm.grpcAddrCache.Load(workerID); ok {
+		return v.(string), nil
+	}
+
 	if sm.redis == nil {
 		return "", fmt.Errorf("redis not configured")
 	}
@@ -313,6 +330,7 @@ func (sm *StreamManager) resolveGRPCAddress(workerID string) (string, error) {
 		return "", fmt.Errorf("redis lookup failed: %w", err)
 	}
 
+	sm.grpcAddrCache.Store(workerID, addr)
 	return addr, nil
 }
 
