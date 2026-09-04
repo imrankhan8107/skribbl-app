@@ -64,6 +64,13 @@ const TURN_DURATION = parseInt(__ENV.TURN_DURATION || '80');
 // Set STROKE_HZ=0 to restore the old low-rate behaviour.
 const STROKE_HZ = parseInt(__ENV.STROKE_HZ || '30');
 const STROKE_POINTS = parseInt(__ENV.STROKE_POINTS || '4'); // points batched per stroke msg
+// Arrival ramp: spread VU connection starts over RAMP_SECONDS instead of all at
+// once. The default per-vu-iterations executor starts every VU simultaneously,
+// which creates a synthetic thundering-herd of connects that real traffic never
+// produces (players arrive gradually). Set RAMP_SECONDS>0 to model realistic
+// gradual arrival: VU n waits (n/TARGET_VUS)*RAMP_SECONDS before connecting.
+// 0 = legacy all-at-once behaviour.
+const RAMP_SECONDS = parseInt(__ENV.RAMP_SECONDS || '0');
 // HOLD_SECONDS is the client's patience window: how long a VU waits for its
 // game to reach `game_over` before giving up and marking the session `aborted`.
 // It MUST comfortably exceed the real wall-clock length of a full game, or the
@@ -82,6 +89,10 @@ const HOLD_FIXED_BUFFER = parseInt(__ENV.HOLD_FIXED_BUFFER || '180');
 const HOLD_SECONDS =
   NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + PER_TURN_SLACK) + HOLD_FIXED_BUFFER;
 
+// The scenario's overall maxDuration must also cover the arrival ramp: the last
+// VU starts RAMP_SECONDS in and still needs a full HOLD_SECONDS to play.
+const SCENARIO_SECONDS = HOLD_SECONDS + RAMP_SECONDS;
+
 // ─── Options ────────────────────────────────────────────────────────────────
 
 export const options = {
@@ -90,7 +101,7 @@ export const options = {
       executor: 'per-vu-iterations',
       vus: TARGET_VUS,
       iterations: 1,
-      maxDuration: `${Math.ceil(HOLD_SECONDS / 60) + 3}m`,
+      maxDuration: `${Math.ceil(SCENARIO_SECONDS / 60) + 3}m`,
     },
   },
   thresholds: {
@@ -133,6 +144,14 @@ export default function () {
   const roomIndex = getRoomIndex(vu);
   const isHost = isHostVU(vu);
   const playerName = `k6_${isHost ? 'host' : 'p' + ((vu - 1) % PLAYERS_PER_ROOM)}_vu${vu}_r${roomIndex}`;
+
+  // Arrival ramp: stagger connection start across RAMP_SECONDS so 3000 VUs don't
+  // all connect in the same instant (a synthetic burst). VU n starts at
+  // (n/TARGET_VUS)*RAMP_SECONDS. Must extend HOLD_SECONDS/maxDuration budget by
+  // RAMP_SECONDS so late-arriving VUs still have time to finish their game.
+  if (RAMP_SECONDS > 0) {
+    sleep((vu - 1) / TARGET_VUS * RAMP_SECONDS);
+  }
 
   let coordRoomCode = null;
   if (isHost) {
