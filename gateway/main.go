@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	_ "net/http/pprof" // registers /debug/pprof handlers on DefaultServeMux (served only when -pprof-port>0)
 	"net/url"
 	"os"
 	"os/signal"
@@ -76,6 +77,11 @@ var (
 	backendAddrs = flag.String("backends", "localhost:8000", "Comma-separated backend worker addresses (host:port)")
 	defaultAddr  = flag.String("default-backend", "", "Default backend for create_room (least-loaded if Redis available)")
 	staticDir    = flag.String("static", "", "Path to static frontend files (e.g. /static)")
+	// pprof profiling server. Off by default; enable to diagnose the gateway
+	// fan-out CPU ceiling (why the process caps at ~5-6 cores under load).
+	// Served on a SEPARATE port so the public mux's catch-all static handler
+	// doesn't shadow /debug/pprof/. Bind to an internal/non-public port.
+	pprofPort = flag.Int("pprof-port", 0, "If >0, serve net/http/pprof on this port (diagnostics only)")
 )
 
 // ─── Metrics ─────────────────────────────────────────────────────────────────
@@ -91,6 +97,23 @@ var (
 
 func main() {
 	flag.Parse()
+
+	// Optional pprof diagnostics server on a separate internal port. Importing
+	// net/http/pprof (blank import below) registers its handlers on
+	// http.DefaultServeMux; we serve that mux here — kept off the public port so
+	// the SPA catch-all handler can't shadow /debug/pprof/. Enable with
+	// -pprof-port=6060, then:
+	//   curl http://<host>:6060/debug/pprof/profile?seconds=30 > gateway.prof
+	//   go tool pprof -top gateway.prof
+	if *pprofPort > 0 {
+		go func() {
+			addr := fmt.Sprintf(":%d", *pprofPort)
+			log.Printf("[gateway] pprof diagnostics on %s/debug/pprof/", addr)
+			if err := http.ListenAndServe(addr, nil); err != nil {
+				log.Printf("[gateway] pprof server error: %v", err)
+			}
+		}()
+	}
 
 	// Parse backend addresses
 	backends := strings.Split(*backendAddrs, ",")

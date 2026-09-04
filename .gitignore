@@ -36,6 +36,9 @@ resume/
 
 # Load-test artifacts (local run outputs)
 k6_results*.txt
+k6-results*.log
 health-samples.txt
 dockerstats-samples.txt
+docker-stats*.log
 app-logs.txt
+*.prof

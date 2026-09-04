@@ -46,7 +46,7 @@ services:
     build:
       context: .
       dockerfile: gateway/Dockerfile
-    command: ["-port", "9000", "-redis", "redis://redis:6379", "-backends", "app:8000", "-static", "/static"]
+    command: ["-port", "9000", "-redis", "redis://redis:6379", "-backends", "app:8000", "-static", "/static", "-pprof-port", "6060"]
     environment:
       - TRACE_ENABLED=${TRACE_ENABLED:-false}
     depends_on:
@@ -56,6 +56,7 @@ services:
         condition: service_started
     ports:
       - "9000:9000"
+      - "6060:6060"  # pprof diagnostics (internal use — keep closed in the SG)
     networks:
       - skribbl-net
 
