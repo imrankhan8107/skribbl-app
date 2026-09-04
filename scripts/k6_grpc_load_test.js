@@ -202,17 +202,28 @@ export default function () {
       }
     });
 
-    socket.on('message', function (data) {
+    // Dispatch a single decoded message through the state machine.
+    function handleOne(msg) {
       messagesReceived.add(1);
-      let msg; try { msg = JSON.parse(data); } catch (e) { return; }
       if (msg.type === 'ping') { sendMsg({ type: 'pong', payload: {} }); return; }
-
       switch (state) {
         case 'connecting': handleConnecting(msg); break;
         case 'lobby': handleLobby(msg); break;
         case 'waiting_start': handleWaitingStart(msg); break;
         case 'playing': handlePlaying(msg); break;
       }
+    }
+
+    socket.on('message', function (data) {
+      let frame; try { frame = JSON.parse(data); } catch (e) { return; }
+      // The gateway coalesces multiple messages into one frame under load as
+      // {"type":"batch","messages":[...]}. Unwrap and process each in order so
+      // the state machine and messagesReceived count reflect logical messages.
+      if (frame && frame.type === 'batch' && Array.isArray(frame.messages)) {
+        for (let i = 0; i < frame.messages.length; i++) { handleOne(frame.messages[i]); }
+        return;
+      }
+      handleOne(frame);
     });
 
     function handleConnecting(msg) {

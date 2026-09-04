@@ -1,9 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"sync"
 
 	"github.com/gorilla/websocket"
+)
+
+// maxBatch caps how many queued messages are combined into a single WebSocket
+// frame. Bounds the batched frame size and per-write work.
+const maxBatch = 64
+
+// batchPrefix/batchSuffix wrap concatenated raw JSON messages into a single
+// envelope the frontend unwraps: {"type":"batch","messages":[<m1>,<m2>,...]}.
+var (
+	batchPrefix = []byte(`{"type":"batch","messages":[`)
+	batchSuffix = []byte(`]}`)
 )
 
 // sendChBufferSize is the capacity of each PlayerSession's outbound queue.
@@ -214,9 +226,41 @@ func (sr *SessionRegistry) removeLocked(session *PlayerSession) {
 
 // writePump is a per-session goroutine that drains SendCh and writes messages
 // to the WebSocket connection. It exits when the session's done channel is closed
-// or when a write error occurs. This ensures that writes to a single WebSocket
-// connection are serialized (no concurrent WriteMessage calls).
+// or when a write error occurs. Writes to a single connection are serialized here
+// (no concurrent WriteMessage calls).
+//
+// WRITE-COALESCING (perf): the gateway is syscall-bound — pprof under load showed
+// ~27% CPU in socket writes and ~30% in scheduler churn from one goroutine wakeup
+// per message. So after taking one message, we opportunistically drain any
+// additional messages ALREADY queued in SendCh (non-blocking) and, if there is
+// more than one, write them all in a SINGLE WebSocket frame as
+// {"type":"batch","messages":[...]}. This turns N write syscalls + N wakeups into
+// 1. Under light load only one message is usually queued, so it's sent as-is and
+// the client never sees a batch — the batch path self-activates exactly when the
+// queue backs up (i.e. under the load where it matters).
 func (sr *SessionRegistry) writePump(session *PlayerSession) {
+	// Reused scratch buffer for building batch frames (per-goroutine, no sharing).
+	var buf bytes.Buffer
+	batch := make([][]byte, 0, maxBatch)
+
+	writeFrame := func(msgs [][]byte) error {
+		if len(msgs) == 1 {
+			// Single message: write as-is (no batch envelope) — common low-load case.
+			return session.Conn.WriteMessage(websocket.TextMessage, msgs[0])
+		}
+		// Multiple: combine into one {"type":"batch","messages":[...]} frame.
+		buf.Reset()
+		buf.Write(batchPrefix)
+		for i, m := range msgs {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			buf.Write(m) // each m is already-serialized JSON
+		}
+		buf.Write(batchSuffix)
+		return session.Conn.WriteMessage(websocket.TextMessage, buf.Bytes())
+	}
+
 	for {
 		select {
 		case <-session.done:
@@ -225,10 +269,27 @@ func (sr *SessionRegistry) writePump(session *PlayerSession) {
 			if !ok {
 				return
 			}
-			if err := session.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			// Start a batch with this message, then drain whatever else is
+			// already queued (non-blocking) up to maxBatch.
+			batch = batch[:0]
+			batch = append(batch, msg)
+		drain:
+			for len(batch) < maxBatch {
+				select {
+				case m, ok := <-session.SendCh:
+					if !ok {
+						break drain
+					}
+					batch = append(batch, m)
+				default:
+					break drain
+				}
+			}
+			if err := writeFrame(batch); err != nil {
 				debugf("[session] writePump error player=%s err=%v", session.PlayerID, err)
 				return
 			}
+			continue
 		}
 	}
 }

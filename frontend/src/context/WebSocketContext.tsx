@@ -1,11 +1,4 @@
-import React, {
-  createContext,
-  useReducer,
-  useRef,
-  useCallback,
-  useEffect,
-  useState,
-} from "react";
+import React, { createContext, useReducer, useRef, useCallback, useEffect, useState } from "react";
 import type { GameState, Action, ChatMessage } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -62,7 +55,9 @@ export function gameReducer(state: GameState, action: Action): GameState {
 
     case "PLAYER_LIST": {
       // Server doesn't always send isHost — preserve it from current state or use incoming if present
-      const incomingPlayers = (action.payload.players ?? []) as unknown as Array<Record<string, unknown>>;
+      const incomingPlayers = (action.payload.players ?? []) as unknown as Array<
+        Record<string, unknown>
+      >;
       const updatedPlayers = incomingPlayers.map((p) => ({
         id: (p.id as string) ?? "",
         name: (p.name as string) ?? "",
@@ -70,7 +65,10 @@ export function gameReducer(state: GameState, action: Action): GameState {
         hasGuessed: (p.hasGuessed as boolean) ?? false,
         isConnected: (p.isConnected as boolean) ?? true,
         isReady: (p.isReady as boolean) ?? false,
-        isHost: (p.isHost as boolean) ?? state.players.find((existing) => existing.id === p.id)?.isHost ?? false,
+        isHost:
+          (p.isHost as boolean) ??
+          state.players.find((existing) => existing.id === p.id)?.isHost ??
+          false,
       }));
       return {
         ...state,
@@ -98,9 +96,9 @@ export function gameReducer(state: GameState, action: Action): GameState {
     case "WORD_CHOICES":
       return {
         ...state,
-        wordChoices: (action.payload as Record<string, unknown>).choices as string[] ?? [],
-        isDrawer: true,  // If you receive word choices, you are the drawer
-        drawerId: state.localPlayerId,  // This player is the new drawer
+        wordChoices: ((action.payload as Record<string, unknown>).choices as string[]) ?? [],
+        isDrawer: true, // If you receive word choices, you are the drawer
+        drawerId: state.localPlayerId, // This player is the new drawer
       };
 
     case "TURN_STARTED":
@@ -126,12 +124,15 @@ export function gameReducer(state: GameState, action: Action): GameState {
 
     case "TURN_ENDED": {
       // Apply score deltas from the turn to players
-      const scores = (action.payload as Record<string, unknown>).scores as Record<string, number> | undefined;
+      const scores = (action.payload as Record<string, unknown>).scores as
+        Record<string, number> | undefined;
       let updatedPlayers = state.players;
       if (scores && typeof scores === "object") {
         updatedPlayers = state.players.map((p) => {
           const delta = scores[p.id];
-          return delta ? { ...p, score: p.score + delta, hasGuessed: false } : { ...p, hasGuessed: false };
+          return delta
+            ? { ...p, score: p.score + delta, hasGuessed: false }
+            : { ...p, hasGuessed: false };
         });
       }
       return {
@@ -140,14 +141,15 @@ export function gameReducer(state: GameState, action: Action): GameState {
         isDrawer: false,
         hasGuessed: false,
         currentWord: null,
-        drawerId: null,  // Reset — new drawer will be set by WORD_CHOICES or TURN_STARTED
+        drawerId: null, // Reset — new drawer will be set by WORD_CHOICES or TURN_STARTED
         // Transition back to word_selection for the next turn
         phase: "word_selection",
       };
     }
 
     case "GUESS_CORRECT": {
-      const playerName = (action.payload as Record<string, unknown>).playerName as string ?? "Someone";
+      const playerName =
+        ((action.payload as Record<string, unknown>).playerName as string) ?? "Someone";
       // Add a correct guess notification to chat
       const guessMsg: ChatMessage = {
         id: String(Date.now()) + Math.random(),
@@ -191,7 +193,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
             isConnected: true,
             isReady: false,
           }))
-        : (p.players as typeof state.players) ?? state.players;
+        : ((p.players as typeof state.players) ?? state.players);
       return {
         ...state,
         phase: "game_over",
@@ -219,7 +221,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
       return {
         ...state,
         waitingForReconnect: true,
-        reconnectCountdown: (action.payload as Record<string, unknown>).seconds as number ?? 20,
+        reconnectCountdown: ((action.payload as Record<string, unknown>).seconds as number) ?? 20,
       };
 
     case "RECONNECT_RESUMED":
@@ -231,14 +233,14 @@ export function gameReducer(state: GameState, action: Action): GameState {
 
     case "RECONNECTED": {
       const rp = action.payload as Record<string, unknown>;
-      const rPlayers = rp.players as typeof state.players ?? [];
-      const rConfig = rp.config as typeof state.config ?? state.config;
-      const rState = rp.state as string ?? "lobby";
-      const rHostId = rp.hostId as string ?? "";
-      const rPlayerId = rp.playerId as string ?? state.localPlayerId;
-      const rDrawerId = rp.drawerId as string | null ?? null;
-      const rHint = rp.hint as string[] ?? [];
-      const rCurrentRound = rp.currentRound as number ?? 0;
+      const rPlayers = (rp.players as typeof state.players) ?? [];
+      const rConfig = (rp.config as typeof state.config) ?? state.config;
+      const rState = (rp.state as string) ?? "lobby";
+      const rHostId = (rp.hostId as string) ?? "";
+      const rPlayerId = (rp.playerId as string) ?? state.localPlayerId;
+      const rDrawerId = (rp.drawerId as string | null) ?? null;
+      const rHint = (rp.hint as string[]) ?? [];
+      const rCurrentRound = (rp.currentRound as number) ?? 0;
 
       let phase: GameState["phase"] = "lobby";
       if (rState === "playing") phase = "playing";
@@ -248,7 +250,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
       return {
         ...state,
         phase,
-        roomCode: rp.roomCode as string ?? state.roomCode,
+        roomCode: (rp.roomCode as string) ?? state.roomCode,
         localPlayerId: rPlayerId,
         isHost: rHostId === rPlayerId,
         players: rPlayers,
@@ -281,13 +283,16 @@ export function gameReducer(state: GameState, action: Action): GameState {
       };
 
     case "KICKED": {
-      sessionStorage.removeItem('skribbl_session');
+      sessionStorage.removeItem("skribbl_session");
       const kickPayload = action.payload as Record<string, unknown>;
-      return { ...initialGameState, errorMessage: (kickPayload.message as string) ?? "You have been kicked" };
+      return {
+        ...initialGameState,
+        errorMessage: (kickPayload.message as string) ?? "You have been kicked",
+      };
     }
 
     case "LEFT_ROOM":
-      sessionStorage.removeItem('skribbl_session');
+      sessionStorage.removeItem("skribbl_session");
       return { ...initialGameState };
 
     default: {
@@ -317,8 +322,8 @@ export function gameReducer(state: GameState, action: Action): GameState {
       }
       if (act.type === "REMATCH_STARTED") {
         const p = act.payload as Record<string, unknown>;
-        const players = p.players as typeof state.players ?? [];
-        const config = p.config as typeof state.config ?? state.config;
+        const players = (p.players as typeof state.players) ?? [];
+        const config = (p.config as typeof state.config) ?? state.config;
         return {
           ...initialGameState,
           phase: "lobby",
@@ -418,16 +423,24 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type, payload }));
       // Store the player name when creating or joining a room for auto-reconnect
-      if ((type === "create_room" || type === "join_room") && payload && typeof payload === "object") {
+      if (
+        (type === "create_room" || type === "join_room") &&
+        payload &&
+        typeof payload === "object"
+      ) {
         const p = payload as Record<string, unknown>;
         const name = p.name as string;
         if (name) {
-          const existingSession = sessionStorage.getItem('skribbl_session');
-          let roomCode = '';
+          const existingSession = sessionStorage.getItem("skribbl_session");
+          let roomCode = "";
           if (existingSession) {
-            try { roomCode = JSON.parse(existingSession).roomCode; } catch { /* ignore */ }
+            try {
+              roomCode = JSON.parse(existingSession).roomCode;
+            } catch {
+              /* ignore */
+            }
           }
-          sessionStorage.setItem('skribbl_session', JSON.stringify({ playerName: name, roomCode }));
+          sessionStorage.setItem("skribbl_session", JSON.stringify({ playerName: name, roomCode }));
         }
       }
     }
@@ -441,13 +454,18 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     ws.onopen = () => {
       setIsConnected(true);
       // Auto-reconnect if we have stored session info
-      const session = sessionStorage.getItem('skribbl_session');
+      const session = sessionStorage.getItem("skribbl_session");
       if (session) {
         try {
           const { playerName, roomCode } = JSON.parse(session);
           const path = window.location.pathname;
-          if (path.includes('/game/') || path.includes('/lobby/')) {
-            ws.send(JSON.stringify({ type: 'reconnect', payload: { name: playerName, room_code: roomCode } }));
+          if (path.includes("/game/") || path.includes("/lobby/")) {
+            ws.send(
+              JSON.stringify({
+                type: "reconnect",
+                payload: { name: playerName, room_code: roomCode },
+              })
+            );
           }
         } catch {
           // Invalid session data, ignore
@@ -455,76 +473,108 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
+    // handleOne processes a single decoded server message. The gateway may
+    // coalesce several messages into one WebSocket frame under load as
+    // {"type":"batch","messages":[...]} — see the batch unwrap in onmessage.
+    // Typed as `any` to match the original inline handler (JSON.parse returns any);
+    // this keeps the refactor behavior-identical — only the call site changed.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handleOne = (msg: any) => {
+      console.log("[WS] Received:", msg.type, msg.payload);
+
+      // Handle drawing events separately — store as drawingEvent
+      if (msg.type === "stroke" || msg.type === "fill" || msg.type === "clear_canvas") {
+        dispatch({
+          type: "DRAWING_EVENT",
+          payload: { type: msg.type, payload: msg.payload },
+        } as unknown as Action);
+        return;
+      }
+
+      // Handle reaction messages — add as system chat message
+      if (msg.type === "reaction") {
+        const playerName = msg.payload?.player_name ?? "Someone";
+        const emoji = msg.payload?.emoji ?? "";
+        const reactionMsg: ChatMessage = {
+          id: String(Date.now()) + Math.random(),
+          senderId: "",
+          senderName: playerName,
+          text: `${playerName} reacted ${emoji}`,
+          type: "system",
+        };
+        dispatch({ type: "CHAT_MESSAGE", payload: reactionMsg } as unknown as Action);
+        return;
+      }
+
+      // Handle word_assigned (sent privately to drawer on auto-select)
+      if (msg.type === "word_assigned") {
+        dispatch({
+          type: "WORD_SELECTED",
+          payload: { word: msg.payload.word },
+        } as unknown as Action);
+        return;
+      }
+
+      // Handle drawer_selecting (broadcast to all — sets drawerId for display)
+      if (msg.type === "drawer_selecting") {
+        dispatch({ type: "DRAWER_SELECTING", payload: msg.payload } as unknown as Action);
+        return;
+      }
+
+      const actionType = mapServerTypeToActionType(msg.type);
+      if (actionType) {
+        const payload = mapKeys(msg.payload) as Record<string, unknown>;
+        console.log("[WS] Dispatching:", actionType, payload);
+
+        // Store session info for auto-reconnect on page refresh
+        if (
+          msg.type === "room_created" ||
+          msg.type === "room_joined" ||
+          msg.type === "reconnected"
+        ) {
+          const roomCode = (payload as Record<string, unknown>).roomCode as string;
+          // For room_created/room_joined, we need to get the player name from the payload or current state
+          // The server doesn't echo the name back, so we store it when available
+          const existingSession = sessionStorage.getItem("skribbl_session");
+          let playerName = "";
+          if (existingSession) {
+            try {
+              playerName = JSON.parse(existingSession).playerName;
+            } catch {
+              /* ignore */
+            }
+          }
+          if (roomCode) {
+            sessionStorage.setItem("skribbl_session", JSON.stringify({ playerName, roomCode }));
+          }
+        }
+
+        // For game_ended_insufficient_players, wrap payload to match GAME_OVER action shape
+        if (msg.type === "game_ended_insufficient_players") {
+          dispatch({
+            type: "GAME_OVER",
+            payload: { players: (payload as Record<string, unknown>)?.players ?? [] },
+          } as Action);
+        } else {
+          dispatch({ type: actionType, payload } as Action);
+        }
+      } else {
+        console.log("[WS] No mapping for type:", msg.type);
+      }
+    };
+
     ws.onmessage = (event: MessageEvent) => {
       try {
-        const msg = JSON.parse(event.data);
-        console.log("[WS] Received:", msg.type, msg.payload);
-
-        // Handle drawing events separately — store as drawingEvent
-        if (msg.type === "stroke" || msg.type === "fill" || msg.type === "clear_canvas") {
-          dispatch({ type: "DRAWING_EVENT", payload: { type: msg.type, payload: msg.payload } } as unknown as Action);
-          return;
-        }
-
-        // Handle reaction messages — add as system chat message
-        if (msg.type === "reaction") {
-          const playerName = msg.payload?.player_name ?? "Someone";
-          const emoji = msg.payload?.emoji ?? "";
-          const reactionMsg: ChatMessage = {
-            id: String(Date.now()) + Math.random(),
-            senderId: "",
-            senderName: playerName,
-            text: `${playerName} reacted ${emoji}`,
-            type: "system",
-          };
-          dispatch({ type: "CHAT_MESSAGE", payload: reactionMsg } as unknown as Action);
-          return;
-        }
-
-        // Handle word_assigned (sent privately to drawer on auto-select)
-        if (msg.type === "word_assigned") {
-          dispatch({ type: "WORD_SELECTED", payload: { word: msg.payload.word } } as unknown as Action);
-          return;
-        }
-
-        // Handle drawer_selecting (broadcast to all — sets drawerId for display)
-        if (msg.type === "drawer_selecting") {
-          dispatch({ type: "DRAWER_SELECTING", payload: msg.payload } as unknown as Action);
-          return;
-        }
-
-        const actionType = mapServerTypeToActionType(msg.type);
-        if (actionType) {
-          const payload = mapKeys(msg.payload) as Record<string, unknown>;
-          console.log("[WS] Dispatching:", actionType, payload);
-
-          // Store session info for auto-reconnect on page refresh
-          if (msg.type === "room_created" || msg.type === "room_joined" || msg.type === "reconnected") {
-            const roomCode = (payload as Record<string, unknown>).roomCode as string;
-            // For room_created/room_joined, we need to get the player name from the payload or current state
-            // The server doesn't echo the name back, so we store it when available
-            const existingSession = sessionStorage.getItem('skribbl_session');
-            let playerName = '';
-            if (existingSession) {
-              try { playerName = JSON.parse(existingSession).playerName; } catch { /* ignore */ }
-            }
-            if (roomCode) {
-              sessionStorage.setItem('skribbl_session', JSON.stringify({ playerName, roomCode }));
-            }
+        const parsed = JSON.parse(event.data);
+        // The gateway coalesces multiple messages into one frame under load.
+        // Unwrap the batch envelope and process each message in order.
+        if (parsed && parsed.type === "batch" && Array.isArray(parsed.messages)) {
+          for (const m of parsed.messages) {
+            handleOne(m);
           }
-
-          // For game_ended_insufficient_players, wrap payload to match GAME_OVER action shape
-          if (msg.type === "game_ended_insufficient_players") {
-            dispatch({
-              type: "GAME_OVER",
-              payload: { players: (payload as Record<string, unknown>)?.players ?? [] },
-            } as Action);
-          } else {
-            dispatch({ type: actionType, payload } as Action);
-          }
-        } else {
-          console.log("[WS] No mapping for type:", msg.type);
+          return;
         }
+        handleOne(parsed);
       } catch (err) {
         console.error("[WS] Error processing message:", err);
       }
