@@ -120,17 +120,27 @@ Your data shows **none of those is the current bottleneck.** Reordered:
 
 **Critical measured fact:** on a large host (24 workers, 62 GB, many cores) at
 7500/5 Hz, the **gateway process pegged at ~500–556% CPU (~5–6 cores) while 10+
-cores sat idle**, workers averaged ~25%, and Redis ~1.6%. So the single gateway
-process **cannot use more than ~5–6 cores for fan-out** — meaning a bigger box
-alone does **not** raise the ceiling. The limit is intra-process, not host
-capacity.
+cores sat idle**, workers averaged ~25%, and Redis ~1.6%. A bigger box alone does
+**not** raise the ceiling.
+
+**pprof result (30s CPU profile at 7500/5 Hz) — the cause is SYSCALL/NETWORK I/O, not locks:**
+- `internal/runtime/syscall.Syscall6` = **43.5% flat** — raw syscall time dominates.
+- `net.(*conn).Write` -> `syscall.write` = **~29% cum** — per-message socket writes (WebSocket fan-out writePump->WriteMessage ~15%, plus gRPC frame writes).
+- `syscall.read` ~13%; scheduler churn (findRunnable/schedule/futex) ~25% from juggling thousands of I/O-blocked goroutines.
+- `SessionRegistry`/`GetByRoom` **does not appear** — the RWMutex is NOT the bottleneck (lock-sharding theory disproven).
+- `FanOutDispatcher.Deliver` 1.8%, `enqueueNonBlocking` 1.3%, JSON unmarshal 5% — fan-out logic and parsing are cheap.
+
+**Conclusion:** the gateway is bound by the rate one process can push **write()
+syscalls** for thousands of sockets at ~35k msg/s. Fix by reducing
+syscalls-per-message (batching) or parallelizing across processes (horizontal).
 
 | Task | Priority | Notes |
 |------|----------|-------|
-| **Profile the gateway (pprof) under 7500 load** | 🔴 Now | Confirm *why* fan-out caps at ~5–6 cores. Prime suspect: contention on the single `SessionRegistry` `RWMutex` (`GetByRoom`/`GetByPlayer` on every fan-out, writers on every join/leave). Other candidates: per-room receiver goroutine pace, gRPC recv. **Measure before optimizing** — do not guess. Add `net/http/pprof` if not present (~5 lines). |
-| **Shard the SessionRegistry lock (if profile confirms)** | 🔴 Likely | Per-room or striped locks so fan-out scales across all host cores. If confirmed, this is the single-node win that lets one gateway use the whole box. |
-| **Horizontal gateways behind an LB** | 🔴 Next | The definitive lever & path to 100K+, and it works regardless of the per-process cap (each instance gets its own ~5–6 core budget). **Non-trivial:** `SessionRegistry` is per-instance, so players of one room on different gateways break fan-out. Requires EITHER (A) room-sticky routing at the LB (~1–2 days) OR (B) Redis cross-gateway broadcast relay reusing existing pub/sub (~3–5 days). |
-| ~~Vertical: bigger instance~~ | ⬇️ Downgraded | Measured: the gateway didn't use extra cores on a larger host (556% on a many-core box). A bigger box alone does **not** raise the ceiling; only more effective cores-per-process (lock sharding) or more gateway processes do. |
+| **Gateway writePump write-coalescing** | Now | When multiple messages are queued in a session's SendCh, drain and combine them into ONE WriteMessage call. Directly cuts the dominant ~29% write-syscall cost. Pure gateway-side; frame as a batched envelope the frontend can iterate. Highest-leverage single fix. |
+| **Stroke coalescing on the worker** | High | Fewer messages generated -> fewer downstream writes. Complements writePump batching. (Earlier rated low based on fan-out *logic* cost; the profile shows the cost is the *syscall per write*, which batching cuts directly — so it IS worthwhile.) |
+| **Horizontal gateways behind an LB** | Next | Definitive lever & path to 100K+: more processes = more parallel syscall throughput across cores. Non-trivial: SessionRegistry is per-instance, so players of one room on different gateways break fan-out. Needs (A) room-sticky LB routing (~1–2 days) OR (B) Redis cross-gateway relay (~3–5 days). |
+| ~~Shard SessionRegistry lock~~ | Disproven | pprof shows the lock is not in the hot path; the cost is socket write/read syscalls. Do not pursue. |
+| ~~Vertical: bigger instance~~ | Downgraded | Gateway didn't use extra cores on a larger host (556% on a many-core box). |
 
 ### Tier 1 — Cheap, correct hardening (do now)
 
