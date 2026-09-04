@@ -732,3 +732,16 @@ Realistic single-node capacity is **~5000–6000 concurrent players**, bounded b
 1. **Vertical: bigger instance** (c5a.8xlarge/16xlarge, 32–64 vCPU) — gives the single gateway more cores for fan-out. Zero code; near-term quick win.
 2. **Stroke coalescing / rate-cap** on the worker (~15–20 Hz/room) — cuts fan-out volume at the source; contained worker-side change.
 3. **Horizontal gateways** behind an LB — the definitive lever. Requires solving cross-gateway fan-out: either (A) sticky room routing at the LB (~1-2 days) or (B) Redis cross-gateway broadcast relay (~3-5 days, reuses existing pub/sub plumbing). Gateway holds per-room socket state in memory, so this is real work, not a config change.
+
+## 7500 VU — arrival ramp confirms a steady-state ceiling
+
+Reran 7500 / 5 Hz from the in-VPC generator with `RAMP_SECONDS=90` (arrivals spread over 90s) vs all-at-once:
+
+| Metric | All-at-once | Ramped 90s |
+|--------|-------------|------------|
+| completion | 72.86% | 72.66% |
+| room_join_rtt p95 | 4ms | 4ms |
+| ws_connection_success | 100% | 100% |
+| messages_received/s | 36,381 | 36,148 |
+
+**Identical.** Ramping arrival changed nothing → the 7500 limit is **steady-state gateway fan-out CPU (~35-36k msg/s)**, not the connect burst or peak concurrency. Confirmed across all runs: the gateway saturates at ~35k msg/s of fan-out regardless of arrival pattern, worker count, or how the volume is produced (few fast drawers vs many slow). Raising capacity therefore requires reducing fan-out volume (stroke coalescing) or adding fan-out capacity (bigger instance / horizontal gateways) — arrival shaping does not help.
