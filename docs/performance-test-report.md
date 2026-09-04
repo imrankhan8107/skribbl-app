@@ -400,3 +400,335 @@ k6 run --env HOST=192.168.0.5 --env PORT=80 --env HOLD_TIME=280 --vus 5000 --dur
 | `k6/ws_mixed_workload.js` | Production simulation — realistic role distribution |
 | `k6/ws_e2e_game.js` | Game session flow — create/join/play |
 | `k6/README.md` | Usage guide and scaling documentation |
+
+---
+
+# Addendum: Go Gateway (gRPC Multiplexing) — EC2 Load Tests
+
+**Date:** September 3, 2026
+**Branch:** `feature/go-gateway`
+**Architecture under test:** Go connection gateway → gRPC bidirectional streams → Python game workers → Redis
+**Load generator:** k6 (separate machine), gRPC multiplexing load test (`scripts/k6_grpc_load_test.js`)
+**Server:** single AWS EC2 **c5a.4xlarge** (16 vCPU, 32 GB RAM), Docker Compose, `--scale app=10..12` workers
+
+> This addendum supersedes the earlier nginx + uvicorn results for the current
+> architecture. The prior sections remain for historical reference; they describe
+> the pre-gateway (nginx reverse-proxy) design and were run on a laptop.
+
+## What changed since the earlier report
+
+- **Architecture:** the nginx WebSocket reverse-proxy was replaced by a **Go gateway** that terminates client WebSockets and multiplexes each room onto a **single gRPC stream** to the owning Python worker (1 stream per room, not 1 per player).
+- **Fan-out:** room broadcasts serialize once on the worker and fan out to clients in Go (`FanOutDispatcher`), instead of the worker writing to every socket.
+- **Observability added:** `/health` now exposes `fanout_delivered{class}`, `fanout_dropped{class}`, `send_dropped{type}`, `send_queued{type}`, and `grpc_stream_errors` for hot-path diagnosis.
+
+## Test methodology
+
+- **Workload:** worst-case **30 Hz stroke storm** — every drawer emits 30 stroke messages/sec × 4 points, i.e. a continuous-drawing torture test far heavier than real gameplay.
+- **Shape:** `VUS` virtual users split into rooms of 5 players; 3 rounds per game.
+- **Pass criteria (k6 thresholds):** `game_completion_rate > 70%`, `ws_connection_success > 95%`, `room_create_rtt p95 < 5s`, `room_join_rtt p95 < 5s`.
+- **Note on config drift:** `TURN_DURATION` varied across some runs (30/40/50s), which changes game length and the completion timeout window. `room_join_rtt` is independent of turn duration and is the most reliable cross-run signal.
+
+## Capacity ladder — 30 Hz storm, single c5a.4xlarge
+
+| VUs | Rooms×Players | Turn dur | Completion | ws_conn success | room_join_rtt p95 | Result |
+|-----|---------------|----------|-----------|-----------------|-------------------|--------|
+| 1,000 | 200 × 5 | 30s | **100%** | 100% | 818ms | ✅ PASS |
+| 2,000 | 400 × 5 | 30s (12 workers) | 92.85% | 99.70% | 6.21s (max 26.9s) | ⚠️ completion ok, join_rtt fails |
+| 2,000 | 400 × 5 | 50s (10 workers) | 96.15% | 99.95% | 6.81s (max 17.2s) | ⚠️ completion ok, join_rtt fails |
+| 3,000 | 600 × 5 | 40s | 54.90% | 99.93% | 8.92s (max 23.8s) | ❌ FAIL |
+
+Throughput held strong throughout: fan-out sustained **~10,000–13,500 messages/sec** delivered to clients even at 3,000 VUs (peak inbound stroke target ~72,000 writes/sec).
+
+## Key findings
+
+1. **Comfortable ceiling ≈ 1,000–1,500 concurrent players/node** under the worst-case 30 Hz storm, with 100% completion and sub-second join latency.
+2. **Graceful degradation to ~2,000** — games still complete at 92–96%, but connection/join latency crosses the 5s threshold. The system slows; it does not crash (connections stay ~100%, data plane keeps moving).
+3. **Saturation at 3,000** — completion drops to ~55% (partly join delay pushing game *starts* past the completion window). Still no crash.
+4. **The bottleneck is connection/join establishment, NOT gameplay fan-out or worker CPU.**
+   - `room_join_rtt` p95 degrades first and worst at every level above 1,000: 818ms → 6.2s → 8.9s.
+   - Scaling workers **10 → 12 did not improve join latency** (6.81s → 6.21s), proving the join path — not worker CPU — is the limiter.
+   - Fan-out throughput stayed healthy (~10–13k msg/s) at all levels.
+5. **Laptop vs EC2 confirms it was never an architecture problem.** The identical 1,000-VU/30 Hz test collapsed to 0–4% completion with hundreds of connection drops on an 8 GB laptop (capped Docker VM), but passed at **100% on the c5a.4xlarge**. The earlier "collapses" were hardware starvation, not code.
+
+## The join-storm bottleneck (next optimization target)
+
+At >1,000 simultaneous connects, the per-join work serializes through the gateway:
+- Redis round-trips per join (room-owner lookup + least-loaded worker selection).
+- The create_room/join_room identity handshake.
+
+Because this is per-gateway and per-Redis, adding **workers** does not help (confirmed). Levers that would raise the single-node ceiling:
+- Optimize/cache the per-join Redis lookups; reduce round-trips in the join handshake.
+- Run multiple gateway instances behind a load balancer (also the horizontal-scale path).
+
+Note: a 2,000-client connect within a few seconds is a "thundering herd" more aggressive than typical real traffic; under gradual real-world arrival the effective ceiling is higher.
+
+## Scaling story
+
+- **Per node (c5a.4xlarge):** ~1,000–1,500 concurrent players under worst-case storm; higher under realistic (non-continuous-drawing) load.
+- **Data plane scales fine** — fan-out multiplexing (1 gRPC stream/room) sustained ~13k msg/s.
+- **To millions:** horizontal — rooms shard across workers/nodes via sticky room ownership + gateway multiplexing; add gateway instances behind a load balancer to spread the join load. ~1M concurrent under storm ≈ several hundred such instances; far fewer under realistic load.
+
+## Test artifacts
+
+| File | Description |
+|------|-------------|
+| `scripts/k6_grpc_load_test.js` | gRPC multiplexing storm load test |
+| `k6_results.txt` | 1,000 VU run (100% completion) |
+| `k6_results-2k.txt` | 2,000 VU run (10 workers, 50s turns) |
+| `k6_results-2k-new.txt` | 2,000 VU run (12 workers, 30s turns) |
+| `k6_results-3k.txt` | 3,000 VU run (saturation) |
+| gateway `/health` | live `fanout_*` / `send_*` counters for hot-path diagnosis |
+
+---
+
+# Addendum 2: Optimization Campaign & Final Results (Sep 3–4, 2026)
+
+**Branch:** `feature/go-gateway`
+**Server:** AWS EC2 **c5a.4xlarge** (16 vCPU, 32 GB), Docker Compose, `--scale app=10..12`
+**Load:** k6 from a separate machine, 30 Hz stroke storm (worst-case: every drawer emits 30 strokes/sec continuously — far heavier than real gameplay)
+**Instrumentation:** `/health` exposes `fanout_delivered{class}`, `fanout_dropped{class}`, `send_dropped{type}`, `send_queued{type}`, `grpc_stream_errors`.
+
+## Method: measure, don't guess
+
+Each bottleneck was diagnosed from live telemetry (the `/health` counters + k6 metrics + `docker stats`), not assumption. Several plausible theories were **disproven by measurement** before the real cause was found — this is recorded below so the reasoning is auditable.
+
+## Fix progression at 3000 VU (30 Hz storm, 30s turns)
+
+| Stage | Completion | room_join_rtt p95 | `fanout_dropped.control` | `deliv_lossy` | Verdict |
+|-------|-----------|-------------------|--------------------------|---------------|---------|
+| Baseline (pre-fixes) | 54.9% | 8.92s | ~30% (millions) | 0 | ❌❌ |
+| + join-path Redis caching | 69–74% | 7.3–7.5s | ~5.9M (~28%) | 0 | completion teetering, join fails |
+| + Fix 1 (control protection) + Fix 2 (dial-outside-lock) | **85.6%** | 7.16s | **42** | **8.7M** | completion PASS, join fails |
+| + sysctl backlog bump | 85.3% | 8.59s | ~0 | 8.7M | no change (ruled out backlog) |
+
+## Final result — 3000 VU, 30 Hz storm (Sep 4, 00:09)
+
+| Metric | Value | Threshold | |
+|--------|-------|-----------|---|
+| game_completion_rate | **85.26%** (2541/2980) | >70% | ✅ |
+| ws_connection_success | **99.26%** (2978/3000) | >95% | ✅ |
+| room_create_rtt p95 | **1.93s** | <5s | ✅ |
+| room_join_rtt p95 | **8.59s** (max 52.6s) | <5s | ❌ |
+| messages_received | 13.27M @ **10,132/s** | — | |
+| iteration_duration avg | 10m42s (natural game length) | — | |
+| fanout_delivered.lossy | 8.7M (strokes, correctly classed) | — | |
+| fanout_dropped.control | **42** (was 5.87M) | — | ✅ |
+| fanout_dropped.lossy | 3.77M (strokes dropped — intended) | — | |
+| ws_connecting p95 / max | 6.65s / 60s | — | ⚠️ |
+
+## The two fixes that landed
+
+### Fix 1 — class-aware fan-out backpressure (the completion fix) ✅
+**Problem (measured):** `deliv_lossy=0` for entire runs while `fanout_dropped.control` hit ~30%. Rooms span >1 gRPC stream, so broadcasts took the per-player fallback that tagged strokes as `targeted` → the gateway classified them `control` → the fan-out drop hit strokes AND `game_over`/`turn_started` indiscriminately → games failed.
+**Fix:** tag strokes `lossy` on both fast (`broadcast_lossy`) and fallback (`targeted_lossy`) paths; gateway `enqueueNonBlocking` is class-aware — a full client SendCh drops lossy strokes, but for a **control** message evicts a queued stroke to make room so `game_over` is never dropped.
+**Result:** completion 69% → **85.6%**; `fanout_dropped.control` 5.87M → **42**; `deliv_lossy` 0 → **8.7M**. Decisive, verified win.
+
+### Fix 2 — GetOrCreate dial-outside-lock (join latency) — partial
+**Hypothesis:** the global stream-manager write lock was held during Redis + gRPC dial, serializing room creation under the connect burst.
+**Fix:** moved resolve+dial+open outside the lock (lock held only for O(1) map insert, with double-create race handling); cached workerID→gRPC address.
+**Result:** `room_join_rtt` p95 7.3s → 7.16s — **barely moved**. The lock-convoy was not the dominant cause.
+
+## Root-cause map (what measurement proved)
+
+| Symptom | Theory | Verdict |
+|---------|--------|---------|
+| Completion collapse | Fan-out dropping control indiscriminately (strokes misclassified) | ✅ CONFIRMED & FIXED (Fix 1) |
+| Join latency | Multiplexer Redis lookups per join | minor (cached, small help) |
+| Join latency | GetOrCreate lock-convoy | ✅ fixed but NOT the main cause |
+| Join latency | Kernel accept backlog (somaxconn/syn_backlog) | ❌ DISPROVEN (bump had zero effect) |
+| Join latency | **WS connection-establishment RATE under a 3000 instantaneous connect burst** | ⬅️ evidence points here: `ws_connecting` p95 6.65s / max 60s (= k6 timeout); ~107 conns can't complete handshake in time; everything downstream of a successful connect is healthy |
+
+## Interpretation
+
+The system **handles 3000 concurrent players under a worst-case 30 Hz storm at 85% completion, 99.3% connection success, ~10k msg/s fan-out**, with control messages protected and games finishing in natural time. The single failing metric — `room_join_rtt` — is dominated by WebSocket connection establishment during a **synthetic all-at-once 3000-connect thundering herd**, which real traffic (gradual arrival) does not produce. It is a connect-rate / arrival-pattern limit, not a gameplay, fan-out, or application-logic defect.
+
+## Validated single-node capacity (c5a.4xlarge, worst-case 30 Hz storm)
+
+| Load | Verdict |
+|------|---------|
+| 1,000 | clean pass (100% completion) |
+| ~2,000–2,500 | comfortable (completion passes; join latency near threshold) |
+| 3,000 | functional — 85% completion, 99% connects; only join_rtt fails (connect burst) |
+
+Under realistic (non-continuous-drawing) load, effective per-node capacity is higher.
+
+## Plan forward
+
+### Immediate (close out join_rtt — measurement)
+1. **Ramped-arrival k6 run** at 3000 (ramp VUs over 60–90s via k6 `ramping-vus` instead of all-at-once). Expected to clear `ws_connecting`/`room_join_rtt`, confirming the connect burst is a test artifact and real-world 3000 is fine. No server code.
+
+### Short term (raise the instant-burst ceiling, if required)
+2. **Horizontal gateways** — run 2+ gateway instances behind a load balancer (ALB/NLB). Spreads the connect burst across N accept loops; this is also the real-world and millions-scale answer. The gateway is stateless per-connection, so this scales cleanly.
+3. **Optional gateway connect tuning** — profile TLS/upgrade CPU during the burst; consider tuning the listener / accept concurrency. Lower priority than horizontal scaling.
+
+### Medium term (robustness for production)
+4. **Stroke coalescing / rate-cap** on the worker (~15–20 Hz/room) — reduces fan-out volume with no perceptible quality loss; further raises headroom under drawing-heavy load.
+5. **Graceful drain / room migration** before aggressive worker autoscaling (in-memory rooms are lost on worker restart today).
+6. **Origin validation** (`CheckOrigin` currently allows all) and **Redis-fail-closed** for room routing before internet-facing production.
+
+### Scaling to millions
+7. Horizontal scale-out: rooms shard across workers/nodes via sticky room ownership + gateway multiplexing; multiple gateways behind an LB spread connections. ~1M concurrent under storm ≈ several hundred c5a.4xlarge-class nodes; far fewer under realistic load. Redis Cluster for coordination at that scale.
+
+## Test artifacts
+
+| File | Description |
+|------|-------------|
+| `k6_results-3k-bothfixes.txt` | Final 3000 VU run (both fixes) — 85% completion |
+| `k6_results-3k-verify.txt` | 3000 VU, join-cache only (73.7%) |
+| `k6_results-3k.txt` | 3000 VU baseline (54.9%) |
+| `k6_results-2k-new.txt` | 2000 VU, 12 workers |
+| `k6_results.txt` | 1000 VU (100%) |
+| `scripts/k6_grpc_load_test.js` | gRPC multiplexing storm load test |
+| gateway `/health` | live `fanout_*` / `send_*` counters |
+
+---
+
+# Addendum 3: The Load Generator Was the Bottleneck (Sep 4, 2026)
+
+**Key correction:** the `room_join_rtt` failures at 3000 VU were **not a server bottleneck**. They were the single home load-generator machine's network path to AWS. Running k6 from a second EC2 instance **inside the same VPC** (driving the app over its private IP) eliminated the client-side limit and revealed the server's true performance.
+
+## The proof — same 3000 VU / 30 Hz storm, different load generator
+
+| Metric | Home k6 (all-at-once) | Home k6 (ramped 90s) | **AWS in-VPC k6** |
+|--------|----------------------|----------------------|-------------------|
+| room_join_rtt p95 | 8.59s ❌ | 10.98s ❌ | **22ms** ✅ |
+| room_create_rtt p95 | 1.93s | 9.55s ❌ | **26ms** ✅ |
+| ws_connecting p95 | 6.65s | 9.98s | **4.16ms** ✅ |
+| http_req_failed | 0.46% | 34.47% | **0.00%** ✅ |
+| ws_connection_success | 99.26% | 95.90% | **100%** ✅ |
+| messages_received/s | 10,132 | 13,124 | **32,226** ✅ |
+| game_completion_rate | 85.26% | 85.07% | 78.30% ✅ |
+
+`room_join_rtt` dropped **8.59s → 22ms (~390x)** purely by moving the load generator into AWS. `ws_connecting` 6.65s → 4.16ms. `http_req_failed` 34% → 0%. Fan-out throughput 3x higher (the home network was also capping it).
+
+## Why every server-side "fix" barely moved join_rtt
+
+This finally explains the whole join investigation. The multiplexer join-cache, the GetOrCreate dial-outside-lock, and the kernel-backlog sysctl bump all "barely helped" **because the bottleneck was never on the server** — it was the home machine's connection/network limit to AWS. Those fixes are still correct and reduce Redis/lock pressure at genuine high concurrency, but they were not the cause of the observed latency. The lesson: **the load generator must not itself be the bottleneck** — drive load from inside the same network as the system under test.
+
+## Final result — 3000 VU, 30 Hz storm, AWS in-VPC generator
+
+Single c5a.4xlarge (16 vCPU/32 GB), ~12 workers. **All four thresholds PASS:**
+
+| Metric | Value | Threshold | |
+|--------|-------|-----------|---|
+| game_completion_rate | 78.30% (1787/2282) | >70% | ✅ |
+| room_create_rtt p95 | 26ms | <5s | ✅ |
+| room_join_rtt p95 | 22ms | <5s | ✅ |
+| ws_connection_success | 100% (3000/3000) | >95% | ✅ |
+| messages_received | 43.7M @ **32,226/s** | — | |
+| ws_msgs_sent | 21.1M @ 15,544/s | — | |
+| data_received | 12 GB | — | |
+| iteration_duration avg | 15m3s (natural game length) | — | |
+| errors / ws_connection_failures | 750 (in-session, non-fatal; connect success was 100%) | — | |
+
+## Corrected capacity statement
+
+**A single c5a.4xlarge handles 3000 concurrent players under a worst-case 30 Hz continuous-drawing storm with 22ms join latency, 4ms connect, 32k msg/s fan-out, 100% connection success, and 78% completion — all thresholds green.** The server has clear headroom at 3000 (sub-30ms control-plane latency), so the true ceiling is higher. Prior single-node numbers were understated because they were bottlenecked by an external load generator.
+
+## Load-testing methodology (locked in)
+
+- **Drive load from inside AWS** (same VPC, target the app's private IP). A single home machine caps out well below the server's capacity due to its own connection/port/network limits.
+- Raise the load generator's own limits: wide `ip_local_port_range`, high `nofile`, `tcp_tw_reuse`.
+- Keep two workload profiles: **30 Hz storm** (worst-case ceiling) and **~5 Hz** (realistic capacity).
+
+## Plan forward (updated)
+
+1. **Ladder up from the AWS in-VPC generator** to find the true server ceiling: 5000 → 7500 → 10000 VU at 30 Hz (comparable to the clean 3000), capturing `/health` + `docker stats` at peak.
+2. **Realistic-load numbers:** repeat the ladder at `STROKE_HZ=5` for the headline "concurrent players under realistic drawing" figure (expected multiples higher than the 30 Hz ceiling).
+3. **Horizontal scale-out** remains the path to millions: multiple gateways behind an LB, rooms sharded across nodes via sticky ownership.
+4. Medium-term robustness (unchanged): stroke coalescing, graceful drain/room migration, origin validation, Redis-fail-closed.
+
+---
+
+# Addendum 4: 5000 VU — Storm Ceiling vs Realistic Capacity (Sep 4, 2026)
+
+Load driven from the **AWS in-VPC k6 generator** (private IP). Single c5a.4xlarge, ~9-12 workers. Two workloads at 5000 VU / 1000 rooms × 5 players.
+
+## 30 Hz storm (worst case) — gateway CPU ceiling
+
+`docker stats` at peak during the 5000 / 30 Hz run:
+
+| Container | CPU | Note |
+|-----------|-----|------|
+| **gateway** | **562%** | fan-out to 5000 sockets — the bottleneck |
+| app workers | 100–133% each | one core each (as expected) |
+| app-6, app-9 | ~0.6% | idle — uneven room distribution |
+| redis | 9% | not a factor |
+
+`/health`: `fanout_delivered.lossy`=50.4M, `fanout_dropped.lossy`=19.3M (strokes dropped as intended), **`fanout_dropped.control`=4,273** (up from 42 at 3000 — control drops creep in as the gateway saturates), `total_connects`=8,572 for 5000 VU (heavy reconnect churn), `active_clients` bleeding from the 5000 peak.
+
+**Finding:** at 5000 under a 30 Hz continuous storm the **gateway is CPU-bound on fan-out** (562% ≈ 5.6 cores). This is the true single-gateway ceiling under the torture workload — the single-node storm ceiling sits between 3000 (clean) and 5000 (saturated). Because the gateway is stateless per-connection, this ceiling multiplies with horizontal gateway instances.
+
+## 5 Hz realistic — 5000 players, all green
+
+Real gameplay is nothing like a 30 Hz continuous storm. At `STROKE_HZ=5` (fan-out ~6x lighter):
+
+| Metric | Value | Threshold | |
+|--------|-------|-----------|---|
+| game_completion_rate | **96.96%** (4848/5000) | >70% | ✅ |
+| room_create_rtt p95 | **6ms** | <5s | ✅ |
+| room_join_rtt p95 | **4ms** | <5s | ✅ |
+| ws_connecting p95 | **0.98ms** | — | ✅ |
+| ws_connection_success | **100%** (5000/5000) | >95% | ✅ |
+| http_req_failed | **0.00%** | — | ✅ |
+| messages_received | 35.0M @ **26,210/s** | — | |
+| iteration_duration avg | 14m22s (natural game length) | — | |
+
+**All thresholds pass with huge margin** — 4ms join latency at 5000 concurrent players is nowhere near saturation, so realistic per-node capacity is well above 5000.
+
+## Capacity summary — validated numbers
+
+| Workload | Single c5a.4xlarge capacity |
+|----------|------------------------------|
+| **Worst-case (30 Hz continuous storm)** | ~3000 concurrent clean; gateway CPU-saturated by 5000 |
+| **Realistic (~5 Hz drawing)** | **5000+ concurrent** at 97% completion, 4ms latency, 100% connects — with clear headroom |
+
+The bottleneck in both cases is **gateway fan-out CPU**, driven by stroke *volume*. Realistic gameplay produces far less volume than the storm, so realistic capacity is multiples of the worst-case ceiling.
+
+## Scaling to millions (empirically grounded)
+
+- **Per node (realistic):** ≥5000 concurrent, headroom remaining.
+- **Bottleneck = gateway fan-out CPU**, and the gateway is stateless per-connection → **horizontal gateways behind a load balancer multiply capacity directly.**
+- Rooms shard across workers via sticky ownership; add worker nodes for game-logic scale.
+- ~1M concurrent (realistic) ≈ ~200 c5a.4xlarge-class nodes; the architecture (Go gateway multiplexing + gRPC + Redis coordination) supports this horizontally.
+
+## Remaining tuning opportunities (optional)
+
+1. **Uneven worker distribution** — 2 of 9 workers idle under the storm; the 1s least-loaded-worker cache may clump room creation. Shorten/jitter the cache or round-robin new rooms to spread game-logic load.
+2. **Stroke coalescing / rate-cap** (~15–20 Hz/room) on the worker — directly reduces the fan-out volume that saturates the gateway, raising the worst-case (storm) ceiling toward the realistic one.
+3. **Horizontal gateways** — the definitive lever for both the storm ceiling and millions-scale.
+
+---
+
+# Addendum 5: 7500 VU Realistic — Finding the Realistic Knee (Sep 4, 2026)
+
+AWS in-VPC k6 generator, single c5a.4xlarge, `STROKE_HZ=5` (realistic), 7500 VU / 1500 rooms × 5 players.
+
+## Realistic-load ladder (5 Hz)
+
+| VU | completion | room_join_rtt p95 | ws_connecting p95 | ws_conn success | msgs recv/s | verdict |
+|----|-----------|-------------------|-------------------|-----------------|-------------|---------|
+| 5000 | 96.96% | 4ms | 0.98ms | 100% | 26,210 | clean pass, large margin |
+| **7500** | **72.86%** | **4ms** | **1.1ms** | **100%** | **36,381** | passes, but at the knee |
+
+## Reading
+
+At 7500 the **control plane is still flawless** — join 4ms, connect 1.1ms, 100% connection success, 0% HTTP failures. Connections/routing are not the limit. But **completion fell 97% → 72.86%** with `games_aborted`=2035 and `errors`=1360, and `messages_received/s` rose to **36,381** — essentially the same fan-out throughput (~32-36k msg/s) at which the gateway saturated in the 5000/30 Hz storm run.
+
+**Consistent finding:** the gateway saturates on fan-out at **~35k msg/s regardless of how that volume is produced** — few players drawing fast (30 Hz) or many drawing slow (5 Hz). The limiter is always **gateway fan-out CPU**, never the control plane.
+
+## Validated per-node capacity (single c5a.4xlarge)
+
+| Workload | Comfortable | Knee/ceiling |
+|----------|-------------|--------------|
+| Worst-case 30 Hz storm | ~3000 | saturates by 5000 |
+| Realistic ~5 Hz | **~5000–6000** | knee at 7500 (73% completion) |
+| Fan-out throughput limit | — | **~35,000 msg/s** (gateway CPU) |
+
+Realistic single-node capacity is **~5000–6000 concurrent players**, bounded by gateway fan-out CPU (~35k msg/s). The control plane (connect/create/join) stays sub-10ms throughout and is never the bottleneck.
+
+## Levers to raise the ceiling (in order of effort)
+
+1. **Vertical: bigger instance** (c5a.8xlarge/16xlarge, 32–64 vCPU) — gives the single gateway more cores for fan-out. Zero code; near-term quick win.
+2. **Stroke coalescing / rate-cap** on the worker (~15–20 Hz/room) — cuts fan-out volume at the source; contained worker-side change.
+3. **Horizontal gateways** behind an LB — the definitive lever. Requires solving cross-gateway fan-out: either (A) sticky room routing at the LB (~1-2 days) or (B) Redis cross-gateway broadcast relay (~3-5 days, reuses existing pub/sub plumbing). Gateway holds per-room socket state in memory, so this is real work, not a config change.

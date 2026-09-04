@@ -30,3 +30,12 @@ mock-tests/**
 docs/interview-prep/**
 jmeter/
 resume/
+
+# Secrets — never commit private keys
+*.pem
+
+# Load-test artifacts (local run outputs)
+k6_results*.txt
+health-samples.txt
+dockerstats-samples.txt
+app-logs.txt
