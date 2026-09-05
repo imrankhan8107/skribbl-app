@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"strconv"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -19,9 +21,20 @@ var (
 )
 
 // sendChBufferSize is the capacity of each PlayerSession's outbound queue.
-// A buffer of 256 messages prevents blocking during fan-out delivery while
-// providing backpressure if a client is too slow to consume messages.
-const sendChBufferSize = 256
+// A larger buffer absorbs stroke bursts under load so fewer lossy strokes are
+// dropped (dropped strokes show as gappy remote drawings); writePump write-
+// coalescing drains it in few syscalls. Tunable via env SEND_BUFFER (default
+// 1024) so it can be swept (1024/2048/4096) without a rebuild. NOTE: too large a
+// buffer trades drops for latency (strokes arrive smooth but late) — sweep to
+// find the sweet spot.
+var sendChBufferSize = func() int {
+	if v := os.Getenv("SEND_BUFFER"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 1024
+}()
 
 // PlayerSession represents a connected player's session state in the gateway.
 // Each session holds the player's identity, room association, WebSocket connection,

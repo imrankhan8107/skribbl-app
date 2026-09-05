@@ -49,6 +49,7 @@ services:
     command: ["-port", "9000", "-redis", "redis://redis:6379", "-backends", "app:8000", "-static", "/static", "-pprof-port", "6060"]
     environment:
       - TRACE_ENABLED=${TRACE_ENABLED:-false}
+      - SEND_BUFFER=${SEND_BUFFER:-1024}  # per-client outbound queue depth (sweep 1024/2048/4096)
     depends_on:
       redis:
         condition: service_healthy
