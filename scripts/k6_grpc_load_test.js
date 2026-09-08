@@ -25,9 +25,16 @@
  * - 9.5: Per-worker streams <200 (check /metrics during test)
  */
 
-import ws from 'k6/ws';
+// Uses the modern k6/websockets module (event-loop / async), NOT the legacy
+// blocking k6/ws. The old ws.connect() blocked each VU's goroutine for the whole
+// session, which serialized connection ESTABLISHMENT under a large burst and
+// capped reliable concurrency (~11k here) with client-side SYN retransmits even
+// though the server and OS were idle. k6/websockets drives sockets on the event
+// loop so 15k+ connections can be established without blocking VUs.
+import { WebSocket } from 'k6/websockets';
+import { setTimeout, setInterval, clearInterval } from 'k6/timers';
 import http from 'k6/http';
-import { check, sleep } from 'k6';
+import { sleep } from 'k6';
 import { Counter, Trend, Rate, Gauge } from 'k6/metrics';
 import exec from 'k6/execution';
 
@@ -227,52 +234,78 @@ export default function () {
     return params.length ? `${WS_URL}?${params.join('&')}` : WS_URL;
   }
 
-  function runConnection() {
-  const res = ws.connect(buildWsUrl(), { tags: { role: isHost ? 'host' : 'joiner' } }, function (socket) {
-    connectionSuccess.add(1);
+  // Per-VU session state (persists across a redirect reconnect).
+  let state = 'connecting';
+  let roomCode = coordRoomCode;
+  let playerId = null;
+  let isDrawer = false;
+  let turnActive = false;
+  let drawingActive = false;
+  let guessingActive = false;
+  let startArmed = false;
+  let strokeTimer = null;
+  let guessTimer = null;
+  let sessionEnded = false;
 
-    let state = 'connecting';
-    let roomCode = coordRoomCode;
-    let playerId = null;
-    let gameStartTime = 0;
-    let isDrawer = false;
-    let turnActive = false;
-    let drawingActive = false;
-    let guessingActive = false;
-    let startArmed = false; // host: ensures the start sequence is scheduled once
+  // Open the socket (async, event-loop driven). runConnection wires all handlers
+  // and returns immediately; the k6/websockets event loop keeps the VU iteration
+  // alive until the socket closes and all timers are cleared.
+  function runConnection() {
+    const socket = new WebSocket(buildWsUrl());
 
     function sendMsg(msg) {
       try { socket.send(JSON.stringify(msg)); messagesSent.add(1); } catch (e) { errorCount.add(1); }
     }
 
-    function endSession(reason) {
-      if (reason === 'completed') { gameCompleted = true; gamesCompleted.add(1); gameCompletionRate.add(1); }
-      else { gamesAborted.add(1); gameCompletionRate.add(0); }
+    function stopLoops() {
       drawingActive = false; guessingActive = false;
-      socket.close();
+      if (strokeTimer !== null) { clearInterval(strokeTimer); strokeTimer = null; }
+      if (guessTimer !== null) { clearInterval(guessTimer); guessTimer = null; }
     }
 
-    socket.on('open', function () {
+    function endSession(reason) {
+      if (sessionEnded) return;
+      sessionEnded = true;
+      if (reason === 'completed') { gameCompleted = true; gamesCompleted.add(1); gameCompletionRate.add(1); }
+      else { gamesAborted.add(1); gameCompletionRate.add(0); }
+      stopLoops();
+      try { socket.close(); } catch (e) { /* ignore */ }
+    }
+
+    socket.onopen = function () {
+      connectionSuccess.add(1);
       if (isHost) {
         sendMsg({ type: 'create_room', payload: { name: playerName } });
-        socket.setTimeout(function () { if (state === 'connecting') { roomCreateFailures.add(1); endSession('error'); } }, 10000);
+        setTimeout(function () { if (state === 'connecting') { roomCreateFailures.add(1); endSession('error'); } }, 10000);
       } else {
         sendMsg({ type: 'join_room', payload: { name: playerName, room_code: roomCode } });
-        socket.setTimeout(function () { if (state === 'connecting') { roomJoinFailures.add(1); endSession('error'); } }, 10000);
+        setTimeout(function () { if (state === 'connecting') { roomJoinFailures.add(1); endSession('error'); } }, 10000);
       }
-    });
+      // Overall session patience timer.
+      setTimeout(function () { if (!gameCompleted) endSession('aborted'); }, HOLD_SECONDS * 1000);
+    };
 
-    socket.on('message', function (data) {
+    socket.onerror = function (e) {
+      connectionFailures.add(1); errorCount.add(1);
+      connectionSuccess.add(0); gameCompletionRate.add(0);
+    };
+
+    socket.onclose = function () { stopLoops(); };
+
+    socket.onmessage = function (e) {
       messagesReceived.add(1);
-      let msg; try { msg = JSON.parse(data); } catch (e) { return; }
+      let msg; try { msg = JSON.parse(e.data); } catch (err) { return; }
       if (msg.type === 'ping') { sendMsg({ type: 'pong', payload: {} }); return; }
       if (msg.type === 'redirect') {
-        // Owning gateway is elsewhere — pin to it and reconnect. Bounded to
-        // avoid a redirect loop if ownership is flapping.
+        // Owning gateway is elsewhere — pin and reconnect (bounded).
         if (msg.payload && msg.payload.gateway_id && redirectAttempts < 3) {
           redirectGw = msg.payload.gateway_id;
+          redirectAttempts++;
+          try { socket.close(); } catch (er) { /* ignore */ }
+          runConnection(); // reconnect to the owning gateway
+          return;
         }
-        socket.close();
+        try { socket.close(); } catch (er) { /* ignore */ }
         return;
       }
 
@@ -282,7 +315,7 @@ export default function () {
         case 'waiting_start': handleWaitingStart(msg); break;
         case 'playing': handlePlaying(msg); break;
       }
-    });
+    };
 
     function handleConnecting(msg) {
       if (msg.type === 'room_created') {
@@ -290,35 +323,28 @@ export default function () {
         roomCode = msg.payload.room_code; playerId = msg.payload.player_id;
         state = 'lobby';
         publishRoomCode(roomIndex, roomCode);
-        socket.setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') endSession('aborted'); }, 60000);
+        setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') endSession('aborted'); }, 60000);
       } else if (msg.type === 'room_joined') {
         roomJoinRtt.add(Date.now() - connectStart); roomsJoined.add(1);
         roomCode = msg.payload.room_code; playerId = msg.payload.player_id;
         state = 'lobby';
-        socket.setTimeout(function () { if (state === 'lobby') sendMsg({ type: 'toggle_ready', payload: {} }); }, Math.floor(randomBetween(1000, 2000)));
-        socket.setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') endSession('aborted'); }, 60000);
+        setTimeout(function () { if (state === 'lobby') sendMsg({ type: 'toggle_ready', payload: {} }); }, Math.floor(randomBetween(1000, 2000)));
+        setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') endSession('aborted'); }, 60000);
       } else if (msg.type === 'error') { errorCount.add(1); endSession('error'); }
     }
 
     function handleLobby(msg) {
       if (msg.type === 'player_list' && msg.payload) {
         const count = msg.payload.players.length;
-        // Arm the start sequence ONCE, the first time we reach the minimum. We
-        // then wait START_GRACE_MS for stragglers and start with whoever is
-        // present (up to PLAYERS_PER_ROOM), instead of requiring all N — which
-        // some rooms never reach under a staggered arrival ramp.
-        // Arm ONCE when the minimum is present, then wait a grace window for
-        // the rest of the roster to arrive before starting. With per-room
-        // arrival (all a room's VUs ramp together) the full roster lands within
-        // the grace window, so games start with a stable player count and the
-        // late-joiner-into-started-game abort is avoided.
+        // Arm the start sequence ONCE when the minimum is present, then wait a
+        // grace window for the rest of the roster to arrive before starting.
         if (isHost && !startArmed && count >= MIN_PLAYERS_TO_START) {
           startArmed = true;
           sendMsg({ type: 'update_settings', payload: { num_rounds: NUM_ROUNDS, turn_duration: TURN_DURATION, max_players: PLAYERS_PER_ROOM } });
           sendMsg({ type: 'toggle_ready', payload: {} });
-          socket.setTimeout(function () {
+          setTimeout(function () {
             if (state !== 'lobby') return;
-            gameStartTime = Date.now(); sendMsg({ type: 'start_game', payload: {} });
+            sendMsg({ type: 'start_game', payload: {} });
             gamesStarted.add(1); state = 'waiting_start';
           }, START_GRACE_MS);
         }
@@ -338,17 +364,17 @@ export default function () {
       switch (msg.type) {
         case 'drawer_selecting':
           isDrawer = msg.payload && msg.payload.drawer_id === playerId;
-          turnActive = false; drawingActive = false; guessingActive = false; break;
+          turnActive = false; stopLoops(); break;
         case 'word_choices':
           if (isDrawer && msg.payload && msg.payload.choices && msg.payload.choices.length > 0) {
             const choices = msg.payload.choices;
-            socket.setTimeout(function () { sendMsg({ type: 'select_word', payload: { word: choices[Math.floor(Math.random() * choices.length)] } }); }, Math.floor(randomBetween(1000, 3000)));
+            setTimeout(function () { sendMsg({ type: 'select_word', payload: { word: choices[Math.floor(Math.random() * choices.length)] } }); }, Math.floor(randomBetween(1000, 3000)));
           } break;
         case 'turn_started':
           turnActive = true; isDrawer = msg.payload && msg.payload.drawer_id === playerId;
           if (isDrawer) { startDrawing(); } else { startGuessing(); } break;
         case 'turn_ended':
-          turnActive = false; drawingActive = false; guessingActive = false; break;
+          turnActive = false; stopLoops(); break;
         case 'game_over': endSession('completed'); break;
         case 'game_ended_insufficient_players': endSession('aborted'); break;
       }
@@ -357,24 +383,21 @@ export default function () {
     function startDrawing() {
       drawingActive = true;
       if (STROKE_HZ <= 0) {
-        // Legacy low-rate behaviour (kept for A/B comparison).
-        socket.setInterval(function () {
+        strokeTimer = setInterval(function () {
           if (!drawingActive || !turnActive) return;
           sendMsg({ type: 'stroke', payload: { points: [{ x: Math.random()*800, y: Math.random()*600 }, { x: Math.random()*800, y: Math.random()*600 }], color: '#000', lineWidth: 3 } });
         }, Math.floor(randomBetween(2000, 5000)));
         return;
       }
       // Stroke storm: emit STROKE_HZ messages/sec, each carrying STROKE_POINTS
-      // points, mimicking a human dragging the cursor continuously. This is the
-      // real fan-out hot path — every stroke is broadcast to all guessers.
+      // points — the real fan-out hot path (broadcast to all guessers).
       const intervalMs = Math.max(1, Math.floor(1000 / STROKE_HZ));
       let lastX = Math.random() * 800;
       let lastY = Math.random() * 600;
-      socket.setInterval(function () {
+      strokeTimer = setInterval(function () {
         if (!drawingActive || !turnActive) return;
         const points = [];
         for (let i = 0; i < STROKE_POINTS; i++) {
-          // Small deltas so it looks like a continuous line, not teleporting.
           lastX = Math.max(0, Math.min(800, lastX + randomBetween(-15, 15)));
           lastY = Math.max(0, Math.min(600, lastY + randomBetween(-15, 15)));
           points.push({ x: lastX, y: lastY });
@@ -386,30 +409,14 @@ export default function () {
     function startGuessing() {
       guessingActive = true;
       const words = ['cat','dog','house','tree','car','sun','moon','fish','bird','star','flower','mountain','river','boat'];
-      socket.setInterval(function () {
+      guessTimer = setInterval(function () {
         if (!guessingActive || !turnActive) return;
         sendMsg({ type: 'guess', payload: { text: words[Math.floor(Math.random() * words.length)] } });
       }, Math.floor(randomBetween(3000, 8000)));
     }
-
-    socket.on('error', function (e) { connectionFailures.add(1); errorCount.add(1); });
-    socket.on('close', function () { drawingActive = false; guessingActive = false; });
-    socket.setTimeout(function () { if (!gameCompleted) endSession('aborted'); }, HOLD_SECONDS * 1000);
-  });
-
-  check(res, { 'WS connected': (r) => r && r.status === 101 });
-  if (!res || res.status !== 101) { connectionSuccess.add(0); connectionFailures.add(1); gameCompletionRate.add(0); }
-  return res;
   }
 
-  // Connect, following at most a few room-sticky redirects. redirectGw is set by
-  // the redirect handler; if unchanged after a connection, we're done.
-  do {
-    const prevGw = redirectGw;
-    runConnection();
-    if (redirectGw === prevGw) break; // no redirect requested this round
-    redirectAttempts++;
-  } while (redirectAttempts <= 3 && !gameCompleted);
+  runConnection();
 }
 
 // ─── Setup / Teardown ───────────────────────────────────────────────────────
