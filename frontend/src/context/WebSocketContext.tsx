@@ -473,108 +473,90 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    // handleOne processes a single decoded server message. The gateway may
-    // coalesce several messages into one WebSocket frame under load as
-    // {"type":"batch","messages":[...]} — see the batch unwrap in onmessage.
-    // Typed as `any` to match the original inline handler (JSON.parse returns any);
-    // this keeps the refactor behavior-identical — only the call site changed.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const handleOne = (msg: any) => {
-      console.log("[WS] Received:", msg.type, msg.payload);
-
-      // Handle drawing events separately — store as drawingEvent
-      if (msg.type === "stroke" || msg.type === "fill" || msg.type === "clear_canvas") {
-        dispatch({
-          type: "DRAWING_EVENT",
-          payload: { type: msg.type, payload: msg.payload },
-        } as unknown as Action);
-        return;
-      }
-
-      // Handle reaction messages — add as system chat message
-      if (msg.type === "reaction") {
-        const playerName = msg.payload?.player_name ?? "Someone";
-        const emoji = msg.payload?.emoji ?? "";
-        const reactionMsg: ChatMessage = {
-          id: String(Date.now()) + Math.random(),
-          senderId: "",
-          senderName: playerName,
-          text: `${playerName} reacted ${emoji}`,
-          type: "system",
-        };
-        dispatch({ type: "CHAT_MESSAGE", payload: reactionMsg } as unknown as Action);
-        return;
-      }
-
-      // Handle word_assigned (sent privately to drawer on auto-select)
-      if (msg.type === "word_assigned") {
-        dispatch({
-          type: "WORD_SELECTED",
-          payload: { word: msg.payload.word },
-        } as unknown as Action);
-        return;
-      }
-
-      // Handle drawer_selecting (broadcast to all — sets drawerId for display)
-      if (msg.type === "drawer_selecting") {
-        dispatch({ type: "DRAWER_SELECTING", payload: msg.payload } as unknown as Action);
-        return;
-      }
-
-      const actionType = mapServerTypeToActionType(msg.type);
-      if (actionType) {
-        const payload = mapKeys(msg.payload) as Record<string, unknown>;
-        console.log("[WS] Dispatching:", actionType, payload);
-
-        // Store session info for auto-reconnect on page refresh
-        if (
-          msg.type === "room_created" ||
-          msg.type === "room_joined" ||
-          msg.type === "reconnected"
-        ) {
-          const roomCode = (payload as Record<string, unknown>).roomCode as string;
-          // For room_created/room_joined, we need to get the player name from the payload or current state
-          // The server doesn't echo the name back, so we store it when available
-          const existingSession = sessionStorage.getItem("skribbl_session");
-          let playerName = "";
-          if (existingSession) {
-            try {
-              playerName = JSON.parse(existingSession).playerName;
-            } catch {
-              /* ignore */
-            }
-          }
-          if (roomCode) {
-            sessionStorage.setItem("skribbl_session", JSON.stringify({ playerName, roomCode }));
-          }
-        }
-
-        // For game_ended_insufficient_players, wrap payload to match GAME_OVER action shape
-        if (msg.type === "game_ended_insufficient_players") {
-          dispatch({
-            type: "GAME_OVER",
-            payload: { players: (payload as Record<string, unknown>)?.players ?? [] },
-          } as Action);
-        } else {
-          dispatch({ type: actionType, payload } as Action);
-        }
-      } else {
-        console.log("[WS] No mapping for type:", msg.type);
-      }
-    };
-
     ws.onmessage = (event: MessageEvent) => {
       try {
-        const parsed = JSON.parse(event.data);
-        // The gateway coalesces multiple messages into one frame under load.
-        // Unwrap the batch envelope and process each message in order.
-        if (parsed && parsed.type === "batch" && Array.isArray(parsed.messages)) {
-          for (const m of parsed.messages) {
-            handleOne(m);
-          }
+        const msg = JSON.parse(event.data);
+        console.log("[WS] Received:", msg.type, msg.payload);
+
+        // Handle drawing events separately — store as drawingEvent
+        if (msg.type === "stroke" || msg.type === "fill" || msg.type === "clear_canvas") {
+          dispatch({
+            type: "DRAWING_EVENT",
+            payload: { type: msg.type, payload: msg.payload },
+          } as unknown as Action);
           return;
         }
-        handleOne(parsed);
+
+        // Handle reaction messages — add as system chat message
+        if (msg.type === "reaction") {
+          const playerName = msg.payload?.player_name ?? "Someone";
+          const emoji = msg.payload?.emoji ?? "";
+          const reactionMsg: ChatMessage = {
+            id: String(Date.now()) + Math.random(),
+            senderId: "",
+            senderName: playerName,
+            text: `${playerName} reacted ${emoji}`,
+            type: "system",
+          };
+          dispatch({ type: "CHAT_MESSAGE", payload: reactionMsg } as unknown as Action);
+          return;
+        }
+
+        // Handle word_assigned (sent privately to drawer on auto-select)
+        if (msg.type === "word_assigned") {
+          dispatch({
+            type: "WORD_SELECTED",
+            payload: { word: msg.payload.word },
+          } as unknown as Action);
+          return;
+        }
+
+        // Handle drawer_selecting (broadcast to all — sets drawerId for display)
+        if (msg.type === "drawer_selecting") {
+          dispatch({ type: "DRAWER_SELECTING", payload: msg.payload } as unknown as Action);
+          return;
+        }
+
+        const actionType = mapServerTypeToActionType(msg.type);
+        if (actionType) {
+          const payload = mapKeys(msg.payload) as Record<string, unknown>;
+          console.log("[WS] Dispatching:", actionType, payload);
+
+          // Store session info for auto-reconnect on page refresh
+          if (
+            msg.type === "room_created" ||
+            msg.type === "room_joined" ||
+            msg.type === "reconnected"
+          ) {
+            const roomCode = (payload as Record<string, unknown>).roomCode as string;
+            // For room_created/room_joined, we need to get the player name from the payload or current state
+            // The server doesn't echo the name back, so we store it when available
+            const existingSession = sessionStorage.getItem("skribbl_session");
+            let playerName = "";
+            if (existingSession) {
+              try {
+                playerName = JSON.parse(existingSession).playerName;
+              } catch {
+                /* ignore */
+              }
+            }
+            if (roomCode) {
+              sessionStorage.setItem("skribbl_session", JSON.stringify({ playerName, roomCode }));
+            }
+          }
+
+          // For game_ended_insufficient_players, wrap payload to match GAME_OVER action shape
+          if (msg.type === "game_ended_insufficient_players") {
+            dispatch({
+              type: "GAME_OVER",
+              payload: { players: (payload as Record<string, unknown>)?.players ?? [] },
+            } as Action);
+          } else {
+            dispatch({ type: actionType, payload } as Action);
+          }
+        } else {
+          console.log("[WS] No mapping for type:", msg.type);
+        }
       } catch (err) {
         console.error("[WS] Error processing message:", err);
       }
