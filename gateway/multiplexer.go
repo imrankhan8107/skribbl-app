@@ -211,6 +211,29 @@ func (m *Multiplexer) handleCreateRoom(session *PlayerSession, rawMsg []byte, pa
 // pending PlayerID. The response interceptor in the receiver updates the session's
 // PlayerID when the room_joined/reconnected response arrives.
 func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, roomCode string) error {
+	// Room-sticky routing (Path A): if another gateway owns this room, redirect
+	// the client there instead of serving it locally. Serving locally would put
+	// this room's players on two gateways, and fan-out is per-gateway — they
+	// wouldn't see each other. If ownership is unknown ("") we serve locally and
+	// let create/first-join claim it. If WE own it, proceed normally.
+	if reg := m.gateway.gwRegistry; reg != nil {
+		owner := reg.OwnerOf(roomCode)
+		if owner != "" && owner != reg.gatewayID {
+			// Only redirect if the owner is still alive; otherwise the room's
+			// gateway is gone, so serve locally and re-claim rather than bounce
+			// the client to a dead gateway.
+			if reg.AddrOf(owner) != "" {
+				debugf("[mux:join] room=%s owned by %s (this=%s) → redirect", roomCode, owner, reg.gatewayID)
+				return m.sendRedirect(session.Conn, owner, roomCode)
+			}
+			debugf("[mux:join] room=%s owner=%s appears dead; serving locally + reclaiming", roomCode, owner)
+			reg.ClaimRoom(roomCode)
+		} else {
+			// We own it (or unknown) — (re)claim/refresh so the key stays warm.
+			reg.RefreshRoom(roomCode)
+		}
+	}
+
 	// Resolve which worker owns this room
 	workerID := m.resolveRoomOwner(roomCode)
 	if workerID == "" {
@@ -431,6 +454,26 @@ func (m *Multiplexer) deliverToClient(session *PlayerSession, payload []byte) {
 	default:
 		debugf("[multiplexer] dropped message for player=%s: SendCh full", session.PlayerID)
 	}
+}
+
+// sendRedirect tells the client to reconnect pinned to the gateway that owns
+// its room. The client reconnects to the SAME public origin with ?gw=<ownerID>
+// (and ?room=<CODE>); the LB consistent-hashes on gw so the connection lands on
+// the owner. Routing the redirect back through the LB (rather than a raw
+// internal address) keeps it browser-reachable — internal gateway hostnames
+// aren't resolvable from the client. Returning an error terminates this
+// connection's read loop so the client is free to reconnect.
+func (m *Multiplexer) sendRedirect(conn *websocket.Conn, ownerID, roomCode string) error {
+	tracef("[trace] GW_MUX_REDIRECT room=%s owner=%s", roomCode, ownerID)
+	msg, _ := json.Marshal(map[string]interface{}{
+		"type": "redirect",
+		"payload": map[string]string{
+			"gateway_id": ownerID,
+			"room_code":  roomCode,
+		},
+	})
+	conn.WriteMessage(websocket.TextMessage, msg)
+	return fmt.Errorf("redirect room=%s to gateway %s", roomCode, ownerID)
 }
 
 // sendErrorToClient sends a JSON error response via the session's SendCh.

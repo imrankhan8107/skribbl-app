@@ -414,6 +414,9 @@ function mapKeys(obj: unknown): unknown {
 export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const [gameState, dispatch] = useReducer(gameReducer, initialGameState);
   const [isConnected, setIsConnected] = useState(false);
+  // Bumping this nonce forces the connection effect to tear down the current
+  // socket and reconnect — used to follow a room-sticky redirect.
+  const [reconnectNonce, setReconnectNonce] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
 
   const send = useCallback((type: string, payload?: unknown) => {
@@ -443,9 +446,34 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // redirectGatewayRef holds the owning gateway's ID when we were redirected
+  // (room-sticky routing). We reconnect to the SAME origin with ?gw=<id> so the
+  // LB consistent-hashes us onto the owner. Cleared is unnecessary — it only
+  // pins subsequent reconnects to the correct gateway.
+  const redirectGatewayRef = useRef<string | null>(null);
+
   useEffect(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+    // Build the WS URL against the same public origin. Include ?room=<CODE> so
+    // the LB can consistent-hash the connection to the gateway that owns the
+    // room; include ?gw=<id> when we've been redirected so the LB pins us to
+    // the owning gateway. Correctness never depends on the hash being perfect —
+    // a misroute triggers a redirect that self-heals.
+    let roomCode = "";
+    const session = sessionStorage.getItem("skribbl_session");
+    if (session) {
+      try {
+        roomCode = JSON.parse(session).roomCode || "";
+      } catch {
+        /* ignore */
+      }
+    }
+    const params = new URLSearchParams();
+    if (roomCode) params.set("room", roomCode);
+    if (redirectGatewayRef.current) params.set("gw", redirectGatewayRef.current);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws${query}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -474,6 +502,20 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       try {
         const msg = JSON.parse(event.data);
         console.log("[WS] Received:", msg.type, msg.payload);
+
+        // Room-sticky routing: the gateway we connected to doesn't own our room.
+        // Reconnect directly to the owning gateway's address. The server closes
+        // this connection right after sending redirect; we reconnect on close
+        // using redirectHostRef.
+        if (msg.type === "redirect") {
+          const gatewayId = msg.payload?.gateway_id as string | undefined;
+          if (gatewayId) {
+            console.log("[WS] Redirecting to owning gateway:", gatewayId);
+            redirectGatewayRef.current = gatewayId;
+            setReconnectNonce((n) => n + 1); // trigger the connection effect to re-run
+          }
+          return;
+        }
 
         // Handle drawing events separately. Publish straight to the drawing bus
         // so the canvas renders every segment in order, synchronously. Routing
@@ -570,7 +612,9 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     return () => {
       ws.close();
     };
-  }, []);
+    // reconnectNonce is bumped to follow a room-sticky redirect (reconnect to
+    // the owning gateway). eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reconnectNonce]);
 
   return (
     <WebSocketContext.Provider value={{ gameState, dispatch, send, isConnected }}>

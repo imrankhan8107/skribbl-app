@@ -162,6 +162,18 @@ func main() {
 		log.Printf("[gateway] gRPC multiplexing components initialized")
 	}
 
+	// Cross-gateway room-sticky routing registry (Path A). Advertises this
+	// gateway and tracks room ownership so misrouted joiners get redirected to
+	// the gateway that owns their room.
+	gw.gwRegistry = NewGatewayRegistry(rdb)
+	if gw.gwRegistry != nil {
+		go gw.gwRegistry.StartHeartbeat(context.Background())
+		if gw.streamManager != nil {
+			gw.streamManager.gwRegistry = gw.gwRegistry
+		}
+		log.Printf("[gateway] room-sticky registry initialized (id=%s addr=%q)", gw.gwRegistry.gatewayID, gw.gwRegistry.selfAddr)
+	}
+
 	// Start resolver cache cleanup goroutine
 	if rdb != nil {
 		go gw.resolver.StartCleanup(context.Background())
@@ -170,6 +182,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", gw.HandleWebSocket)
 	mux.HandleFunc("/health", gw.HandleHealth)
+	mux.HandleFunc("/live", gw.HandleLive)   // liveness probe (process is up)
+	mux.HandleFunc("/ready", gw.HandleReady)  // readiness probe (Redis + ≥1 worker)
 	mux.HandleFunc("/rooms/", gw.HandleCoord) // Coord: GET/POST /rooms/{index}
 
 	// Serve static frontend (SPA with fallback to index.html)
@@ -227,6 +241,7 @@ type Gateway struct {
 	fanOut          *FanOutDispatcher // Fan-out dispatcher for gRPC broadcasts
 	multiplexer     *Multiplexer      // Client→worker message multiplexer
 	fallbackHandler *FallbackHandler  // Fallback handler for gRPC/WS routing (nil if gRPC not configured)
+	gwRegistry      *GatewayRegistry  // Cross-gateway room ownership for room-sticky routing (nil if no Redis)
 }
 
 // HandleWebSocket accepts a client connection. If gRPC multiplexing is available,
@@ -634,6 +649,45 @@ func (gw *Gateway) HandleHealth(w http.ResponseWriter, r *http.Request) {
 
 	data, _ := json.Marshal(resp)
 	w.Write(data)
+}
+
+// HandleLive is a liveness probe: returns 200 as long as the process serves HTTP.
+func (gw *Gateway) HandleLive(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"live"}`))
+}
+
+// HandleReady is a readiness probe for the LB/orchestrator: reports 200 only
+// when the gateway can actually serve traffic — Redis reachable AND at least one
+// worker has a live gRPC liveness key. Returns 503 otherwise so the LB stops
+// routing new connections here.
+func (gw *Gateway) HandleReady(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// No Redis => single-gateway/dev mode: ready if the process is up.
+	if gw.redis == nil {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ready","mode":"no-redis"}`))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	if err := gw.redis.Ping(ctx).Err(); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"not_ready","reason":"redis_unreachable"}`))
+		return
+	}
+	if !gw.checkGRPCEnabled() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"not_ready","reason":"no_live_worker"}`))
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ready"}`))
 }
 
 // checkGRPCEnabled returns true if at least one worker has a valid

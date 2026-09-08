@@ -176,6 +176,14 @@ func interceptIdentityResponse(registry *SessionRegistry, sm *StreamManager, rs 
 			pendingPlayerID, finalPlayerID, finalRoomCode)
 	}
 
+	// Room-sticky routing: claim ownership of the room for THIS gateway so that
+	// joiners who land on a different gateway (LB hash mismatch) get redirected
+	// here. Only the create_room response carries a brand-new room code we own.
+	if realRoomCode != "" && msg.GetMessageType() == "room_created" && sm.gwRegistry != nil {
+		sm.gwRegistry.ClaimRoom(realRoomCode)
+		debugf("[receiver] claimed room ownership room=%s gateway=%s", realRoomCode, sm.gwRegistry.gatewayID)
+	}
+
 	// If this was a create_room, the stream was keyed by workerID.
 	// Now that we know the real room_code, ensure a room-keyed stream exists
 	// for future messages from this room (join_room, game messages, etc.)

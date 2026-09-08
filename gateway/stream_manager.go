@@ -84,6 +84,7 @@ type StreamManager struct {
 	directAddr string            // Direct gRPC address (bypasses Redis discovery)
 	fanOut     *FanOutDispatcher // For starting receive loops on new streams
 	registry   *SessionRegistry  // For receiver disconnect handling
+	gwRegistry *GatewayRegistry  // For claiming room ownership on room_created (room-sticky routing)
 
 	// grpcAddrCache caches workerID -> gRPC address so resolveGRPCAddress isn't
 	// a Redis round-trip per new room during a connect burst. Worker gRPC
