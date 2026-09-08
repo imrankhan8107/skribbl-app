@@ -86,6 +86,19 @@ const RAMP_SECONDS = parseInt(__ENV.RAMP_SECONDS || '0');
 // a 180s fixed buffer for the lobby→start handshake and graceful finish.
 const PER_TURN_SLACK = parseInt(__ENV.PER_TURN_SLACK || '45');
 const HOLD_FIXED_BUFFER = parseInt(__ENV.HOLD_FIXED_BUFFER || '180');
+
+// Room-formation robustness. Previously the host only started once it saw ALL
+// PLAYERS_PER_ROOM players. Under a ramp, a room's players are different VUs
+// with staggered start times, so a predictable fraction of rooms never assembled
+// all N in time and aborted at the 60s lobby timeout — capping completion at
+// ~73% REGARDLESS of server load (a harness ceiling, not a server limit).
+//
+// Instead, start once MIN_PLAYERS_TO_START are present, after a START_GRACE_MS
+// window that lets stragglers join. This mirrors a real host and makes
+// game_completion_rate track SERVER capacity. Set MIN_PLAYERS_TO_START =
+// PLAYERS_PER_ROOM to restore the old strict behaviour.
+const MIN_PLAYERS_TO_START = parseInt(__ENV.MIN_PLAYERS_TO_START || '2');
+const START_GRACE_MS = parseInt(__ENV.START_GRACE_MS || '8000');
 const HOLD_SECONDS =
   NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + PER_TURN_SLACK) + HOLD_FIXED_BUFFER;
 
@@ -204,6 +217,7 @@ export default function () {
     let turnActive = false;
     let drawingActive = false;
     let guessingActive = false;
+    let startArmed = false; // host: ensures the start sequence is scheduled once
 
     function sendMsg(msg) {
       try { socket.send(JSON.stringify(msg)); messagesSent.add(1); } catch (e) { errorCount.add(1); }
@@ -267,17 +281,19 @@ export default function () {
     function handleLobby(msg) {
       if (msg.type === 'player_list' && msg.payload) {
         const count = msg.payload.players.length;
-        if (isHost && count >= PLAYERS_PER_ROOM) {
+        // Arm the start sequence ONCE, the first time we reach the minimum. We
+        // then wait START_GRACE_MS for stragglers and start with whoever is
+        // present (up to PLAYERS_PER_ROOM), instead of requiring all N — which
+        // some rooms never reach under a staggered arrival ramp.
+        if (isHost && !startArmed && count >= MIN_PLAYERS_TO_START) {
+          startArmed = true;
+          sendMsg({ type: 'update_settings', payload: { num_rounds: NUM_ROUNDS, turn_duration: TURN_DURATION, max_players: PLAYERS_PER_ROOM } });
+          sendMsg({ type: 'toggle_ready', payload: {} });
           socket.setTimeout(function () {
             if (state !== 'lobby') return;
-            sendMsg({ type: 'update_settings', payload: { num_rounds: NUM_ROUNDS, turn_duration: TURN_DURATION, max_players: PLAYERS_PER_ROOM } });
-            sendMsg({ type: 'toggle_ready', payload: {} });
-            socket.setTimeout(function () {
-              if (state !== 'lobby') return;
-              gameStartTime = Date.now(); sendMsg({ type: 'start_game', payload: {} });
-              gamesStarted.add(1); state = 'waiting_start';
-            }, Math.floor(randomBetween(2000, 3000)));
-          }, Math.floor(randomBetween(500, 1000)));
+            gameStartTime = Date.now(); sendMsg({ type: 'start_game', payload: {} });
+            gamesStarted.add(1); state = 'waiting_start';
+          }, START_GRACE_MS);
         }
       } else if (msg.type === 'game_started' || msg.type === 'turn_started' || msg.type === 'word_choices' || msg.type === 'drawer_selecting') {
         state = 'playing'; handlePlaying(msg);
