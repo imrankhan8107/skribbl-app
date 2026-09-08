@@ -810,9 +810,46 @@ pinned by `?room`; misroutes self-heal via `redirect` → `?gw` reconnect.
 - **Scales further:** compose/nginx now run **4 gateways** to use more of the box
   (at 10k/20Hz only ~24 of 32 cores were in use across gw+nginx+workers).
 
+## 4 gateways CLEARED the 20Hz saturation — near-linear scaling confirmed
+
+Re-ran the exact 10k/20Hz storm with **4 gateways** (up from 2). The saturation
+vanished:
+
+| Metric | 2 gateways | 4 gateways (fleet total) |
+|--------|-----------|--------------------------|
+| **Game completion** | 98.55% | **100.00%** |
+| **fanout_dropped.lossy** | ~525,000,000 | **~4,600,000** (99.1% reduction) |
+| **fanout_dropped.control** | 453 | **0** |
+| WS connect success | 98.83% | 100.00% |
+| http_req_failed (coord) | 36.72% | **0.47%** |
+| Per-gateway CPU (avg) | 458–590% | **240–302%** each |
+| room_create p95 | 677ms | 536ms |
+
+Doubling the gateways (2→4) roughly **halved per-gateway CPU** and cut lossy drops
+by **~99%** (525M → 4.6M) while eliminating control drops entirely (453 → 0) at
+the same offered load — the definitive proof that fan-out scales ~linearly with
+gateway count. The remaining ~4.6M lossy drops were confined to a single gateway
+(gateway4, which also caught more of the arrival burst); the other three dropped
+nothing. The per-process wall (~5.6 cores) is irrelevant to node capacity once you
+run enough processes.
+
+Notes:
+- **Peak (not avg) CPU** still shows gateway1 at ~976% and nginx at ~1600% —
+  these are the **arrival-burst** spikes (10k connecting during the ramp), not
+  steady-state fan-out. Steady-state per-gateway avg (~250–300%) is comfortable.
+- **nginx is now a visible cost** (~186% avg, burst ~1600%) fronting 4 gateways +
+  all coord HTTP on one box — a factor for multi-box planning.
+
+## Revised capacity (single c5a.8xlarge, 4 gateways)
+
+- **20 Hz storm: 10,000 concurrent players/node at 100% completion**, lossy drops
+  cut ~99% vs 2 gateways (525M → 4.6M, confined to one gateway), zero control drops.
+- Realistic 5 Hz has even more headroom.
+- The limiter is now the single box's total cores (gw + nginx + workers), not any
+  one gateway process. Next lever is **gateways on separate instances**.
+
 ## Next
 
-- Re-run 10k/20Hz on **4 gateways** — expect lossy drops to fall sharply and
-  `fanout_dropped.control` → 0, demonstrating near-linear horizontal scaling.
-- Then gateways on **separate instances** for true multi-box scaling beyond one
-  host's core count.
+- Push past 10k (12.5k–15k @ 20Hz) on 4 gateways to find the new node ceiling.
+- Move gateways to **separate instances** for true multi-box scaling beyond one
+  host's core count; nginx/ALB fronts them with the same room-sticky hash.

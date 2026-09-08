@@ -111,8 +111,9 @@ higher throughput than any prior run. The server was never the limiter.
 |----------|--------|
 | **7500 @ 5 Hz** | **100% completion**, 0 drops, join/create p95 ≤ 8ms, 63.9k msg/s |
 | **10000 @ 5 Hz** | **98.5% completion**; small connect-burst stress (116 WS fails, coord-HTTP timeouts); game plane healthy |
-| **10000 @ 20 Hz storm** | **98.5% completion** but fan-out SATURATED: ~525M strokes dropped (lossy), 453 control drops, gateways at ~900–976% each (~18 cores combined peak). This is the true fan-out edge. |
-| Control plane (connect/create/join) | Sub-10ms p95 at 7500; degrades to ~270–677ms p95 only during the 10k arrival burst |
+| **10000 @ 20 Hz storm, 2 gateways** | 98.5% completion but fan-out SATURATED: ~525M strokes dropped (lossy), 453 control drops, gateways ~900–976% each. The 2-gateway edge. |
+| **10000 @ 20 Hz storm, 4 gateways** | **100% completion; lossy drops cut ~99% (525M → 4.6M), control drops 0**, per-gateway CPU halved to ~250–300% avg. Doubling gateways cleared the saturation — near-linear scaling. |
+| Control plane (connect/create/join) | Sub-10ms p95 at 7500; degrades to ~270–536ms p95 only during the 10k arrival burst |
 
 ### The bottleneck is per-PROCESS fan-out CPU, and it scales horizontally
 
