@@ -137,15 +137,25 @@ function publishRoomCode(roomIndex, roomCode) {
   });
 }
 
+// pollRoomCode discovers a room's code published by its host. Uses EXPONENTIAL
+// BACKOFF with jitter instead of a fixed 500ms poll. The old fixed poll had
+// every joiner hit the coord endpoint ~60 times over 30s; at 12k joiners during
+// a burst that produced a ~215k-request storm that overwhelmed nginx (not the
+// game server) and failed ~4k joins at 15k VUs. Backoff + jitter collapses that
+// to a handful of requests per joiner and de-synchronizes the herd.
 function pollRoomCode(roomIndex, timeoutMs) {
   const start = Date.now();
-  for (let i = 0; i < Math.ceil(timeoutMs / 500); i++) {
+  let delayMs = 500;
+  const maxDelayMs = 4000;
+  while (Date.now() - start < timeoutMs) {
     const res = http.get(`${COORD_URL}/${roomIndex}`, { tags: { name: 'coord_poll' } });
     if (res.status === 200) {
       try { const b = JSON.parse(res.body); if (b.room_code) return b.room_code; } catch (e) {}
     }
-    if (Date.now() - start >= timeoutMs) break;
-    sleep(0.5);
+    // Exponential backoff with ±30% jitter, capped at maxDelayMs.
+    const jitter = delayMs * (0.7 + Math.random() * 0.6);
+    sleep(jitter / 1000);
+    delayMs = Math.min(maxDelayMs, delayMs * 1.8);
   }
   return null;
 }
