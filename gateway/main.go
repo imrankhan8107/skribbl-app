@@ -82,6 +82,14 @@ var (
 	// Served on a SEPARATE port so the public mux's catch-all static handler
 	// doesn't shadow /debug/pprof/. Bind to an internal/non-public port.
 	pprofPort = flag.Int("pprof-port", 0, "If >0, serve net/http/pprof on this port (diagnostics only)")
+	// Coordination/control-plane port. When >0, the k6 room-coordination
+	// endpoints (/rooms, /health, /ready, /live) are ALSO served on this
+	// separate listener so load-test coordination HTTP does NOT compete with
+	// client WebSocket upgrades at the shared nginx front door. This mirrors the
+	// real-systems practice of separating control-plane from data-plane. The
+	// coord data itself is Redis-backed, so any gateway's coord port sees the
+	// same room registry — clients can hit any one directly.
+	coordPort = flag.Int("coord-port", 0, "If >0, serve /rooms + health probes on this separate port (load-test control plane)")
 )
 
 // ─── Metrics ─────────────────────────────────────────────────────────────────
@@ -205,6 +213,28 @@ func main() {
 		Handler: mux,
 	}
 
+	// Dedicated control-plane listener for load-test coordination. Serves the
+	// coord + probe endpoints on a separate port/mux so they bypass nginx and
+	// don't contend with the WebSocket-upgrade burst on the data-plane port.
+	var coordServer *http.Server
+	if *coordPort > 0 {
+		coordMux := http.NewServeMux()
+		coordMux.HandleFunc("/rooms/", gw.HandleCoord)
+		coordMux.HandleFunc("/health", gw.HandleHealth)
+		coordMux.HandleFunc("/ready", gw.HandleReady)
+		coordMux.HandleFunc("/live", gw.HandleLive)
+		coordServer = &http.Server{
+			Addr:    fmt.Sprintf(":%d", *coordPort),
+			Handler: coordMux,
+		}
+		go func() {
+			log.Printf("[gateway] coord control-plane on :%d (/rooms, /health, /ready, /live)", *coordPort)
+			if err := coordServer.ListenAndServe(); err != http.ErrServerClosed {
+				log.Printf("[gateway] coord server error: %v", err)
+			}
+		}()
+	}
+
 	// Graceful shutdown
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
@@ -222,6 +252,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	server.Shutdown(ctx)
+	if coordServer != nil {
+		coordServer.Shutdown(ctx)
+	}
 	log.Println("[gateway] Stopped")
 }
 

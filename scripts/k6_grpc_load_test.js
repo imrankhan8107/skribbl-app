@@ -53,7 +53,13 @@ const errorCount = new Counter('errors');
 
 const HOST = __ENV.HOST || 'localhost';
 const PORT = __ENV.PORT || '9000';
-const COORD_URL = `http://${HOST}:${PORT}/rooms`;
+// Coordination runs on a SEPARATE gateway port (default 9100) that bypasses
+// nginx, so load-test coord HTTP does not contend with WebSocket upgrades at the
+// LB. Set COORD_PORT=0 to fall back to the data-plane PORT (single-gateway / no
+// nginx setups). Coord is Redis-backed, so any gateway's coord port works.
+const COORD_PORT = __ENV.COORD_PORT || '9100';
+const COORD_HOST_PORT = COORD_PORT === '0' ? PORT : COORD_PORT;
+const COORD_URL = `http://${HOST}:${COORD_HOST_PORT}/rooms`;
 const WS_URL = `ws://${HOST}:${PORT}/ws`;
 const PLAYERS_PER_ROOM = parseInt(__ENV.PLAYERS_PER_ROOM || '2');
 const TARGET_VUS = parseInt(__ENV.VUS || '100');
@@ -137,25 +143,21 @@ function publishRoomCode(roomIndex, roomCode) {
   });
 }
 
-// pollRoomCode discovers a room's code published by its host. Uses EXPONENTIAL
-// BACKOFF with jitter instead of a fixed 500ms poll. The old fixed poll had
-// every joiner hit the coord endpoint ~60 times over 30s; at 12k joiners during
-// a burst that produced a ~215k-request storm that overwhelmed nginx (not the
-// game server) and failed ~4k joins at 15k VUs. Backoff + jitter collapses that
-// to a handful of requests per joiner and de-synchronizes the herd.
+// pollRoomCode discovers a room's code published by its host, against the
+// DEDICATED coord port (bypasses nginx). Polls at a steady ~800ms with light
+// jitter to de-sync the herd. A 404 just means "host hasn't published yet" —
+// normal, so it's tagged separately and simply retried rather than treated as a
+// hard failure. (Earlier: a fixed 500ms poll THROUGH nginx stormed the LB at
+// 15k; over-aggressive 4s backoff then starved joiners. Fix is the dedicated
+// port + a sane steady interval, not extreme backoff.)
 function pollRoomCode(roomIndex, timeoutMs) {
   const start = Date.now();
-  let delayMs = 500;
-  const maxDelayMs = 4000;
   while (Date.now() - start < timeoutMs) {
     const res = http.get(`${COORD_URL}/${roomIndex}`, { tags: { name: 'coord_poll' } });
     if (res.status === 200) {
       try { const b = JSON.parse(res.body); if (b.room_code) return b.room_code; } catch (e) {}
     }
-    // Exponential backoff with ±30% jitter, capped at maxDelayMs.
-    const jitter = delayMs * (0.7 + Math.random() * 0.6);
-    sleep(jitter / 1000);
-    delayMs = Math.min(maxDelayMs, delayMs * 1.8);
+    sleep(0.8 + Math.random() * 0.4); // ~0.8-1.2s, jittered
   }
   return null;
 }
