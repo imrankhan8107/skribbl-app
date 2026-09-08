@@ -40,17 +40,30 @@ import exec from 'k6/execution';
 
 // ─── Metrics ────────────────────────────────────────────────────────────────
 
+// Connection metrics. connectionSuccess is per-VU INITIAL connect only (a
+// redirect reconnect does not add another sample), so it reads as a true
+// per-player connection-success rate rather than per-socket-open.
 const connectionSuccess = new Rate('ws_connection_success');
 const connectionFailures = new Counter('ws_connection_failures');
+const wsConnectRtt = new Trend('ws_connect_rtt', true); // connectStart -> onopen
+const redirectsFollowed = new Counter('redirects_followed');
 const roomCreateRtt = new Trend('room_create_rtt', true);
 const roomJoinRtt = new Trend('room_join_rtt', true);
 const roomsCreated = new Counter('rooms_created');
 const roomCreateFailures = new Counter('room_create_failures');
 const roomsJoined = new Counter('rooms_joined');
 const roomJoinFailures = new Counter('room_join_failures');
+// gameStartRequests = host sent start_game; gamesStarted = server actually
+// began (game_started/turn_started seen). Under load these diverge.
+const gameStartRequests = new Counter('game_start_requests');
 const gamesStarted = new Counter('games_started');
 const gamesCompleted = new Counter('games_completed');
 const gamesAborted = new Counter('games_aborted');
+// NOTE: this is a PER-PLAYER (per-VU session) rate, not per-game — every player
+// in a room completes/aborts together, so N players => N samples for 1 game.
+// Named accordingly to avoid the earlier "game completion" misreading.
+const sessionCompletionRate = new Rate('player_session_completion_rate');
+// True per-GAME completion: only the host records one sample per room.
 const gameCompletionRate = new Rate('game_completion_rate');
 const messagesSent = new Counter('messages_sent');
 const messagesReceived = new Counter('messages_received');
@@ -132,7 +145,9 @@ export const options = {
   },
   thresholds: {
     ws_connection_success: ['rate>0.95'],
+    // Per-game completion (host-tracked) is the meaningful success signal.
     game_completion_rate: ['rate>0.70'],
+    player_session_completion_rate: ['rate>0.70'],
     room_create_rtt: ['p(95)<5000'],
     room_join_rtt: ['p(95)<5000'],
   },
@@ -246,6 +261,8 @@ export default function () {
   let strokeTimer = null;
   let guessTimer = null;
   let sessionEnded = false;
+  let connectAttempted = false; // gates per-player connect success/failure to the first attempt
+  let gameStartedCounted = false; // host-only, counts an actual server game-start once
 
   // Open the socket (async, event-loop driven). runConnection wires all handlers
   // and returns immediately; the k6/websockets event loop keeps the VU iteration
@@ -266,14 +283,26 @@ export default function () {
     function endSession(reason) {
       if (sessionEnded) return;
       sessionEnded = true;
-      if (reason === 'completed') { gameCompleted = true; gamesCompleted.add(1); gameCompletionRate.add(1); }
-      else { gamesAborted.add(1); gameCompletionRate.add(0); }
+      const completed = reason === 'completed';
+      if (completed) { gameCompleted = true; gamesCompleted.add(1); }
+      else { gamesAborted.add(1); }
+      // Per-PLAYER session outcome (every VU records one sample).
+      sessionCompletionRate.add(completed ? 1 : 0);
+      // Per-GAME outcome recorded ONCE per room, by the host only, so N players
+      // in a room count as a single game — a true game-completion rate.
+      if (isHost) { gameCompletionRate.add(completed ? 1 : 0); }
       stopLoops();
       try { socket.close(); } catch (e) { /* ignore */ }
     }
 
     socket.onopen = function () {
-      connectionSuccess.add(1);
+      // Record connection success + RTT only for the INITIAL connect, not for a
+      // redirect reconnect (which would double-count a single player).
+      if (!connectAttempted) {
+        connectAttempted = true;
+        connectionSuccess.add(1);
+        wsConnectRtt.add(Date.now() - connectStart);
+      }
       if (isHost) {
         sendMsg({ type: 'create_room', payload: { name: playerName } });
         setTimeout(function () { if (state === 'connecting') { roomCreateFailures.add(1); endSession('error'); } }, 10000);
@@ -287,7 +316,11 @@ export default function () {
 
     socket.onerror = function (e) {
       connectionFailures.add(1); errorCount.add(1);
-      connectionSuccess.add(0); gameCompletionRate.add(0);
+      // Count a per-player connection failure only if we never connected.
+      if (!connectAttempted) {
+        connectAttempted = true;
+        connectionSuccess.add(0);
+      }
     };
 
     socket.onclose = function () { stopLoops(); };
@@ -301,6 +334,7 @@ export default function () {
         if (msg.payload && msg.payload.gateway_id && redirectAttempts < 3) {
           redirectGw = msg.payload.gateway_id;
           redirectAttempts++;
+          redirectsFollowed.add(1);
           try { socket.close(); } catch (er) { /* ignore */ }
           runConnection(); // reconnect to the owning gateway
           return;
@@ -345,17 +379,24 @@ export default function () {
           setTimeout(function () {
             if (state !== 'lobby') return;
             sendMsg({ type: 'start_game', payload: {} });
-            gamesStarted.add(1); state = 'waiting_start';
+            gameStartRequests.add(1); // request sent (not yet confirmed by server)
+            state = 'waiting_start';
           }, START_GRACE_MS);
         }
       } else if (msg.type === 'game_started' || msg.type === 'turn_started' || msg.type === 'word_choices' || msg.type === 'drawer_selecting') {
-        state = 'playing'; handlePlaying(msg);
+        markGameStarted(); state = 'playing'; handlePlaying(msg);
       } else if (msg.type === 'game_over') { endSession('completed'); }
+    }
+
+    // Count an ACTUAL server-confirmed game start once per room (host only), so
+    // games_started reflects games the server really began, not start_game sends.
+    function markGameStarted() {
+      if (isHost && !gameStartedCounted) { gameStartedCounted = true; gamesStarted.add(1); }
     }
 
     function handleWaitingStart(msg) {
       if (msg.type === 'game_started' || msg.type === 'turn_started' || msg.type === 'word_choices' || msg.type === 'drawer_selecting') {
-        state = 'playing'; handlePlaying(msg);
+        markGameStarted(); state = 'playing'; handlePlaying(msg);
       } else if (msg.type === 'game_over') { endSession('completed'); }
       else if (msg.type === 'error') { endSession('error'); }
     }
