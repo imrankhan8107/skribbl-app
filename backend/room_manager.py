@@ -132,22 +132,28 @@ class RoomManager:
         self.rooms[room_code] = room
         self._player_to_room[player_id] = room_code
 
-        # Register room ownership and subscribe in Redis (no-op if not configured)
+        # Register room ownership and subscribe in Redis (no-op if not configured).
+        # These four registrations are INDEPENDENT writes, so issue them
+        # concurrently with asyncio.gather instead of five sequential round-trips.
+        # create_room is processed inline on a per-worker gRPC stream (sequential
+        # `async for`), so serial Redis RTTs here directly serialize room creation
+        # and produce the multi-second create tail observed under a connect burst.
+        # Parallelizing collapses ~5 RTTs of head-of-line blocking to ~1.
         if redis_pubsub.is_redis_enabled():
-            await redis_pubsub.register_room_with_ttl(room_code)
-            await redis_pubsub.register_room_worker(room_code)
-            await redis_pubsub.subscribe_room(room_code)
-            # Publish room info for cross-worker discovery
-            await redis_pubsub.set_room_info(room_code, {
-                "state": room.state.value,
-                "player_count": len(room.players),
-                "config": self._serialize_config(room.config),
-                "host_id": player_id,
-            })
-            # Report updated load
-            await redis_pubsub.report_worker_load(
-                len([r for r in self.rooms.values() if not r.is_proxy]),
-                sum(len(r.players) for r in self.rooms.values()),
+            await asyncio.gather(
+                redis_pubsub.register_room_with_ttl(room_code),
+                redis_pubsub.register_room_worker(room_code),
+                redis_pubsub.subscribe_room(room_code),
+                redis_pubsub.set_room_info(room_code, {
+                    "state": room.state.value,
+                    "player_count": len(room.players),
+                    "config": self._serialize_config(room.config),
+                    "host_id": player_id,
+                }),
+                redis_pubsub.report_worker_load(
+                    len([r for r in self.rooms.values() if not r.is_proxy]),
+                    sum(len(r.players) for r in self.rooms.values()),
+                ),
             )
 
         return {
