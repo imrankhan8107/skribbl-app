@@ -745,3 +745,74 @@ Reran 7500 / 5 Hz from the in-VPC generator with `RAMP_SECONDS=90` (arrivals spr
 | messages_received/s | 36,381 | 36,148 |
 
 **Identical.** Ramping arrival changed nothing → the 7500 limit is **steady-state gateway fan-out CPU (~35-36k msg/s)**, not the connect burst or peak concurrency. Confirmed across all runs: the gateway saturates at ~35k msg/s of fan-out regardless of arrival pattern, worker count, or how the volume is produced (few fast drawers vs many slow). Raising capacity therefore requires reducing fan-out volume (stroke coalescing) or adding fan-out capacity (bigger instance / horizontal gateways) — arrival shaping does not help.
+
+
+---
+
+# Addendum 6: Horizontal gateways + harness fix — the "73% ceiling" was fake (Sep 8, 2026)
+
+**Host:** single **c5a.8xlarge** (32 vCPU / 62 GB). Stack: nginx → 2 balanced Go
+gateways (room-sticky, Path A) → 20 Python workers → Redis. k6 from an in-VPC
+generator (private IP).
+
+## The prior ~73% completion was a k6 harness artifact, not a server limit
+
+Every earlier run landed at a suspiciously stable 72–73% completion regardless of
+load, gateway count, or optimization. Two harness bugs caused it:
+
+1. **Per-VU arrival ramp** smeared a single room's 5 players across the whole
+   `RAMP_SECONDS`, so a room rarely had its full roster present at once.
+2. **Joiner sleeps grew with room index** (`2 + roomIndex*0.1`s) — up to +150s for
+   high-index rooms at 1500 rooms — stranding late rooms entirely.
+
+Rooms that never assembled all 5 players aborted at the 60s lobby timeout →
+~27% structural abort, independent of the server.
+
+**Fix:** ramp arrival **per room** (a room's whole roster shares one ramp offset,
+arriving within ~1s) and drop the room-index-proportional sleeps. Result:
+
+| Run | Completion | Notes |
+|-----|-----------|-------|
+| 7500 @ 5 Hz, per-VU ramp (old) | 72.8% | harness artifact |
+| **7500 @ 5 Hz, per-room ramp (fixed)** | **100.0%** | 0 drops, 63.9k msg/s, join p95 8ms |
+
+The server had headroom all along.
+
+## Horizontal scaling validated — the wall was per-PROCESS
+
+| Run | Completion | Fan-out | Gateway CPU (avg / max) | Verdict |
+|-----|-----------|---------|--------------------------|---------|
+| 7500 @ 5 Hz | 100% | 0 drops | gw1 ~340% / gw2 ~283% | clean, headroom |
+| 10000 @ 5 Hz | 98.5% | minor connect-burst stress | — | connect burst, not fan-out |
+| **10000 @ 20 Hz storm** | **98.5%** | **~525M lossy dropped, 453 control** | **gw1 590/976%, gw2 458/804%** | **fan-out SATURATED** |
+
+Key numbers at the 10k/20Hz saturation point:
+- **Combined gateway peak ~1780% (~18 cores)** vs the old **single-process
+  ~556% wall → ~3.2× throughput** from running 2 gateways. Splitting parallelizes
+  the syscall-bound fan-out across cores exactly as the pprof profile predicted.
+- **Class-aware backpressure held:** 525M lossy strokes shed to keep games alive
+  (98.5% completed); `fanout_dropped.control` stayed 0 until the very edge (453),
+  the correct "you've pushed a gateway past its ceiling" signal.
+- `nginx` ~306% avg / 736% peak — a real but secondary cost of the LB hop.
+
+## Room ownership balances across gateways (`cid` fix)
+
+`create_room` connections carry a high-cardinality `?cid` folded into the nginx
+consistent-hash, so creators/room-ownership spread across gateways even from one
+k6 source IP. Balance improved from ~1.8× (700/392%) to ~1.2× (590/458%). Joiners
+pinned by `?room`; misroutes self-heal via `redirect` → `?gw` reconnect.
+
+## Revised per-node capacity (single c5a.8xlarge, 2 gateways)
+
+- **Realistic ~5 Hz:** ≥10,000 concurrent players/node at ~98–100% completion.
+- **20 Hz storm:** ~7,500–8,000 clean; 10,000 saturates fan-out (strokes shed,
+  games still complete via lossy backpressure).
+- **Scales further:** compose/nginx now run **4 gateways** to use more of the box
+  (at 10k/20Hz only ~24 of 32 cores were in use across gw+nginx+workers).
+
+## Next
+
+- Re-run 10k/20Hz on **4 gateways** — expect lossy drops to fall sharply and
+  `fanout_dropped.control` → 0, demonstrating near-linear horizontal scaling.
+- Then gateways on **separate instances** for true multi-box scaling beyond one
+  host's core count.

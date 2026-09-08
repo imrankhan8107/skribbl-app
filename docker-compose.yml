@@ -84,6 +84,44 @@ services:
     networks:
       - skribbl-net
 
+  gateway3:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    command: ["-port", "9000", "-redis", "redis://redis:6379", "-backends", "app:8000", "-static", "/static", "-pprof-port", "6060"]
+    environment:
+      - GATEWAY_ID=gateway3
+      - TRACE_ENABLED=${TRACE_ENABLED:-false}
+      - SEND_BUFFER=${SEND_BUFFER:-1024}
+    depends_on:
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_started
+    expose:
+      - "9000"
+    networks:
+      - skribbl-net
+
+  gateway4:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    command: ["-port", "9000", "-redis", "redis://redis:6379", "-backends", "app:8000", "-static", "/static", "-pprof-port", "6060"]
+    environment:
+      - GATEWAY_ID=gateway4
+      - TRACE_ENABLED=${TRACE_ENABLED:-false}
+      - SEND_BUFFER=${SEND_BUFFER:-1024}
+    depends_on:
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_started
+    expose:
+      - "9000"
+    networks:
+      - skribbl-net
+
   nginx:
     image: nginx:1.27-alpine
     volumes:
@@ -93,6 +131,8 @@ services:
     depends_on:
       - gateway1
       - gateway2
+      - gateway3
+      - gateway4
     networks:
       - skribbl-net
 

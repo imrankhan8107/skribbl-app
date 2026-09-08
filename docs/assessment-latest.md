@@ -86,17 +86,52 @@ split.
 
 ---
 
-## What the load tests actually proved (the part the prior assessment lacked)
+## What the load tests actually proved (UPDATED — horizontal gateways + harness fix)
 
-Full campaign in `docs/performance-test-report.md`. Single **c5a.4xlarge**
-(16 vCPU/32 GB), load driven from an **in-VPC** k6 generator (private IP):
+> **Major correction (2026-09-08):** the earlier "~5–6k/node, gateway fan-out is
+> a hard wall at ~35k msg/s" conclusion was based on a **single gateway process**
+> AND a **flawed k6 harness** that capped completion at ~73% for reasons that had
+> nothing to do with the server. Both have been fixed and re-measured. The wall
+> was *per-process*, not per-node; horizontal gateways scale past it, and the
+> "73% ceiling" was a test artifact.
+
+### The harness ceiling was fake
+
+Completion sat at a suspiciously stable ~72–73% across *every* prior run
+regardless of load or gateway count. Root cause: the k6 arrival ramp staggered
+**per VU**, smearing a single room's 5 players across the whole ramp, and joiner
+sleeps grew proportional to room index (up to +150s at 1500 rooms). Rooms never
+assembled their full roster in time and aborted. Fixing the ramp to be **per-room**
+(a room's whole roster arrives together) took completion to **100% at 7500** with
+higher throughput than any prior run. The server was never the limiter.
+
+### Measured on a single **c5a.8xlarge** (32 vCPU/62 GB), in-VPC k6, 2 balanced gateways behind nginx:
 
 | Workload | Result |
 |----------|--------|
-| Worst-case **30 Hz storm** | ~3000 concurrent clean; gateway CPU-saturated by 5000 |
-| Realistic **~5 Hz** | **~5000–6000 concurrent** (97% @ 5000; knee at 7500 = 73%) |
-| **Bottleneck** | **Gateway fan-out CPU, saturating at ~35k msg/s** — independent of arrival pattern, worker count, and how the volume is produced |
-| Control plane (connect/create/join) | **Never the limiter** — sub-10ms p95 even at 7500 |
+| **7500 @ 5 Hz** | **100% completion**, 0 drops, join/create p95 ≤ 8ms, 63.9k msg/s |
+| **10000 @ 5 Hz** | **98.5% completion**; small connect-burst stress (116 WS fails, coord-HTTP timeouts); game plane healthy |
+| **10000 @ 20 Hz storm** | **98.5% completion** but fan-out SATURATED: ~525M strokes dropped (lossy), 453 control drops, gateways at ~900–976% each (~18 cores combined peak). This is the true fan-out edge. |
+| Control plane (connect/create/join) | Sub-10ms p95 at 7500; degrades to ~270–677ms p95 only during the 10k arrival burst |
+
+### The bottleneck is per-PROCESS fan-out CPU, and it scales horizontally
+
+- A single gateway process caps at **~5.6 cores (~556%)** — the old "wall."
+- **Two balanced gateways reached ~1780% combined peak (~18 cores)** at 10k/20Hz
+  — **~3.2× the single-process ceiling.** Splitting genuinely parallelizes the
+  syscall-bound fan-out across cores, exactly as the pprof profile predicted.
+- **Class-aware backpressure works as designed under saturation:** at 10k/20Hz the
+  gateways shed 525M lossy strokes (drawings degrade) to keep games running —
+  98.5% still completed. Control drops stayed 0 until the very edge (453 at peak),
+  the signal that you've pushed one gateway past its individual ceiling.
+
+### Room ownership balances across gateways
+
+`create_room` connections now carry a high-cardinality `?cid` folded into the
+nginx consistent-hash, so creators (and thus room ownership) spread across
+gateways even from a single k6 source IP. Balance improved from ~1.8× (700/392%)
+to ~1.2× (590/458%). Joiners are pinned by `?room`; misroutes self-heal via
+`redirect` → `?gw` reconnect.
 
 Key empirical findings that must inform any scaling plan:
 - **The join-latency "failures" were the home load generator's network**, not the
@@ -184,17 +219,27 @@ syscalls-per-message (batching) or parallelizing across processes (horizontal).
 
 ---
 
-## Corrected verdict
+## Corrected verdict (updated 2026-09-08)
 
-A genuinely strong, well-architected real-time system. Load testing validated it
-end-to-end and pinned a **single, clear bottleneck: gateway fan-out CPU
-(~35k msg/s → ~5–6k concurrent players/node at realistic load)**, with the control
-plane and workers having ample headroom. The correct next steps are (1) raise
-fan-out capacity — bigger gateway instance now, horizontal gateways next (harder
-than it looks because `SessionRegistry` is per-instance) — and (2) cheap hardening
-(alerting, `/ready`/`/live`, Go test coverage, Redis persistence, graceful drain).
-Service discovery, HPA, Redis Cluster, and coalescing/compression are **eventual**
-items, not current limiters, and should not be front-loaded.
+A genuinely strong, well-architected real-time system whose scaling story is now
+**validated end-to-end**:
+
+- **The old "~5–6k/node hard wall" was a per-PROCESS limit, not per-node.**
+  Horizontal gateways (Path A: room-sticky routing) scale past it — 2 balanced
+  gateways delivered ~3.2× the single-process fan-out throughput.
+- **Realistic 5 Hz load: 100% completion at 7500, 98.5% at 10000** on one
+  32-vCPU box with two gateways — with the earlier harness artifact removed.
+- **20 Hz storm at 10000 is the real fan-out edge** — gateways saturate (~18
+  cores combined), lossy backpressure sheds strokes to protect completion (98.5%),
+  and control drops appear only at the very peak.
+- **Path A is B-ready:** the `room_gateway` ownership key + gateway registry are
+  the exact primitives a future Redis pub/sub relay (Path B) would reuse.
+
+Correct next steps: (1) **more gateway replicas** (now 4 in compose/nginx) and
+eventually **gateways on separate instances** for true multi-box scaling; (2)
+cheap hardening (alerting on `fanout_dropped.control > 0`, Go test coverage for
+the new routing/ownership logic, Redis persistence, graceful drain). Service
+discovery, HPA, and Redis Cluster remain eventual, not current, limiters.
 
 ### Corrections applied vs the prior version
 1. "Transparent proxy" → it's a connection-terminating gRPC multiplexer; WS proxy is fallback-only.
