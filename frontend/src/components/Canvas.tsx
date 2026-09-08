@@ -2,6 +2,7 @@ import { useRef, useEffect } from "react";
 import { useCanvas } from "../hooks/useCanvas";
 import { useWebSocket } from "../hooks/useWebSocket";
 import type { BrushSize } from "../hooks/useCanvas";
+import { subscribeDrawing } from "../context/drawingBus";
 import RoundTransition from "./RoundTransition";
 
 // ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@ export default function Canvas({
   onTransitionComplete,
 }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { send, gameState } = useWebSocket();
+  const { send } = useWebSocket();
   const {
     color,
     setColor,
@@ -72,20 +73,24 @@ export default function Canvas({
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }, []);
 
-  // Handle incoming drawing events from the server
+  // Subscribe to incoming drawing events from the server. Rendering happens the
+  // instant each event arrives (see drawingBus) so no segment is lost to React
+  // batching — the cause of the dashed/broken remote drawings.
   useEffect(() => {
-    if (!gameState.drawingEvent) return;
-    const { type, payload } = gameState.drawingEvent;
-    if (type === "stroke" && payload) {
-      const p = payload as { points: [number, number][]; color: string; size: number };
-      renderRemoteStroke(p);
-    } else if (type === "fill" && payload) {
-      const p = payload as { x: number; y: number; color: string };
-      renderRemoteFill(p);
-    } else if (type === "clear_canvas") {
-      clearCanvas();
-    }
-  }, [gameState.drawingEvent, renderRemoteStroke, renderRemoteFill, clearCanvas]);
+    const unsubscribe = subscribeDrawing((event) => {
+      const { type, payload } = event;
+      if (type === "stroke" && payload) {
+        const p = payload as { points: [number, number][]; color: string; size: number };
+        renderRemoteStroke(p);
+      } else if (type === "fill" && payload) {
+        const p = payload as { x: number; y: number; color: string };
+        renderRemoteFill(p);
+      } else if (type === "clear_canvas") {
+        clearCanvas();
+      }
+    });
+    return unsubscribe;
+  }, [renderRemoteStroke, renderRemoteFill, clearCanvas]);
 
   // Expose render methods for incoming server events via a ref-based approach
   // The parent Game page will call these when receiving stroke/fill/clear events

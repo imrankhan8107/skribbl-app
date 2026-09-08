@@ -1,5 +1,6 @@
 import React, { createContext, useReducer, useRef, useCallback, useEffect, useState } from "react";
 import type { GameState, Action, ChatMessage } from "../types";
+import { publishDrawing } from "./drawingBus";
 
 // ---------------------------------------------------------------------------
 // Initial state
@@ -298,13 +299,9 @@ export function gameReducer(state: GameState, action: Action): GameState {
     default: {
       // Handle custom local actions
       const act = action as unknown as { type: string; payload: unknown };
-      if (act.type === "DRAWING_EVENT") {
-        const event = act.payload as { type: string; payload: unknown };
-        return {
-          ...state,
-          drawingEvent: { ...event, id: Date.now() + Math.random() },
-        };
-      }
+      // NOTE: drawing events (stroke/fill/clear_canvas) no longer flow through
+      // the reducer — they are delivered synchronously via drawingBus so rapid
+      // bursts are never collapsed by React batching. See drawingBus.ts.
       if (act.type === "WORD_SELECTED") {
         const p = act.payload as { word: string };
         return {
@@ -478,12 +475,12 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
         const msg = JSON.parse(event.data);
         console.log("[WS] Received:", msg.type, msg.payload);
 
-        // Handle drawing events separately — store as drawingEvent
+        // Handle drawing events separately. Publish straight to the drawing bus
+        // so the canvas renders every segment in order, synchronously. Routing
+        // these through the reducer collapsed rapid bursts into a single slot
+        // (React batching), dropping intermediate strokes -> dashed drawings.
         if (msg.type === "stroke" || msg.type === "fill" || msg.type === "clear_canvas") {
-          dispatch({
-            type: "DRAWING_EVENT",
-            payload: { type: msg.type, payload: msg.payload },
-          } as unknown as Action);
+          publishDrawing({ type: msg.type, payload: msg.payload });
           return;
         }
 
