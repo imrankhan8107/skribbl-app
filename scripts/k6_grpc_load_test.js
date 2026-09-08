@@ -158,19 +158,29 @@ export default function () {
   const isHost = isHostVU(vu);
   const playerName = `k6_${isHost ? 'host' : 'p' + ((vu - 1) % PLAYERS_PER_ROOM)}_vu${vu}_r${roomIndex}`;
 
-  // Arrival ramp: stagger connection start across RAMP_SECONDS so 3000 VUs don't
-  // all connect in the same instant (a synthetic burst). VU n starts at
-  // (n/TARGET_VUS)*RAMP_SECONDS. Must extend HOLD_SECONDS/maxDuration budget by
-  // RAMP_SECONDS so late-arriving VUs still have time to finish their game.
+  // Arrival ramp — staggered BY ROOM, not by VU. All PLAYERS_PER_ROOM VUs of a
+  // room share the same ramp offset so a room's whole roster arrives together
+  // (within ~a second), rather than being smeared across the entire ramp. The
+  // previous per-VU ramp spread a single room's 5 players across RAMP_SECONDS,
+  // so late players joined after the game had already started/aborted — the
+  // real cause of the completion ceiling (NOT the server).
+  const totalRooms = Math.max(1, Math.ceil(TARGET_VUS / PLAYERS_PER_ROOM));
   if (RAMP_SECONDS > 0) {
-    sleep((vu - 1) / TARGET_VUS * RAMP_SECONDS);
+    // Base offset for this room, plus a tiny per-player jitter so the host still
+    // lands slightly before its joiners.
+    const roomOffset = (roomIndex / totalRooms) * RAMP_SECONDS;
+    sleep(roomOffset);
   }
 
   let coordRoomCode = null;
   if (isHost) {
-    sleep(roomIndex * 0.05 + Math.random() * 0.2);
+    // Host connects first; small fixed jitter, independent of room index.
+    sleep(Math.random() * 0.2);
   } else {
-    sleep(2 + roomIndex * 0.1 + Math.random() * 0.5);
+    // Joiners wait a short, CONSTANT window for the host to create+publish the
+    // room code (not proportional to roomIndex, which grew to 150s+ at high room
+    // counts and stranded late rooms). Then poll the coord endpoint.
+    sleep(1 + Math.random() * 0.5);
     coordRoomCode = pollRoomCode(roomIndex, 30000);
     if (!coordRoomCode) {
       roomJoinFailures.add(1); errorCount.add(1);
@@ -285,6 +295,11 @@ export default function () {
         // then wait START_GRACE_MS for stragglers and start with whoever is
         // present (up to PLAYERS_PER_ROOM), instead of requiring all N — which
         // some rooms never reach under a staggered arrival ramp.
+        // Arm ONCE when the minimum is present, then wait a grace window for
+        // the rest of the roster to arrive before starting. With per-room
+        // arrival (all a room's VUs ramp together) the full roster lands within
+        // the grace window, so games start with a stable player count and the
+        // late-joiner-into-started-game abort is avoided.
         if (isHost && !startArmed && count >= MIN_PLAYERS_TO_START) {
           startArmed = true;
           sendMsg({ type: 'update_settings', payload: { num_rounds: NUM_ROUNDS, turn_duration: TURN_DURATION, max_players: PLAYERS_PER_ROOM } });
