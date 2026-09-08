@@ -472,6 +472,13 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     const params = new URLSearchParams();
     if (roomCode) params.set("room", roomCode);
     if (redirectGatewayRef.current) params.set("gw", redirectGatewayRef.current);
+    // High-cardinality client id so create_room connections (which have no room
+    // code yet) spread evenly across gateways at the LB hash. Without this, all
+    // creators from one source IP hash to the same gateway, overloading it while
+    // peers sit idle. Only meaningful for creates; joiners are pinned by ?room.
+    if (!roomCode && !redirectGatewayRef.current) {
+      params.set("cid", Math.random().toString(36).slice(2) + Date.now().toString(36));
+    }
     const query = params.toString() ? `?${params.toString()}` : "";
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws${query}`);
     wsRef.current = ws;

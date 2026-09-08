@@ -180,8 +180,15 @@ export default function () {
 
   function buildWsUrl() {
     const params = [];
-    if (!isHost && coordRoomCode) params.push(`room=${encodeURIComponent(coordRoomCode)}`);
-    if (redirectGw) params.push(`gw=${encodeURIComponent(redirectGw)}`);
+    if (redirectGw) {
+      params.push(`gw=${encodeURIComponent(redirectGw)}`);
+    } else if (!isHost && coordRoomCode) {
+      params.push(`room=${encodeURIComponent(coordRoomCode)}`);
+    } else {
+      // Host / create_room: high-cardinality cid so creators spread across
+      // gateways at the LB hash instead of all landing on one (single source IP).
+      params.push(`cid=${vu}-${Math.random().toString(36).slice(2)}`);
+    }
     return params.length ? `${WS_URL}?${params.join('&')}` : WS_URL;
   }
 
