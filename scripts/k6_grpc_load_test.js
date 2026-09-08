@@ -169,7 +169,24 @@ export default function () {
   let gameCompleted = false;
   const connectStart = Date.now();
 
-  const res = ws.connect(WS_URL, { tags: { role: isHost ? 'host' : 'joiner' } }, function (socket) {
+  // Room-sticky routing (Path A): joiners include ?room=CODE so nginx
+  // consistent-hashes them onto the gateway that owns the room. Hosts
+  // (create_room) connect plain — no room exists yet. If a joiner still lands on
+  // a non-owning gateway, the server replies with a `redirect`; we reconnect
+  // pinned to the owner via ?gw=<id>. redirectGw carries that pin across the
+  // reconnect. At most a couple of redirects, so a small bounded loop suffices.
+  let redirectGw = null;
+  let redirectAttempts = 0;
+
+  function buildWsUrl() {
+    const params = [];
+    if (!isHost && coordRoomCode) params.push(`room=${encodeURIComponent(coordRoomCode)}`);
+    if (redirectGw) params.push(`gw=${encodeURIComponent(redirectGw)}`);
+    return params.length ? `${WS_URL}?${params.join('&')}` : WS_URL;
+  }
+
+  function runConnection() {
+  const res = ws.connect(buildWsUrl(), { tags: { role: isHost ? 'host' : 'joiner' } }, function (socket) {
     connectionSuccess.add(1);
 
     let state = 'connecting';
@@ -206,6 +223,15 @@ export default function () {
       messagesReceived.add(1);
       let msg; try { msg = JSON.parse(data); } catch (e) { return; }
       if (msg.type === 'ping') { sendMsg({ type: 'pong', payload: {} }); return; }
+      if (msg.type === 'redirect') {
+        // Owning gateway is elsewhere — pin to it and reconnect. Bounded to
+        // avoid a redirect loop if ownership is flapping.
+        if (msg.payload && msg.payload.gateway_id && redirectAttempts < 3) {
+          redirectGw = msg.payload.gateway_id;
+        }
+        socket.close();
+        return;
+      }
 
       switch (state) {
         case 'connecting': handleConnecting(msg); break;
@@ -323,6 +349,17 @@ export default function () {
 
   check(res, { 'WS connected': (r) => r && r.status === 101 });
   if (!res || res.status !== 101) { connectionSuccess.add(0); connectionFailures.add(1); gameCompletionRate.add(0); }
+  return res;
+  }
+
+  // Connect, following at most a few room-sticky redirects. redirectGw is set by
+  // the redirect handler; if unchanged after a connection, we're done.
+  do {
+    const prevGw = redirectGw;
+    runConnection();
+    if (redirectGw === prevGw) break; // no redirect requested this round
+    redirectAttempts++;
+  } while (redirectAttempts <= 3 && !gameCompleted);
 }
 
 // ─── Setup / Teardown ───────────────────────────────────────────────────────
