@@ -173,9 +173,12 @@ func main() {
 	// Cross-gateway room-sticky routing registry (Path A). Advertises this
 	// gateway and tracks room ownership so misrouted joiners get redirected to
 	// the gateway that owns their room.
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(context.Background())
+	defer cancelHeartbeat()
+
 	gw.gwRegistry = NewGatewayRegistry(rdb)
 	if gw.gwRegistry != nil {
-		go gw.gwRegistry.StartHeartbeat(context.Background())
+		go gw.gwRegistry.StartHeartbeat(heartbeatCtx)
 		if gw.streamManager != nil {
 			gw.streamManager.gwRegistry = gw.gwRegistry
 		}
@@ -248,7 +251,25 @@ func main() {
 	}()
 
 	<-stop
-	log.Println("[gateway] Shutting down...")
+	log.Println("[gateway] Shutting down: entering draining mode...")
+	gw.isDraining.Store(true)
+
+	// 1. Immediately cancel heartbeat to unregister gateway address from Redis
+	cancelHeartbeat()
+
+	// 2. Notify connected clients to reconnect and close WebSockets
+	if gw.sessionRegistry != nil {
+		closeNotification, _ := json.Marshal(map[string]interface{}{
+			"type": "gateway_draining",
+			"payload": map[string]string{
+				"action":  "reconnect",
+				"message": "Gateway is shutting down. Please reconnect.",
+			},
+		})
+		gw.sessionRegistry.CloseAll(closeNotification)
+	}
+
+	// 3. Gracefully stop HTTP servers
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	server.Shutdown(ctx)
@@ -267,6 +288,7 @@ type Gateway struct {
 	resolver        *WorkerResolver
 	upgrader        websocket.Upgrader
 	rrIndex         atomic.Uint64 // round-robin counter
+	isDraining      atomic.Bool   // set to true during graceful shutdown
 	mu              sync.Mutex
 	coordMap        map[string]string // in-memory fallback for coord (no Redis)
 	streamManager   *StreamManager    // gRPC stream manager (nil if gRPC not configured)
@@ -697,6 +719,12 @@ func (gw *Gateway) HandleLive(w http.ResponseWriter, r *http.Request) {
 // routing new connections here.
 func (gw *Gateway) HandleReady(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	if gw.isDraining.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"draining","ready":false}`))
+		return
+	}
 
 	// No Redis => single-gateway/dev mode: ready if the process is up.
 	if gw.redis == nil {

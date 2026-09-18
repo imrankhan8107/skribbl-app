@@ -1,0 +1,43 @@
+#!/bin/bash
+set -ex
+exec > /var/log/skribbl-lb-init.log 2>&1
+echo "=== Load Balancer initialization started at $(date) ==="
+
+# OS and TCP stack tuning for high-concurrency WebSocket load
+sysctl -w net.core.somaxconn=65535
+sysctl -w net.ipv4.tcp_max_syn_backlog=65535
+sysctl -w net.ipv4.ip_local_port_range="1024 65535"
+sysctl -w net.ipv4.tcp_tw_reuse=1
+echo "net.core.somaxconn=65535" >> /etc/sysctl.conf
+echo "net.ipv4.tcp_max_syn_backlog=65535" >> /etc/sysctl.conf
+echo "net.ipv4.ip_local_port_range=1024 65535" >> /etc/sysctl.conf
+echo "net.ipv4.tcp_tw_reuse=1" >> /etc/sysctl.conf
+
+echo "* soft nofile 131072" >> /etc/security/limits.conf
+echo "* hard nofile 131072" >> /etc/security/limits.conf
+echo "root soft nofile 131072" >> /etc/security/limits.conf
+echo "root hard nofile 131072" >> /etc/security/limits.conf
+
+# Install Nginx
+apt-get update -y
+apt-get install -y nginx
+
+# Write rendered Nginx configuration
+cat <<'EOF' > /etc/nginx/nginx.conf
+${nginx_config}
+EOF
+
+# Ensure systemd allows Nginx high file descriptor limits
+mkdir -p /etc/systemd/system/nginx.service.d/
+cat <<'EOF' > /etc/systemd/system/nginx.service.d/limits.conf
+[Service]
+LimitNOFILE=131072
+EOF
+
+systemctl daemon-reload
+nginx -t
+systemctl enable nginx
+systemctl restart nginx
+
+echo "=== Load Balancer initialization finished at $(date) ==="
+

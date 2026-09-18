@@ -244,3 +244,23 @@ func (sr *SessionRegistry) writePump(session *PlayerSession) {
 		}
 	}
 }
+
+// CloseAll closes all active sessions in the registry, sending a closing message.
+func (sr *SessionRegistry) CloseAll(closeMsg []byte) {
+	sr.mu.Lock()
+	sessions := make([]*PlayerSession, 0, len(sr.sessions))
+	for _, s := range sr.sessions {
+		sessions = append(sessions, s)
+	}
+	sr.mu.Unlock()
+
+	for _, s := range sessions {
+		if s.Conn != nil {
+			if len(closeMsg) > 0 {
+				_ = s.Conn.WriteMessage(websocket.TextMessage, closeMsg)
+			}
+			_ = s.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseGoingAway, "gateway draining"))
+			_ = s.Conn.Close()
+		}
+	}
+}

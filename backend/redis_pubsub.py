@@ -26,6 +26,7 @@ _redis_client = None
 _pubsub = None
 _subscriber_task: Optional[asyncio.Task] = None
 _message_handler: Optional[Callable[[str, dict], Awaitable[None]]] = None
+_is_draining: bool = False
 
 
 async def init_redis(handler: Callable[[str, dict], Awaitable[None]]) -> None:
@@ -400,6 +401,92 @@ def is_redis_enabled() -> bool:
 def get_worker_id() -> str:
     """Get this worker's unique ID."""
     return WORKER_ID
+
+
+def is_worker_draining() -> bool:
+    """Check if this worker is in draining mode."""
+    return _is_draining
+
+
+async def set_worker_draining() -> None:
+    """Mark this worker as draining and delist from Redis immediately.
+
+    Removes this worker from worker_alive, worker_load, and worker_addresses,
+    and sets worker_draining flag so gateways immediately stop routing new rooms
+    to this worker.
+    """
+    global _is_draining
+    _is_draining = True
+    logger.info("Worker %s entering draining mode", WORKER_ID)
+    if _redis_client is None:
+        return
+    try:
+        await asyncio.gather(
+            unregister_worker_address(),
+            _redis_client.zrem("worker_load", WORKER_ID),
+            _redis_client.set(f"worker_draining:{WORKER_ID}", "1", ex=60),
+            return_exceptions=True,
+        )
+    except Exception as e:
+        logger.warning("Error delisting worker during drain: %s", e)
+
+
+async def save_room_snapshot(room_code: str, snapshot_data: dict, ttl_seconds: int = 600) -> None:
+    """Save serialized room state to Redis and release worker ownership.
+
+    Args:
+        room_code: 6-char room code.
+        snapshot_data: Dict containing full serializable room state.
+        ttl_seconds: Snapshot TTL in seconds (default 10 minutes).
+    """
+    if _redis_client is None:
+        return
+    try:
+        payload = json.dumps(snapshot_data)
+        await asyncio.gather(
+            _redis_client.set(f"room_snapshot:{room_code}", payload, ex=ttl_seconds),
+            _redis_client.delete(f"room_owner:{room_code}"),
+            _redis_client.hdel("room_workers", room_code),
+            return_exceptions=True,
+        )
+        logger.info("Saved room snapshot to Redis: %s (TTL=%ds)", room_code, ttl_seconds)
+    except Exception as e:
+        logger.error("Failed to save room snapshot for %s: %s", room_code, e)
+
+
+async def get_room_snapshot(room_code: str) -> Optional[dict]:
+    """Retrieve and deserialize a room snapshot from Redis if available.
+
+    Args:
+        room_code: 6-char room code.
+
+    Returns:
+        Deserialized snapshot dict, or None if no snapshot exists.
+    """
+    if _redis_client is None:
+        return None
+    try:
+        data = await _redis_client.get(f"room_snapshot:{room_code}")
+        if data:
+            return json.loads(data)
+    except Exception as e:
+        logger.error("Failed to get room snapshot for %s: %s", room_code, e)
+    return None
+
+
+async def delete_room_snapshot(room_code: str) -> None:
+    """Delete a room snapshot after successful restoration.
+
+    Args:
+        room_code: 6-char room code.
+    """
+    if _redis_client is None:
+        return
+    try:
+        await _redis_client.delete(f"room_snapshot:{room_code}")
+        logger.info("Deleted room snapshot for %s", room_code)
+    except Exception as e:
+        logger.warning("Failed to delete room snapshot for %s: %s", room_code, e)
 
 
 async def shutdown_redis() -> None:

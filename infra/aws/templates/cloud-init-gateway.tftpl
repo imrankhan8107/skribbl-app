@@ -1,0 +1,55 @@
+#!/bin/bash
+set -ex
+exec > /var/log/skribbl-gateway-init.log 2>&1
+echo "=== Gateway initialization started at $(date) ==="
+
+# OS tuning
+sysctl -w net.core.somaxconn=65535
+echo "net.core.somaxconn=65535" >> /etc/sysctl.conf
+echo "* soft nofile 65535" >> /etc/security/limits.conf
+echo "* hard nofile 65535" >> /etc/security/limits.conf
+
+# Install Docker and Git
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg git
+
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io
+
+systemctl enable docker
+systemctl start docker
+
+# Clone repository
+cd /opt
+git clone -b ${git_branch} ${git_repo_url} skribbl-app
+cd skribbl-app
+
+# Retrieve instance private IP via IMDSv2
+TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+
+# Build Gateway Docker image
+docker build -t skribbl-gateway -f gateway/Dockerfile .
+
+# Run Gateway container on host network
+docker run -d \
+  --name gateway \
+  --restart always \
+  --net host \
+  --ulimit nofile=65535:65535 \
+  -e GATEWAY_ID=${gateway_id} \
+  -e GATEWAY_ADDR=$PRIVATE_IP \
+  -e SEND_BUFFER=1024 \
+  skribbl-gateway \
+  -port 9000 \
+  -coord-port 9100 \
+  -redis redis://${redis_ip}:6379 \
+  -static /static
+
+echo "=== Gateway initialization finished at $(date) ==="
+

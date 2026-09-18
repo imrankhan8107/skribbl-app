@@ -1,0 +1,29 @@
+# AWS Region
+aws_region = "us-east-1"
+
+# Resource naming prefix
+app_name = "skribbl"
+
+# Your public IP address/CIDR for strict ingress (e.g. "203.0.113.45/32")
+# Find your IP via: curl ifconfig.me
+# ZERO ports will be open to 0.0.0.0/0
+allowed_cidr = "YOUR_PUBLIC_IP/32"
+
+# Path or content of SSH public key for EC2 instance access
+# e.g. "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
+ssh_public_key = "ssh-ed25519 AAAA..."
+
+# Scale of the cluster
+gateway_count = 2
+worker_count  = 2
+
+# Instance types (t3.medium for dev/cost-saving, c5a.xlarge for heavy benchmarks)
+lb_instance_type      = "t3.medium"
+gateway_instance_type = "t3.medium"
+worker_instance_type  = "t3.medium"
+redis_instance_type   = "t3.medium"
+
+# Git repository configuration
+git_repo_url = "https://github.com/imrankhan8107/skribbl-app.git"
+git_branch   = "feature/go-gateway"
+

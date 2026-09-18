@@ -17,9 +17,10 @@ import os
 import random
 import string
 import time
+from collections import deque
 from uuid import uuid4
 
-from backend.models import GameConfig, Player, Room, RoomState
+from backend.models import GameConfig, Player, Room, RoomState, TurnState
 from backend import redis_pubsub
 from backend.virtual_transport import VirtualTransport
 
@@ -101,6 +102,128 @@ class RoomManager:
             "max_players": config.max_players,
         }
 
+    def snapshot_room(self, room: Room) -> dict:
+        """Serialize a room's complete state into a JSON-safe dict for Redis snapshotting."""
+        turn_data = None
+        if room.turn is not None:
+            turn_data = {
+                "drawer_id": room.turn.drawer_id,
+                "word": room.turn.word,
+                "hint": room.turn.hint,
+                "start_time": room.turn.start_time,
+                "word_choices": room.turn.word_choices,
+                "guess_order": list(room.turn.guess_order),
+            }
+
+        return {
+            "code": room.code,
+            "host_id": room.host_id,
+            "state": room.state.value,
+            "current_round": room.current_round,
+            "drawer_index": room.drawer_index,
+            "config": self._serialize_config(room.config),
+            "used_words": list(room.used_words),
+            "word_pool": list(room.word_pool),
+            "players": [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "score": p.score,
+                    "has_guessed": p.has_guessed,
+                    "is_connected": p.is_connected,
+                    "is_ready": p.is_ready,
+                    "disconnect_time": p.disconnect_time,
+                }
+                for p in room.players
+            ],
+            "turn": turn_data,
+            "snapshot_time": time.time(),
+        }
+
+    def restore_room(self, snapshot: dict) -> Room:
+        """Reconstruct a Room instance from a snapshot dict and register in local maps."""
+        cfg_data = snapshot.get("config", {})
+        config = GameConfig(
+            num_rounds=cfg_data.get("num_rounds", 3),
+            turn_duration=cfg_data.get("turn_duration", 80),
+            max_players=cfg_data.get("max_players", 8),
+        )
+
+        state_str = snapshot.get("state", "lobby")
+        try:
+            state = RoomState(state_str)
+        except ValueError:
+            state = RoomState.LOBBY
+
+        room = Room(
+            code=snapshot["code"],
+            host_id=snapshot["host_id"],
+            config=config,
+            state=state,
+            current_round=snapshot.get("current_round", 0),
+            drawer_index=snapshot.get("drawer_index", 0),
+            used_words=set(snapshot.get("used_words", [])),
+            word_pool=deque(snapshot.get("word_pool", [])),
+        )
+
+        for p_data in snapshot.get("players", []):
+            p = Player(
+                id=p_data["id"],
+                name=p_data["name"],
+                score=p_data.get("score", 0),
+                has_guessed=p_data.get("has_guessed", False),
+                is_connected=False,  # Reconnection restores connection
+                is_ready=p_data.get("is_ready", False),
+                disconnect_time=p_data.get("disconnect_time") or time.time(),
+            )
+            room.add_player(p)
+            self._player_to_room[p.id] = room.code
+
+        turn_data = snapshot.get("turn")
+        if turn_data and state in (RoomState.PLAYING, RoomState.WORD_SELECTION):
+            room.turn = TurnState(
+                drawer_id=turn_data["drawer_id"],
+                word=turn_data["word"],
+                hint=turn_data.get("hint", []),
+                start_time=time.time(),  # refresh start time for restored turn
+                word_choices=turn_data.get("word_choices", []),
+                guess_order=turn_data.get("guess_order", []),
+            )
+
+        self.rooms[room.code] = room
+        logger.info(
+            "Restored room %s from snapshot (state=%s, players=%d)",
+            room.code, room.state.value, len(room.players)
+        )
+        return room
+
+    async def drain_active_rooms(self) -> int:
+        """Snapshot all locally owned non-proxy rooms to Redis and notify players."""
+        count = 0
+        local_rooms = [r for r in self.rooms.values() if not r.is_proxy]
+        logger.info("Draining %d local active rooms...", len(local_rooms))
+        for room in local_rooms:
+            try:
+                # Notify players in this room to trigger reconnect
+                await self.broadcast(
+                    room.code,
+                    {
+                        "type": "worker_draining",
+                        "payload": {
+                            "room_code": room.code,
+                            "action": "reconnect",
+                            "message": "Worker is restarting. Reconnecting...",
+                        },
+                    },
+                )
+                # Snapshot room to Redis
+                snapshot = self.snapshot_room(room)
+                await redis_pubsub.save_room_snapshot(room.code, snapshot)
+                count += 1
+            except Exception as e:
+                logger.error("Failed to drain room %s: %s", room.code, e)
+        return count
+
     async def create_room(self, name: str, websocket) -> dict:
         """Create a new room with the given player as host.
 
@@ -111,6 +234,15 @@ class RoomManager:
         Returns:
             A dict payload for the `room_created` message, or an error payload.
         """
+        # Reject new room creations if worker is draining
+        if redis_pubsub.is_worker_draining():
+            return {
+                "type": "error",
+                "payload": {
+                    "code": "WORKER_DRAINING",
+                    "message": "Worker is draining and cannot accept new rooms",
+                },
+            }
         # Validate name
         name_error = self._validate_name(name)
         if name_error:
@@ -210,6 +342,20 @@ class RoomManager:
                 return await self._join_room_remote(
                     room_code, name, websocket, owner_worker
                 )
+
+        # Check if a snapshot exists from a drained or restarted worker
+        if redis_pubsub.is_redis_enabled():
+            snapshot = await redis_pubsub.get_room_snapshot(room_code)
+            if snapshot:
+                room = self.restore_room(snapshot)
+                await redis_pubsub.delete_room_snapshot(room_code)
+                await asyncio.gather(
+                    redis_pubsub.register_room_with_ttl(room_code),
+                    redis_pubsub.register_room_worker(room_code),
+                    redis_pubsub.subscribe_room(room_code),
+                    return_exceptions=True,
+                )
+                return await self._join_room_local(room, room_code, name, websocket)
 
         return {
             "type": "error",
@@ -457,6 +603,18 @@ class RoomManager:
             A dict payload for the reconnection response, or an error payload.
         """
         room = self.rooms.get(room_code)
+        if room is None and redis_pubsub.is_redis_enabled():
+            snapshot = await redis_pubsub.get_room_snapshot(room_code)
+            if snapshot:
+                room = self.restore_room(snapshot)
+                await redis_pubsub.delete_room_snapshot(room_code)
+                await asyncio.gather(
+                    redis_pubsub.register_room_with_ttl(room_code),
+                    redis_pubsub.register_room_worker(room_code),
+                    redis_pubsub.subscribe_room(room_code),
+                    return_exceptions=True,
+                )
+
         if room is None:
             return {
                 "type": "error",

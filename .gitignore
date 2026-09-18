@@ -42,3 +42,5 @@ dockerstats-samples.txt
 docker-stats*.log
 app-logs.txt
 *.prof
+roadmaps
+LEARNING_ROADMAP.md

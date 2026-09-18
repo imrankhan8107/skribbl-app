@@ -237,8 +237,19 @@ func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, room
 	// Resolve which worker owns this room
 	workerID := m.resolveRoomOwner(roomCode)
 	if workerID == "" {
-		debugf("[mux:join] NO_BACKEND room=%s resolveRoomOwner returned empty", roomCode)
-		return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Cannot resolve worker for room "+roomCode)
+		// Room may have been snapshotted during worker drain (releasing worker ownership).
+		// Select a live least-loaded worker to adopt and restore it from snapshot.
+		workerID = m.selectLeastLoadedWorker()
+		if workerID == "" {
+			debugf("[mux:join] NO_BACKEND room=%s no worker available", roomCode)
+			return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Cannot resolve worker for room "+roomCode)
+		}
+		debugf("[mux:join] room=%s unowned (possible snapshot) -> assigning to %s", roomCode, workerID)
+		if m.gateway.redis != nil {
+			_ = m.gateway.redis.Set(context.Background(), "room_owner:"+roomCode, workerID, 1*time.Hour).Err()
+			_ = m.gateway.redis.HSet(context.Background(), "room_workers", roomCode, workerID).Err()
+		}
+		m.ownerCache.Store(roomCode, ownerCacheEntry{worker: workerID, fetchedAt: time.Now()})
 	}
 	debugf("[mux:join] player=%s room=%s resolveRoomOwner=%s", session.PlayerID, roomCode, workerID)
 
@@ -248,7 +259,23 @@ func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, room
 	alive, err := m.isGRPCAlive(ctx, workerID)
 	if err != nil || !alive {
 		debugf("[mux:join] player=%s room=%s worker=%s gRPC alive check failed alive=%t err=%v", session.PlayerID, roomCode, workerID, alive, err)
-		return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Backend worker gRPC unavailable for room "+roomCode)
+		// Worker is not alive (drained or died).
+		// Evict from caches and re-assign room to a live least-loaded worker.
+		m.ownerCache.Delete(roomCode)
+		m.liveCache.Delete(workerID)
+
+		newWorkerID := m.selectLeastLoadedWorker()
+		if newWorkerID != "" && newWorkerID != workerID {
+			debugf("[mux:join] player=%s room=%s reassigning dead worker %s -> %s", session.PlayerID, roomCode, workerID, newWorkerID)
+			workerID = newWorkerID
+			if m.gateway.redis != nil {
+				_ = m.gateway.redis.Set(context.Background(), "room_owner:"+roomCode, newWorkerID, 1*time.Hour).Err()
+				_ = m.gateway.redis.HSet(context.Background(), "room_workers", roomCode, newWorkerID).Err()
+			}
+			m.ownerCache.Store(roomCode, ownerCacheEntry{worker: newWorkerID, fetchedAt: time.Now()})
+		} else {
+			return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Backend worker gRPC unavailable for room "+roomCode)
+		}
 	}
 	debugf("[mux:join] player=%s room=%s worker=%s gRPC alive ok", session.PlayerID, roomCode, workerID)
 

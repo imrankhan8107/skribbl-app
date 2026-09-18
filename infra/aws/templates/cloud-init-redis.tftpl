@@ -1,0 +1,40 @@
+#!/bin/bash
+set -ex
+exec > /var/log/skribbl-redis-init.log 2>&1
+echo "=== Redis initialization started at $(date) ==="
+
+# OS tuning
+sysctl -w net.core.somaxconn=65535
+sysctl -w vm.overcommit_memory=1
+echo "net.core.somaxconn=65535" >> /etc/sysctl.conf
+echo "vm.overcommit_memory=1" >> /etc/sysctl.conf
+
+# Install Docker
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg
+
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io
+
+systemctl enable docker
+systemctl start docker
+
+# Create data directory
+mkdir -p /data/redis
+
+# Run Redis 7 with AOF persistence
+docker run -d \
+  --name redis \
+  --restart always \
+  --net host \
+  -v /data/redis:/data \
+  redis:7-alpine \
+  redis-server --appendonly yes --protected-mode no
+
+echo "=== Redis initialization finished at $(date) ==="
+

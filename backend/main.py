@@ -31,8 +31,8 @@ async def lifespan(app: FastAPI):
 
     # Register worker address for direct gateway routing
     if redis_pubsub.is_redis_enabled():
-        hostname = os.environ.get("HOSTNAME", "localhost")
-        await redis_pubsub.register_worker_address(hostname, 8000)
+        advertise_host = os.environ.get("WORKER_ADVERTISE_HOST") or os.environ.get("HOSTNAME", "localhost")
+        await redis_pubsub.register_worker_address(advertise_host, 8000)
 
     # Start gRPC server alongside FastAPI (same asyncio event loop)
     grpc_server = None
@@ -45,10 +45,10 @@ async def lifespan(app: FastAPI):
 
             # Register in Redis if available
             if redis_pubsub.is_redis_enabled():
-                hostname = os.environ.get("HOSTNAME", "localhost")
+                advertise_host = os.environ.get("WORKER_ADVERTISE_HOST") or os.environ.get("HOSTNAME", "localhost")
                 await grpc_registry.register_grpc_worker(
                     redis_pubsub.get_worker_id(),
-                    hostname,
+                    advertise_host,
                 )
                 grpc_ready = grpc_registry.is_grpc_registered()
         except Exception as e:
@@ -75,22 +75,39 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown: cancel load reporter and clean up
+    # Shutdown: enter draining phase
+    # 1. Delist from Redis immediately so gateways stop routing new rooms
+    if redis_pubsub.is_redis_enabled():
+        await redis_pubsub.set_worker_draining()
+
+    # 2. Cancel load reporter
     if load_task:
         load_task.cancel()
         try:
             await load_task
         except asyncio.CancelledError:
             pass
-    # Unregister gRPC address before shutting down Redis
+
+    # 3. Unregister gRPC worker address
     if grpc_ready:
         await grpc_registry.unregister_grpc_worker(
             redis_pubsub.get_worker_id(),
         )
-    # Stop gRPC server
+
+    # 4. Drain all active rooms: snapshot to Redis and notify players
+    try:
+        from backend.ws_handler import room_manager
+        drained_count = await room_manager.drain_active_rooms()
+        logger.info("Drained %d rooms during shutdown", drained_count)
+    except Exception as e:
+        logger.error("Error draining rooms during shutdown: %s", e)
+
+    # 5. Stop gRPC server
     if grpc_server:
         await grpc_server.stop(grace=5)
         logger.info("gRPC server stopped")
+
+    # 6. Shut down Redis
     await redis_pubsub.shutdown_redis()
     logger.info("Application shutdown (worker_id=%s)", redis_pubsub.get_worker_id())
 
@@ -138,15 +155,25 @@ if redis_pubsub.REDIS_URL:
 # Health endpoint — exposes worker status and gRPC metrics
 @app.get("/health")
 async def health_endpoint():
-    """Health check with gRPC stream metrics for operational dashboards."""
-    from backend.ws_handler import room_manager
+    """Health check with gRPC stream metrics and draining status."""
     grpc_metrics = get_grpc_metrics()
+    is_draining = redis_pubsub.is_worker_draining()
     return {
-        "status": "ok",
+        "status": "draining" if is_draining else "ok",
         "worker_id": redis_pubsub.get_worker_id(),
         "grpc_enabled": grpc_registry.GRPC_ENABLED,
+        "draining": is_draining,
         **grpc_metrics,
     }
+
+
+@app.get("/ready")
+async def ready_endpoint(response: Response):
+    """Readiness probe. Returns 503 if draining, 200 if ready to accept traffic."""
+    if redis_pubsub.is_worker_draining():
+        response.status_code = 503
+        return {"status": "draining", "ready": False}
+    return {"status": "ready", "ready": True}
 
 
 # WebSocket endpoint — delegates to ws_handler for full message dispatch

@@ -17,6 +17,12 @@
  *   # Full 10K (2000 rooms × 5 players) — requires beefy infra
  *   k6 run -e VUS=10000 -e PLAYERS_PER_ROOM=5 scripts/k6_grpc_load_test.js
  *
+ *   # 12.5K @ 20Hz (2500 rooms × 5 players) — multi-gateway distributed load
+ *   k6 run -e VUS=12500 -e PLAYERS_PER_ROOM=5 -e STROKE_HZ=20 -e RAMP_SECONDS=60 scripts/k6_grpc_load_test.js
+ *
+ *   # 15K @ 20Hz (3000 rooms × 5 players) — peak multi-box AWS target
+ *   k6 run -e VUS=15000 -e PLAYERS_PER_ROOM=5 -e STROKE_HZ=20 -e RAMP_SECONDS=90 scripts/k6_grpc_load_test.js
+ *
  * == Validates Requirements ==
  * Requirements vs what this script enforces. The k6 THRESHOLDS are looser
  * engineering guardrails (so exploratory runs fail only on real regressions);
@@ -260,6 +266,7 @@ function strokeProfileLabel(hz) {
   if (hz <= 0) return 'connection/session test';
   if (hz <= 5) return 'realistic-ish drawing';
   if (hz <= 15) return 'heavy drawing';
+  if (hz <= 20) return 'high-intensity drawing (20Hz)';
   return 'stress test (fan-out)';
 }
 
