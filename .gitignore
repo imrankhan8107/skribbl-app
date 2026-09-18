@@ -22,8 +22,13 @@ Thumbs.db
 
 # Terraform
 infra/.terraform/
+infra/**/.terraform/
 infra/*.tfstate
-infra/*.tfstate.backup
+infra/**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
 infra/.terraform.lock.hcl
 
 mock-tests/**
