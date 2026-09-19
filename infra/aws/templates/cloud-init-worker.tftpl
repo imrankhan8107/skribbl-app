@@ -56,8 +56,8 @@ for i in $(seq 1 ${workers_per_host}); do
     -e TRACE_ENABLED=true \
     skribbl-worker
 
-  # Stream logs to a file in the background
-  docker logs -f "worker-$i" > /var/log/skribbl/worker-$i.log 2>&1 &
+  # Stream filtered logs to a file in the background (only keeping errors/warnings to save space)
+  docker logs -f "worker-$i" 2>&1 | grep --line-buffered -iE "error|timeout|blocked|missed|fail|warn|exception" > /var/log/skribbl/worker-$i.log &
 done
 
 # Start a simple HTTP server to serve the logs directory on port 8080

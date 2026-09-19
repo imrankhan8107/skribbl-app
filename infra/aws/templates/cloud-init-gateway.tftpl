@@ -60,8 +60,8 @@ for i in $(seq 1 ${gateways_per_host}); do
     -redis redis://${redis_ip}:6379 \
     -static /static
 
-  # Stream logs to a file in the background
-  docker logs -f "gateway-$i" > /var/log/skribbl/gateway-$i.log 2>&1 &
+  # Stream filtered logs to a file in the background (only keeping errors/warnings to save space)
+  docker logs -f "gateway-$i" 2>&1 | grep --line-buffered -iE "error|timeout|blocked|missed|fail|warn|exception" > /var/log/skribbl/gateway-$i.log &
 done
 
 # Start a simple HTTP server to serve the logs directory on port 8080
