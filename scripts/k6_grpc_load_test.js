@@ -150,13 +150,14 @@ function recordError(category) {
 
 const HOST = __ENV.HOST || 'localhost';
 const PORT = __ENV.PORT || '9000';
+const COORD_HOST = __ENV.COORD_HOST || HOST;
 // Coordination runs on a SEPARATE gateway port (default 9100) that bypasses
 // nginx, so load-test coord HTTP does not contend with WebSocket upgrades at the
 // LB. Set COORD_PORT=0 to fall back to the data-plane PORT (single-gateway / no
 // nginx setups). Coord is Redis-backed, so any gateway's coord port works.
 const COORD_PORT = __ENV.COORD_PORT || '9100';
 const COORD_HOST_PORT = COORD_PORT === '0' ? PORT : COORD_PORT;
-const COORD_URL = `http://${HOST}:${COORD_HOST_PORT}/rooms`;
+const COORD_URL = `http://${COORD_HOST}:${COORD_HOST_PORT}/rooms`;
 const WS_URL = `ws://${HOST}:${PORT}/ws`;
 const PLAYERS_PER_ROOM = parseInt(__ENV.PLAYERS_PER_ROOM || '2');
 const TARGET_VUS = parseInt(__ENV.VUS || '100');
@@ -206,7 +207,11 @@ const HOLD_FIXED_BUFFER = parseInt(__ENV.HOLD_FIXED_BUFFER || '180');
 // game_completion_rate track SERVER capacity. Set MIN_PLAYERS_TO_START =
 // PLAYERS_PER_ROOM to restore the old strict behaviour.
 const MIN_PLAYERS_TO_START = parseInt(__ENV.MIN_PLAYERS_TO_START || '2');
-const START_GRACE_MS = parseInt(__ENV.START_GRACE_MS || '8000');
+// Handshake and room creation/join patience timeout during connection spikes.
+// At 10k-15k VUs, a 10s timeout aborts rooms prematurely if handshakes queue
+// for 11-15s during arrival ramp bursts. Default to 30s.
+const CONNECT_TIMEOUT_MS = parseInt(__ENV.CONNECT_TIMEOUT_MS || '30000');
+
 const HOLD_SECONDS =
   NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + PER_TURN_SLACK) + HOLD_FIXED_BUFFER;
 
@@ -452,10 +457,10 @@ export default function () {
       }
       if (isHost) {
         sendMsg({ type: 'create_room', payload: { name: playerName } });
-        setTimeout(function () { if (state === 'connecting') { roomCreateFailures.add(1); recordError('timeout'); endSession('error'); } }, 10000);
+        setTimeout(function () { if (state === 'connecting') { roomCreateFailures.add(1); recordError('timeout'); endSession('error'); } }, CONNECT_TIMEOUT_MS);
       } else {
         sendMsg({ type: 'join_room', payload: { name: playerName, room_code: roomCode } });
-        setTimeout(function () { if (state === 'connecting') { roomJoinFailures.add(1); recordError('timeout'); endSession('error'); } }, 10000);
+        setTimeout(function () { if (state === 'connecting') { roomJoinFailures.add(1); recordError('timeout'); endSession('error'); } }, CONNECT_TIMEOUT_MS);
       }
       // Overall session patience timer — game never reached game_over in time.
       setTimeout(function () { if (!gameCompleted) { recordError('timeout'); endSession('aborted'); } }, HOLD_SECONDS * 1000);
@@ -595,7 +600,8 @@ export default function () {
           isDrawer = msg.payload && msg.payload.drawer_id === playerId;
           turnActive = false; stopLoops(); break;
         case 'word_choices':
-          if (isDrawer && msg.payload && msg.payload.choices && msg.payload.choices.length > 0) {
+          isDrawer = true; // Receiving word_choices proves we are the designated drawer
+          if (msg.payload && msg.payload.choices && msg.payload.choices.length > 0) {
             const choices = msg.payload.choices;
             setTimeout(function () { sendMsg({ type: 'select_word', payload: { word: choices[Math.floor(Math.random() * choices.length)] } }); }, Math.floor(randomBetween(1000, 3000)));
           } break;
