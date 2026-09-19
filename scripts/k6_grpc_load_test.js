@@ -207,6 +207,7 @@ const HOLD_FIXED_BUFFER = parseInt(__ENV.HOLD_FIXED_BUFFER || '180');
 // game_completion_rate track SERVER capacity. Set MIN_PLAYERS_TO_START =
 // PLAYERS_PER_ROOM to restore the old strict behaviour.
 const MIN_PLAYERS_TO_START = parseInt(__ENV.MIN_PLAYERS_TO_START || '2');
+const START_GRACE_MS = parseInt(__ENV.START_GRACE_MS || '8000');
 // Handshake and room creation/join patience timeout during connection spikes.
 // At 10k-15k VUs, a 10s timeout aborts rooms prematurely if handshakes queue
 // for 11-15s during arrival ramp bursts. Default to 30s.
