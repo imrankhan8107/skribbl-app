@@ -326,17 +326,6 @@ func (m *Multiplexer) selectLeastLoadedWorker() string {
 		return ""
 	}
 
-	// Short-TTL cache: the load ranking changes slowly (workers report every
-	// ~10s), so caching for ~1s avoids a Redis ZRANGE per create during a burst.
-	m.leastLoadedMu.Lock()
-	if m.leastLoaded != "" && time.Since(m.leastLoadedAt) < m.leastLoadedTTL {
-		w := m.leastLoaded
-		m.leastLoadedMu.Unlock()
-		tracef("[trace] GW_SELECT_WORKER worker=%s (cached)", w)
-		return w
-	}
-	m.leastLoadedMu.Unlock()
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -346,13 +335,16 @@ func (m *Multiplexer) selectLeastLoadedWorker() string {
 		return ""
 	}
 
-	m.leastLoadedMu.Lock()
-	m.leastLoaded = result[0]
-	m.leastLoadedAt = time.Now()
-	m.leastLoadedMu.Unlock()
+	workerID := result[0]
 
-	tracef("[trace] GW_SELECT_WORKER worker=%s", result[0])
-	return result[0]
+	// Proactively increment the load score in Redis (5 = expected players per room).
+	// Because workers only report their true connection_count every 10 seconds, this
+	// synthetic bump prevents all 9 Gateways from dogpiling the exact same worker
+	// for 10 straight seconds (which melts its event loop).
+	_ = m.gateway.redis.ZIncrBy(ctx, "worker_load", 5, workerID)
+
+	tracef("[trace] GW_SELECT_WORKER worker=%s", workerID)
+	return workerID
 }
 
 // resolveRoomOwner looks up which worker owns a room via Redis, with a local
