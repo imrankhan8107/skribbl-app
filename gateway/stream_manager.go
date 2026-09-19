@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/redis/go-redis/v9"
 	"github.com/skribbl-app/gateway/proto"
 	"google.golang.org/grpc"
@@ -86,6 +88,7 @@ type StreamManager struct {
 	fanOut     *FanOutDispatcher // For starting receive loops on new streams
 	registry   *SessionRegistry  // For receiver disconnect handling
 	gwRegistry *GatewayRegistry  // For claiming room ownership on room_created (room-sticky routing)
+	sf         singleflight.Group // Prevents thundering herd on GetOrCreate
 
 	// grpcAddrCache caches workerID -> gRPC address so resolveGRPCAddress isn't
 	// a Redis round-trip per new room during a connect burst. Worker gRPC
@@ -117,76 +120,78 @@ func (sm *StreamManager) GetOrCreate(workerID string) (*RoomStream, error) {
 	}
 	sm.mu.RUnlock()
 
-	// Slow path: create the stream. CRITICAL: resolve + dial + open the stream
-	// OUTSIDE the write lock. Previously this I/O ran while holding the single
-	// global sm.mu, so under a connect burst hundreds of room creations
-	// serialized behind one lock each doing a Redis call + gRPC dial — the cause
-	// of multi-second room_join_rtt tails. Now all rooms dial concurrently, and
-	// the lock is held only for the O(1) map check-and-insert below.
-	addr, err := sm.resolveGRPCAddress(workerID)
-	if err != nil {
-		return nil, fmt.Errorf("resolve worker %s gRPC address: %w", workerID, err)
-	}
+	// Slow path: create the stream.
+	// Use singleflight to ensure that if 1,000 players join at once, we only
+	// open exactly ONE gRPC connection to the Python worker, rather than hammering
+	// it with 1,000 concurrent handshakes and throwing away 999 of them.
+	res, err, _ := sm.sf.Do(workerID, func() (interface{}, error) {
+		// Re-check after waiting for singleflight
+		sm.mu.RLock()
+		if rs, ok := sm.streams[workerID]; ok && rs.isHealthy() {
+			sm.mu.RUnlock()
+			return rs, nil
+		}
+		sm.mu.RUnlock()
 
-	conn, err := grpc.NewClient(addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("dial worker %s at %s: %w", workerID, addr, err)
-	}
+		addr, err := sm.resolveGRPCAddress(workerID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve worker %s gRPC address: %w", workerID, err)
+		}
 
-	client := proto.NewGameServiceClient(conn)
-	ctx, cancel := context.WithCancel(context.Background())
-	stream, err := client.RoomStream(ctx)
-	if err != nil {
-		cancel()
-		conn.Close()
-		return nil, fmt.Errorf("open RoomStream to %s: %w", workerID, err)
-	}
+		conn, err := grpc.NewClient(addr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("dial worker %s at %s: %w", workerID, addr, err)
+		}
 
-	rs := &RoomStream{
-		workerID: workerID,
-		roomCode: workerID, // Keep this field for backwards compatibility in logging
-		conn:     conn,
-		stream:   stream,
-		sendCh:   make(chan *proto.GameMessage, sm.config.BufferSize),
-		cancel:   cancel,
-		done:     make(chan struct{}),
-	}
-	rs.state.Store(streamStateHealthy)
-	rs.markActivity()
+		client := proto.NewGameServiceClient(conn)
+		ctx, cancel := context.WithCancel(context.Background())
+		stream, err := client.RoomStream(ctx)
+		if err != nil {
+			cancel()
+			conn.Close()
+			return nil, fmt.Errorf("open RoomStream to %s: %w", workerID, err)
+		}
 
-	sm.mu.Lock()
-	// Check if another goroutine won the race to create the stream.
-	// If so, discard ours and use theirs to prevent duplicate streams.
-	if existing, ok := sm.streams[workerID]; ok && existing.isHealthy() {
+		rs := &RoomStream{
+			workerID: workerID,
+			roomCode: workerID, // Keep this field for backwards compatibility in logging
+			conn:     conn,
+			stream:   stream,
+			sendCh:   make(chan *proto.GameMessage, sm.config.BufferSize),
+			cancel:   cancel,
+			done:     make(chan struct{}),
+		}
+		rs.state.Store(streamStateHealthy)
+		
+		sm.mu.Lock()
+		if existing, ok := sm.streams[workerID]; ok {
+			sm.closeStreamLocked(existing)
+			delete(sm.streams, workerID)
+		}
+		sm.streams[workerID] = rs
 		sm.mu.Unlock()
-		cancel()
-		conn.Close()
-		existing.markActivity()
-		debugf("[sm:getorcreate] worker=%s RACE LOST, reused existing", workerID)
-		return existing, nil
+
+		// Start the send + receive loop goroutines.
+		go sm.sendLoop(rs)
+		if sm.fanOut != nil {
+			go startStreamReceiver(sm, sm.fanOut, sm.registry, rs)
+		}
+
+		return rs, nil
+	})
+
+	if err != nil {
+		return nil, err
 	}
 
-	// Evict any dead/unhealthy stream still mapped for this worker.
-	if existing, ok := sm.streams[workerID]; ok {
-		sm.closeStreamLocked(existing)
-		delete(sm.streams, workerID)
-	}
-
-	sm.streams[workerID] = rs
-	sm.mu.Unlock()
-
-	// Start the send + receive loop goroutines (outside the lock).
-	go sm.sendLoop(rs)
-	if sm.fanOut != nil {
-		go startStreamReceiver(sm, sm.fanOut, sm.registry, rs)
-	}
-
-	debugf("[stream_manager] Stream opened worker=%s addr=%s", workerID, addr)
-	debugf("[sm:getorcreate] worker=%s CREATED", workerID)
+	rs := res.(*RoomStream)
+	rs.markActivity()
+	debugf("[sm:getorcreate] worker=%s RETURNED (singleflight)", workerID)
 	return rs, nil
 }
+
 
 // Send routes a GameMessage to the RoomStream for the given worker.
 // Returns an error if no stream exists or the stream is unhealthy.
