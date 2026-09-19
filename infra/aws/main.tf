@@ -114,11 +114,20 @@ resource "aws_security_group" "cluster" {
     cidr_blocks = [var.allowed_cidr]
   }
 
-  # 6. Gateway Coord control plane (9100-9120) strictly from allowed_cidr (for k6 load tests)
+  # Gateway Coord control plane (9100-9120) strictly from allowed_cidr (for k6 load tests)
   ingress {
     description = "Gateway coord control plane strictly from allowed IP"
     from_port   = 9100
     to_port     = 9120
+    protocol    = "tcp"
+    cidr_blocks = [var.allowed_cidr]
+  }
+
+  # Log server (8080) strictly from allowed_cidr
+  ingress {
+    description = "Log server strictly from allowed IP"
+    from_port   = 8080
+    to_port     = 8080
     protocol    = "tcp"
     cidr_blocks = [var.allowed_cidr]
   }

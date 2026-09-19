@@ -19,8 +19,23 @@ output "gateway_private_ips" {
 }
 
 output "worker_private_ips" {
-  description = "Private IPs of the Python Worker instances"
+  description = "Private IP addresses of Python Workers"
   value       = aws_instance.workers[*].private_ip
+}
+
+output "worker_public_ips" {
+  description = "Public IP addresses of Python Workers"
+  value       = aws_instance.workers[*].public_ip
+}
+
+output "gateway_log_urls" {
+  description = "URLs to download gateway logs"
+  value       = [for ip in aws_instance.gateways[*].public_ip : "http://${ip}:8080/"]
+}
+
+output "worker_log_urls" {
+  description = "URLs to download worker logs"
+  value       = [for ip in aws_instance.workers[*].public_ip : "http://${ip}:8080/"]
 }
 
 output "redis_private_ip" {

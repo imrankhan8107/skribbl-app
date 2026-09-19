@@ -36,6 +36,8 @@ PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.25
 # Build Gateway Docker image
 docker build -t skribbl-gateway -f gateway/Dockerfile .
 
+mkdir -p /var/log/skribbl
+
 # Run ${gateways_per_host} Gateway containers on host network
 for i in $(seq 1 ${gateways_per_host}); do
   OFFSET=$(( (i - 1) * 2 ))
@@ -56,7 +58,13 @@ for i in $(seq 1 ${gateways_per_host}); do
     -coord-port $COORD_PORT \
     -redis redis://${redis_ip}:6379 \
     -static /static
+
+  # Stream logs to a file in the background
+  docker logs -f "gateway-$i" > /var/log/skribbl/gateway-$i.log 2>&1 &
 done
+
+# Start a simple HTTP server to serve the logs directory on port 8080
+nohup python3 -m http.server 8080 --directory /var/log/skribbl > /dev/null 2>&1 &
 
 echo "=== Gateway initialization finished at $(date) ==="
 
