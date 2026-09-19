@@ -545,7 +545,12 @@ export default function () {
         state = 'lobby';
         setTimeout(function () { if (state === 'lobby') sendReady(); }, Math.floor(randomBetween(1000, 2000)));
         setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') { recordError('timeout'); endSession('aborted'); } }, LOBBY_TIMEOUT_MS);
-      } else if (msg.type === 'error') { recordError('protocol'); endSession('error'); }
+      } else if (msg.type === 'error') {
+        if (errorsProtocol.count < 10) {
+          console.error(`[SERVER_ERROR] code=${msg.payload && msg.payload.code} message=${msg.payload && msg.payload.message}`);
+        }
+        recordError('protocol'); endSession('error');
+      }
     }
 
     function handleLobby(msg) {
