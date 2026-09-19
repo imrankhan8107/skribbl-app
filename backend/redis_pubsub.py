@@ -45,13 +45,19 @@ async def init_redis(handler: Callable[[str, dict], Awaitable[None]]) -> None:
 
     try:
         import redis.asyncio as aioredis
-        _redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
+        _redis_client = aioredis.from_url(REDIS_URL, decode_responses=True, max_connections=100)
         _pubsub = _redis_client.pubsub()
         _message_handler = handler
         # Subscribe to a worker-specific control channel to establish the connection
         await _pubsub.subscribe(f"worker:{WORKER_ID}")
         _subscriber_task = asyncio.create_task(_subscribe_loop())
         logger.info("Redis pub/sub initialized (worker=%s): %s", WORKER_ID, REDIS_URL)
+        
+        # Initialize worker_load in Redis with random jitter to 
+        # prevent thundering herd when multiple workers start at 0
+        import random
+        initial_load = random.uniform(0, 0.99)
+        await _redis_client.zadd("worker_load", {WORKER_ID: initial_load})
     except ImportError:
         logger.warning("redis package not installed — running in single-worker mode")
     except Exception as e:
@@ -60,6 +66,7 @@ async def init_redis(handler: Callable[[str, dict], Awaitable[None]]) -> None:
 
 async def _subscribe_loop():
     """Background task that listens for messages from Redis pub/sub."""
+    global _pubsub
     while True:
         try:
             message = await _pubsub.get_message(
@@ -83,8 +90,26 @@ async def _subscribe_loop():
             break
         except Exception as e:
             logger.error("Redis subscriber error: %s", e)
-            await asyncio.sleep(1)
-            await asyncio.sleep(1)
+            await asyncio.sleep(1.0)
+            # Re-establish pubsub connection
+            if _pubsub:
+                try:
+                    await _pubsub.close()
+                except Exception:
+                    pass
+            if _redis_client:
+                _pubsub = _redis_client.pubsub()
+                # Re-subscribe to all active channels
+                import backend.ws_handler
+                channels = [f"worker:{WORKER_ID}"]
+                for room_code in backend.ws_handler.room_manager.rooms.keys():
+                    channels.append(f"room:{room_code}")
+                try:
+                    if channels:
+                        async with _subscribe_lock:
+                            await _pubsub.subscribe(*channels)
+                except Exception as sub_e:
+                    logger.error("Failed to re-subscribe: %s", sub_e)
 
 
 async def subscribe_room(room_code: str) -> None:
@@ -259,8 +284,11 @@ async def report_worker_load(room_count: int, connection_count: int) -> None:
     """
     if _redis_client is None:
         return
-    # Score = connection_count (route new rooms to least-connected worker)
-    await _redis_client.zadd("worker_load", {WORKER_ID: connection_count})
+    import random
+    # Score = connection_count + random jitter to prevent exact ties
+    # and reduce thundering herds on a single worker during load spikes
+    jitter = random.uniform(0, 0.99)
+    await _redis_client.zadd("worker_load", {WORKER_ID: connection_count + jitter})
     # Also store room count for observability
     await _redis_client.hset("worker_rooms", WORKER_ID, room_count)
     # TTL: if a worker crashes, its entry expires after 60s

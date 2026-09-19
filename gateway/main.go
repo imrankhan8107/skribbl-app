@@ -24,6 +24,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	_ "net/http/pprof" // registers /debug/pprof handlers on DefaultServeMux (served only when -pprof-port>0)
 	"net/url"
@@ -193,7 +194,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", gw.HandleWebSocket)
 	mux.HandleFunc("/health", gw.HandleHealth)
-	mux.HandleFunc("/live", gw.HandleLive)   // liveness probe (process is up)
+	mux.HandleFunc("/live", gw.HandleLive)    // liveness probe (process is up)
 	mux.HandleFunc("/ready", gw.HandleReady)  // readiness probe (Redis + ≥1 worker)
 	mux.HandleFunc("/rooms/", gw.HandleCoord) // Coord: GET/POST /rooms/{index}
 
@@ -559,12 +560,12 @@ func (gw *Gateway) leastLoadedWorkerID() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	result, err := gw.redis.ZRange(ctx, "worker_load", 0, 0).Result()
+	result, err := gw.redis.ZRange(ctx, "worker_load", 0, 4).Result()
 	if err != nil || len(result) == 0 {
 		return ""
 	}
 
-	return result[0]
+	return result[rand.Intn(len(result))]
 }
 
 // resolveWorkerAddr resolves a worker ID to its reachable address via the WorkerResolver.
