@@ -1,0 +1,80 @@
+#!/bin/bash
+set -ex
+exec > /var/log/skribbl-k6-init.log 2>&1
+echo "=== k6 Load Generator initialization started at $(date) ==="
+
+# 1. OS & TCP Kernel Tuning for High Concurrency
+cat << 'EOF' >> /etc/sysctl.conf
+fs.file-max = 2097152
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 65536
+net.ipv4.ip_local_port_range = 1024 65535
+net.ipv4.tcp_max_syn_backlog = 65536
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+EOF
+sysctl -p
+
+cat << 'EOF' >> /etc/security/limits.conf
+* soft nofile 131072
+* hard nofile 131072
+* soft nproc 65536
+* hard nproc 65536
+root soft nofile 131072
+root hard nofile 131072
+ubuntu soft nofile 131072
+ubuntu hard nofile 131072
+EOF
+
+# 2. Install Git and k6
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg git htop
+
+gpg -k
+gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | tee /etc/apt/sources.list.d/k6.list
+apt-get update -y
+apt-get install -y k6
+
+# 3. Clone Repository
+cd /home/ubuntu
+git clone -b ${git_branch} ${git_repo_url} skribbl-app
+chown -R ubuntu:ubuntu /home/ubuntu/skribbl-app
+
+cat << 'EOF' > /home/ubuntu/run-test.sh
+#!/bin/bash
+VUS=$${1:-100}
+PLAYERS=$${2:-2}
+HZ=$${3:-20}
+RAMP=$${4:-0}
+COORD_HOST=$${5:-${lb_private_ip}}
+COORD_PORT=$${6:-0}
+
+echo "=========================================================="
+echo " Starting Skribbl In-VPC k6 Load Test"
+echo " Target LB: http://${lb_private_ip}:80"
+echo " Coord: http://$COORD_HOST:$COORD_PORT/rooms"
+echo " VUs: $VUS | Players/Room: $PLAYERS | Stroke: $${HZ}Hz | Ramp: $${RAMP}s"
+echo "=========================================================="
+
+cd /home/ubuntu/skribbl-app
+k6 run \
+  -e HOST=${lb_private_ip} \
+  -e PORT=80 \
+  -e COORD_HOST=$COORD_HOST \
+  -e COORD_PORT=$COORD_PORT \
+  -e TURN_DURATION=30 \
+  -e VUS=$VUS \
+  -e PLAYERS_PER_ROOM=$PLAYERS \
+  -e STROKE_HZ=$HZ \
+  -e RAMP_SECONDS=$RAMP \
+  scripts/k6_grpc_load_test.js
+EOF
+
+chmod +x /home/ubuntu/run-test.sh
+chown ubuntu:ubuntu /home/ubuntu/run-test.sh
+
+echo "=== k6 Load Generator initialization finished at $(date) ==="
+

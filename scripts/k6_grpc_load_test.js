@@ -208,10 +208,10 @@ const HOLD_FIXED_BUFFER = parseInt(__ENV.HOLD_FIXED_BUFFER || '180');
 // PLAYERS_PER_ROOM to restore the old strict behaviour.
 const MIN_PLAYERS_TO_START = parseInt(__ENV.MIN_PLAYERS_TO_START || '2');
 const START_GRACE_MS = parseInt(__ENV.START_GRACE_MS || '8000');
-// Handshake and room creation/join patience timeout during connection spikes.
-// At 10k-15k VUs, a 10s timeout aborts rooms prematurely if handshakes queue
-// for 11-15s during arrival ramp bursts. Default to 30s.
 const CONNECT_TIMEOUT_MS = parseInt(__ENV.CONNECT_TIMEOUT_MS || '30000');
+// Lobby patience window: how long players wait in the lobby for the game to start.
+// Under a 120s ramp, late players in a room arrive up to 90-100s after the host. Default to 180s.
+const LOBBY_TIMEOUT_MS = parseInt(__ENV.LOBBY_TIMEOUT_MS || '180000');
 
 const HOLD_SECONDS =
   NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + PER_TURN_SLACK) + HOLD_FIXED_BUFFER;
@@ -300,7 +300,7 @@ function pollRoomCode(roomIndex, timeoutMs) {
     if (res.status === 200) {
       try { const b = JSON.parse(res.body); if (b.room_code) return b.room_code; } catch (e) {}
     }
-    sleep(0.8 + Math.random() * 0.4); // ~0.8-1.2s, jittered
+    sleep(1.5 + Math.random() * 1.0); // ~1.5-2.5s jittered to reduce HTTP request pressure
   }
   return null;
 }
@@ -336,7 +336,7 @@ export default function () {
     // room code (not proportional to roomIndex, which grew to 150s+ at high room
     // counts and stranded late rooms). Then poll the coord endpoint.
     sleep(1 + Math.random() * 0.5);
-    coordRoomCode = pollRoomCode(roomIndex, 30000);
+    coordRoomCode = pollRoomCode(roomIndex, 60000);
     if (!coordRoomCode) {
       // Never discovered the room code -> this joiner can't even attempt a
       // connect. Count it as a room failure (host never published in time) and a
@@ -538,13 +538,13 @@ export default function () {
         roomCode = msg.payload.room_code; playerId = msg.payload.player_id;
         state = 'lobby';
         publishRoomCode(roomIndex, roomCode);
-        setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') { recordError('timeout'); endSession('aborted'); } }, 60000);
+        setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') { recordError('timeout'); endSession('aborted'); } }, LOBBY_TIMEOUT_MS);
       } else if (msg.type === 'room_joined') {
         roomJoinRtt.add(Date.now() - connectStart); roomsJoined.add(1);
         roomCode = msg.payload.room_code; playerId = msg.payload.player_id;
         state = 'lobby';
         setTimeout(function () { if (state === 'lobby') sendReady(); }, Math.floor(randomBetween(1000, 2000)));
-        setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') { recordError('timeout'); endSession('aborted'); } }, 60000);
+        setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') { recordError('timeout'); endSession('aborted'); } }, LOBBY_TIMEOUT_MS);
       } else if (msg.type === 'error') { recordError('protocol'); endSession('error'); }
     }
 
