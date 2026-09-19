@@ -62,7 +62,7 @@ async def _subscribe_loop():
     while True:
         try:
             message = await _pubsub.get_message(
-                ignore_subscribe_messages=True, timeout=1.0
+                ignore_subscribe_messages=True, timeout=0.0
             )
             if message and message["type"] == "message":
                 channel = message["channel"]

@@ -93,7 +93,7 @@ class VirtualTransport:
             payload=data.encode("utf-8"),
             target_player_ids=[self.player_id],
         )
-        await self._send_queue.put(msg)
+        self._enqueue_with_backpressure(msg, lossy)
 
     async def send_json(self, data: dict) -> None:
         """Serialize a dict to JSON and send via the gRPC stream.
@@ -138,4 +138,26 @@ class VirtualTransport:
             payload=data.encode("utf-8"),
             target_player_ids=[],  # empty → gateway fans out to whole room
         )
-        await self._send_queue.put(msg)
+        self._enqueue_with_backpressure(msg, lossy)
+
+    def _enqueue_with_backpressure(self, msg: BroadcastMessage, lossy: bool) -> None:
+        import asyncio
+        try:
+            self._send_queue.put_nowait(msg)
+        except asyncio.QueueFull:
+            if lossy:
+                # Queue full: silently drop the droppable message.
+                pass
+            else:
+                # Evict an older message to make room for this must-deliver event
+                try:
+                    self._send_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                
+                try:
+                    self._send_queue.put_nowait(msg)
+                except asyncio.QueueFull:
+                    # Extremely rare: another task filled it again
+                    pass
+
