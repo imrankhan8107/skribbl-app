@@ -29,6 +29,7 @@ var sendChBufferSize = func() int {
 type PlayerSession struct {
 	PlayerID string
 	RoomCode string
+	WorkerID string
 	Conn     *websocket.Conn
 	SendCh   chan []byte // Non-blocking outbound queue
 	done     chan struct{}

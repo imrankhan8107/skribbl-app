@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"io"
-	"strings"
 
 	"github.com/skribbl-app/gateway/proto"
 )
@@ -184,24 +183,8 @@ func interceptIdentityResponse(registry *SessionRegistry, sm *StreamManager, rs 
 		debugf("[receiver] claimed room ownership room=%s gateway=%s", realRoomCode, sm.gwRegistry.gatewayID)
 	}
 
-	// If this was a create_room, the stream was keyed by workerID.
-	// Now that we know the real room_code, ensure a room-keyed stream exists
-	// for future messages from this room (join_room, game messages, etc.)
-	if realRoomCode != "" && realRoomCode != rs.roomCode {
-		// For create_room: the stream is keyed by workerID. We need to also
-		// make it findable by room_code. Open a stream for the real room_code
-		// pointing to the same worker.
-		if strings.HasPrefix(pendingPlayerID, "pending_") {
-			_, err := sm.GetOrCreate(realRoomCode, rs.workerID)
-			if err != nil {
-				debugf("[receiver] failed to register room stream room=%s worker=%s err=%v",
-					realRoomCode, rs.workerID, err)
-			} else {
-				sm.AddPlayer(realRoomCode)
-				debugf("[receiver] room stream registered room=%s worker=%s", realRoomCode, rs.workerID)
-			}
-		}
-	}
+	// Since we now multiplex all rooms for a worker onto a single worker-keyed stream,
+	// we no longer need to open a separate room-keyed stream here!
 }
 
 // ─── Client Disconnect Handling ──────────────────────────────────────────────
@@ -245,13 +228,15 @@ func handleClientDisconnect(registry *SessionRegistry, sm *StreamManager, sessio
 		Payload:     disconnectPayload,
 	}
 
-	if err := sm.Send(roomCode, disconnectMsg); err != nil {
-		debugf("[receiver] failed to send disconnect notification player=%s room=%s err=%v",
-			playerID, roomCode, err)
+	if err := sm.Send(session.WorkerID, disconnectMsg); err != nil {
+		debugf("[receiver] failed to send disconnect notification player=%s room=%s worker=%s err=%v",
+			playerID, roomCode, session.WorkerID, err)
 	} else {
-		debugf("[receiver] disconnect notification sent player=%s room=%s", playerID, roomCode)
+		debugf("[receiver] disconnect notification sent player=%s room=%s worker=%s", playerID, roomCode, session.WorkerID)
 	}
 
 	// Step 3: Decrement player count on stream (may trigger idle timeout)
-	sm.RemovePlayer(roomCode)
+	if session.WorkerID != "" {
+		sm.RemovePlayer(session.WorkerID)
+	}
 }

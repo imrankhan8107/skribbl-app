@@ -76,9 +76,11 @@ aws_region   = "us-east-1"
 allowed_cidr = "YOUR_PUBLIC_IP/32"    # Output of: curl ifconfig.me
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
 
-# Cluster sizing
-gateway_count = 2
-worker_count  = 2
+# Cluster sizing & multi-container tuning
+gateway_count     = 2
+gateways_per_host = 1
+worker_count      = 2
+workers_per_host  = 2
 ```
 
 ### 2. Deploy the Cluster
@@ -111,17 +113,43 @@ Open `http://<lb_public_ip>` in your browser to verify gameplay.
 
 ---
 
-## Running Distributed Load Tests
+## Running Load Tests
 
-Run the k6 test targeting the load balancer and gateway coordination plane:
+### Method 1: Running Inside the Dedicated In-VPC k6 Runner (Recommended)
+
+Running k6 inside the AWS VPC eliminates home network bandwidth and Wi-Fi latency limits:
+
+1. Connect via SSH to the load generator instance:
+   ```bash
+   ssh ubuntu@<load_generator_public_ip>
+   ```
+2. Run the pre-configured runner script:
+   ```bash
+   # Quick test: 100 VUs, 2 players/room, 20Hz drawing
+   ./run-test.sh 100 2 20
+
+   # Scaled test: 1,000 VUs, 5 players/room, 20Hz drawing, 30s ramp
+   ./run-test.sh 1000 5 20 30
+
+   # High scale test: 5,000 VUs, 5 players/room, 20Hz drawing, 60s ramp
+   ./run-test.sh 5000 5 20 60
+
+   # Peak target: 15,000 VUs, 5 players/room, 20Hz drawing, 90s ramp
+   ./run-test.sh 15000 5 20 90
+   ```
+
+---
+
+### Method 2: Running from your Local Machine
 
 ```bash
 k6 run \
-  --env HOST=<lb_public_ip> \
-  --env PORT=80 \
-  --env COORD_HOST=<gateway_public_ip_1> \
-  --env COORD_PORT=9100 \
-  --env VUS=2500 \
+  -e HOST=<lb_public_ip> \
+  -e PORT=80 \
+  -e COORD_PORT=0 \
+  -e VUS=500 \
+  -e PLAYERS_PER_ROOM=5 \
+  -e STROKE_HZ=20 \
   scripts/k6_grpc_load_test.js
 ```
 

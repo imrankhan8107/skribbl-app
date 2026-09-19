@@ -36,20 +36,27 @@ PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.25
 # Build Gateway Docker image
 docker build -t skribbl-gateway -f gateway/Dockerfile .
 
-# Run Gateway container on host network
-docker run -d \
-  --name gateway \
-  --restart always \
-  --net host \
-  --ulimit nofile=65535:65535 \
-  -e GATEWAY_ID=${gateway_id} \
-  -e GATEWAY_ADDR=$PRIVATE_IP \
-  -e SEND_BUFFER=1024 \
-  skribbl-gateway \
-  -port 9000 \
-  -coord-port 9100 \
-  -redis redis://${redis_ip}:6379 \
-  -static /static
+# Run ${gateways_per_host} Gateway containers on host network
+for i in $(seq 1 ${gateways_per_host}); do
+  OFFSET=$(( (i - 1) * 2 ))
+  DATA_PORT=$(( 9000 + OFFSET ))
+  COORD_PORT=$(( 9100 + OFFSET ))
+  GW_ID="${gateway_id}-$i"
+  echo "Launching Gateway container $GW_ID on data:$DATA_PORT, coord:$COORD_PORT..."
+  docker run -d \
+    --name "gateway-$i" \
+    --restart always \
+    --net host \
+    --ulimit nofile=65535:65535 \
+    -e GATEWAY_ID=$GW_ID \
+    -e GATEWAY_ADDR=$PRIVATE_IP \
+    -e SEND_BUFFER=1024 \
+    skribbl-gateway \
+    -port $DATA_PORT \
+    -coord-port $COORD_PORT \
+    -redis redis://${redis_ip}:6379 \
+    -static /static
+done
 
 echo "=== Gateway initialization finished at $(date) ==="
 

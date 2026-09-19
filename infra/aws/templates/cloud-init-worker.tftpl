@@ -36,17 +36,23 @@ PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.25
 # Build worker image
 docker build -t skribbl-worker .
 
-# Run worker container using host networking for low latency
-docker run -d \
-  --name worker \
-  --restart always \
-  --net host \
-  --ulimit nofile=65535:65535 \
-  -e REDIS_URL=redis://${redis_ip}:6379 \
-  -e GRPC_ENABLED=true \
-  -e GRPC_PORT=50051 \
-  -e WORKER_ADVERTISE_HOST=$PRIVATE_IP \
-  skribbl-worker
+# Run ${workers_per_host} worker container instances using host networking for low latency
+for i in $(seq 1 ${workers_per_host}); do
+  HTTP_PORT=$((7999 + i))
+  GRPC_PORT=$((50050 + i))
+  echo "Launching worker container $i on HTTP:$HTTP_PORT, gRPC:$GRPC_PORT..."
+  docker run -d \
+    --name "worker-$i" \
+    --restart always \
+    --net host \
+    --ulimit nofile=65535:65535 \
+    -e REDIS_URL=redis://${redis_ip}:6379 \
+    -e GRPC_ENABLED=true \
+    -e PORT=$HTTP_PORT \
+    -e GRPC_PORT=$GRPC_PORT \
+    -e WORKER_ADVERTISE_HOST=$PRIVATE_IP \
+    skribbl-worker
+done
 
 echo "=== Worker initialization finished at $(date) ==="
 

@@ -32,8 +32,20 @@ variable "gateway_count" {
   default     = 2
 }
 
+variable "gateways_per_host" {
+  description = "Number of Go Gateway Docker containers to run per gateway EC2 instance"
+  type        = number
+  default     = 1
+}
+
 variable "worker_count" {
   description = "Number of dedicated Python Worker EC2 instances"
+  type        = number
+  default     = 2
+}
+
+variable "workers_per_host" {
+  description = "Number of Python worker Docker containers to run per worker EC2 instance"
   type        = number
   default     = 2
 }
@@ -72,5 +84,17 @@ variable "git_branch" {
   description = "Git branch to deploy"
   type        = string
   default     = "feature/go-gateway"
+}
+
+variable "enable_load_generator" {
+  description = "Whether to provision a dedicated EC2 instance for running k6 load tests in-VPC"
+  type        = bool
+  default     = true
+}
+
+variable "load_generator_instance_type" {
+  description = "EC2 instance type for k6 load generator (e.g. c5a.xlarge for 10k-15k tests, t3.medium for dev)"
+  type        = string
+  default     = "t3.medium"
 }
 

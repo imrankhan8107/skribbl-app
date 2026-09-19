@@ -105,20 +105,20 @@ resource "aws_security_group" "cluster" {
     cidr_blocks = [var.allowed_cidr]
   }
 
-  # 5. Direct Go Gateway data plane (9000) strictly from allowed_cidr
+  # 5. Direct Go Gateway data plane (9000-9020) strictly from allowed_cidr
   ingress {
     description = "Direct Gateway data plane access strictly from allowed IP"
     from_port   = 9000
-    to_port     = 9000
+    to_port     = 9020
     protocol    = "tcp"
     cidr_blocks = [var.allowed_cidr]
   }
 
-  # 6. Gateway Coord control plane (9100) strictly from allowed_cidr (for k6 load tests)
+  # 6. Gateway Coord control plane (9100-9120) strictly from allowed_cidr (for k6 load tests)
   ingress {
     description = "Gateway coord control plane strictly from allowed IP"
     from_port   = 9100
-    to_port     = 9100
+    to_port     = 9120
     protocol    = "tcp"
     cidr_blocks = [var.allowed_cidr]
   }
@@ -196,9 +196,10 @@ resource "aws_instance" "workers" {
   key_name               = aws_key_pair.deployer.key_name
 
   user_data = templatefile("${path.module}/templates/cloud-init-worker.tftpl", {
-    redis_ip     = aws_instance.redis.private_ip
-    git_repo_url = var.git_repo_url
-    git_branch   = var.git_branch
+    redis_ip         = aws_instance.redis.private_ip
+    git_repo_url     = var.git_repo_url
+    git_branch       = var.git_branch
+    workers_per_host = var.workers_per_host
   })
 
   root_block_device {
@@ -225,10 +226,11 @@ resource "aws_instance" "gateways" {
   key_name               = aws_key_pair.deployer.key_name
 
   user_data = templatefile("${path.module}/templates/cloud-init-gateway.tftpl", {
-    gateway_id   = "gateway-${count.index + 1}"
-    redis_ip     = aws_instance.redis.private_ip
-    git_repo_url = var.git_repo_url
-    git_branch   = var.git_branch
+    gateway_id        = "gateway-${count.index + 1}"
+    redis_ip          = aws_instance.redis.private_ip
+    git_repo_url      = var.git_repo_url
+    git_branch        = var.git_branch
+    gateways_per_host = var.gateways_per_host
   })
 
   root_block_device {
@@ -255,7 +257,8 @@ resource "aws_instance" "lb" {
 
   user_data = templatefile("${path.module}/templates/cloud-init-lb.tftpl", {
     nginx_config = templatefile("${path.module}/templates/nginx.conf.tftpl", {
-      gateway_ips = aws_instance.gateways[*].private_ip
+      gateway_ips   = aws_instance.gateways[*].private_ip
+      gateway_ports = [for i in range(var.gateways_per_host) : 9000 + i * 2]
     })
   })
 
@@ -269,6 +272,35 @@ resource "aws_instance" "lb" {
   tags = {
     Name = "${var.app_name}-lb"
     Tier = "load-balancer"
+  }
+}
+
+# --- In-VPC k6 Load Generator Instance ---
+
+resource "aws_instance" "load_generator" {
+  count                  = var.enable_load_generator ? 1 : 0
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = var.load_generator_instance_type
+  subnet_id              = aws_subnet.public.id
+  vpc_security_group_ids = [aws_security_group.cluster.id]
+  key_name               = aws_key_pair.deployer.key_name
+
+  user_data = templatefile("${path.module}/templates/cloud-init-k6.tftpl", {
+    git_repo_url  = var.git_repo_url
+    git_branch    = var.git_branch
+    lb_private_ip = aws_instance.lb.private_ip
+  })
+
+  root_block_device {
+    volume_size = 30
+    volume_type = "gp3"
+  }
+
+  depends_on = [aws_instance.lb]
+
+  tags = {
+    Name = "${var.app_name}-k6-runner"
+    Tier = "load-generator"
   }
 }
 

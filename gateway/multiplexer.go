@@ -126,10 +126,10 @@ func (m *Multiplexer) HandleClientMessage(session *PlayerSession, rawMsg []byte)
 		Payload:     rawMsg,
 	}
 
-	debugf("[mux:forward] player=%s room=%s type=%s → streamMgr.Send", session.PlayerID, session.RoomCode, msg.Type)
+	debugf("[mux:forward] player=%s room=%s worker=%s type=%s → streamMgr.Send", session.PlayerID, session.RoomCode, session.WorkerID, msg.Type)
 	tracef("[trace] GW_MUX_FORWARD player=%s room=%s type=%s", session.PlayerID, session.RoomCode, msg.Type)
-	if err := m.streamMgr.Send(session.RoomCode, envelope); err != nil {
-		debugf("[mux:forward] player=%s room=%s type=%s Send error: %v", session.PlayerID, session.RoomCode, msg.Type, err)
+	if err := m.streamMgr.Send(session.WorkerID, envelope); err != nil {
+		debugf("[mux:forward] player=%s room=%s worker=%s type=%s Send error: %v", session.PlayerID, session.RoomCode, session.WorkerID, msg.Type, err)
 		return err
 	}
 	return nil
@@ -163,9 +163,9 @@ func (m *Multiplexer) handleCreateRoom(session *PlayerSession, rawMsg []byte, pa
 	}
 	debugf("[mux:create] player=%s worker=%s gRPC alive ok", session.PlayerID, workerID)
 
-	// Use workerID as the stream key for create_room since room_code is unknown.
+	// Use workerID as the stream key.
 	// Multiple create_room requests to the same worker share one stream.
-	_, err = m.streamMgr.GetOrCreate(workerID, workerID)
+	_, err = m.streamMgr.GetOrCreate(workerID)
 	if err != nil {
 		debugf("[mux:create] player=%s worker=%s GetOrCreate failed err=%v", session.PlayerID, workerID, err)
 		return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Failed to open stream to worker")
@@ -195,6 +195,7 @@ func (m *Multiplexer) handleCreateRoom(session *PlayerSession, rawMsg []byte, pa
 	// RoomCode is temporarily set to workerID; the interceptor replaces it
 	// with the real room_code when room_created arrives.
 	session.RoomCode = workerID
+	session.WorkerID = workerID
 
 	debugf("[multiplexer] create_room sent player=%s worker=%s (async)", session.PlayerID, workerID)
 	tracef("[trace] GW_MUX_CREATE_ROOM_SENT player=%s worker=%s", session.PlayerID, workerID)
@@ -283,8 +284,8 @@ func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, room
 	// for room-wide broadcasts after join.
 	m.registry.UpdateIdentity(session.PlayerID, session.PlayerID, roomCode)
 
-	// Get or create the Room_Stream for this room
-	_, err = m.streamMgr.GetOrCreate(roomCode, workerID)
+	// Get or create the Room_Stream for this worker
+	_, err = m.streamMgr.GetOrCreate(workerID)
 	if err != nil {
 		debugf("[mux:join] player=%s room=%s worker=%s GetOrCreate failed err=%v", session.PlayerID, roomCode, workerID, err)
 		return m.sendErrorToClient(session.Conn, "NO_BACKEND", "Failed to open stream for room "+roomCode)
@@ -300,15 +301,16 @@ func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, room
 	}
 
 	tracef("[trace] GW_MUX_JOIN_SEND player=%s room=%s worker=%s", session.PlayerID, roomCode, workerID)
-	if err := m.streamMgr.Send(roomCode, envelope); err != nil {
+	if err := m.streamMgr.Send(workerID, envelope); err != nil {
 		debugf("[mux:join] player=%s room=%s worker=%s Send failed err=%v", session.PlayerID, roomCode, workerID, err)
 		return m.sendErrorToClient(session.Conn, "STREAM_ERROR", "Failed to send message to worker")
 	}
 	debugf("[mux:join] player=%s room=%s worker=%s envelope sent", session.PlayerID, roomCode, workerID)
 
-	// Set room_code on session so subsequent messages route correctly
+	// Set room_code and workerID on session so subsequent messages route correctly
 	session.RoomCode = roomCode
-	m.streamMgr.AddPlayer(roomCode)
+	session.WorkerID = workerID
+	m.streamMgr.AddPlayer(workerID)
 
 	debugf("[multiplexer] join_room sent player=%s room=%s worker=%s (async)", session.PlayerID, roomCode, workerID)
 	return nil

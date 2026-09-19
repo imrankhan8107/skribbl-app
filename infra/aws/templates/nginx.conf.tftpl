@@ -10,7 +10,9 @@ http {
     upstream gateways {
         hash "$arg_gw$arg_room$arg_cid" consistent;
 %{ for ip in gateway_ips ~}
-        server ${ip}:9000;
+%{ for port in gateway_ports ~}
+        server ${ip}:${port};
+%{ endfor ~}
 %{ endfor ~}
     }
 

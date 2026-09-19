@@ -133,7 +133,7 @@ func (fh *FallbackHandler) retryStreamConnect(roomCode, workerID string) (*RoomS
 	delay := retryBaseDelay
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		stream, err := fh.streamManager.GetOrCreate(roomCode, workerID)
+		stream, err := fh.streamManager.GetOrCreate(workerID)
 		if err == nil && stream.isHealthy() {
 			return stream, nil
 		}
@@ -219,8 +219,8 @@ func handleWithFallback(
 // on that stream (message forwarding, player registration, etc.).
 func handleGRPCPath(fh *FallbackHandler, clientConn *websocket.Conn, firstMsg []byte, roomCode string, stream *RoomStream) {
 	// Increment player count on the shared stream
-	fh.streamManager.AddPlayer(roomCode)
-	defer fh.streamManager.RemovePlayer(roomCode)
+	fh.streamManager.AddPlayer(stream.workerID)
+	defer fh.streamManager.RemovePlayer(stream.workerID)
 
 	// The actual gRPC message multiplexing is handled by the stream manager's
 	// send loop and the gateway's receive loop (implemented in task 10.1/10.2).
