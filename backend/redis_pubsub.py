@@ -27,6 +27,7 @@ _pubsub = None
 _subscriber_task: Optional[asyncio.Task] = None
 _message_handler: Optional[Callable[[str, dict], Awaitable[None]]] = None
 _is_draining: bool = False
+_subscribe_lock = asyncio.Lock()
 
 
 async def init_redis(handler: Callable[[str, dict], Awaitable[None]]) -> None:
@@ -90,14 +91,16 @@ async def subscribe_room(room_code: str) -> None:
     """Subscribe this worker to a room's Redis channel."""
     if _pubsub is None:
         return
-    await _pubsub.subscribe(f"room:{room_code}")
+    async with _subscribe_lock:
+        await _pubsub.subscribe(f"room:{room_code}")
 
 
 async def unsubscribe_room(room_code: str) -> None:
     """Unsubscribe this worker from a room's Redis channel."""
     if _pubsub is None:
         return
-    await _pubsub.unsubscribe(f"room:{room_code}")
+    async with _subscribe_lock:
+        await _pubsub.unsubscribe(f"room:{room_code}")
 
 
 async def publish_to_room(room_code: str, message: dict) -> None:
