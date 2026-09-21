@@ -239,15 +239,12 @@ const RAMP_SECONDS = parseInt(__ENV.RAMP_SECONDS || '0');
 // game_completion_rate metric measures the harness's patience instead of the
 // server.
 //
-// A full game is NUM_ROUNDS * PLAYERS_PER_ROOM turns. Each turn costs more than
-// TURN_DURATION: the drawer bot waits ~1-3s to pick a word (up to 15s auto-
-// select), plus drawer_selecting → word_choices → select_word round trips and
-// turn_ended → next-turn transitions. Observed overhead is ~25-45s/turn under
-// concurrent load, not the 20s the previous formula budgeted — which timed out
-// the slowest ~40% of games right at the ceiling. Budget 45s/turn of slack plus
-// a 180s fixed buffer for the lobby→start handshake and graceful finish.
-const PER_TURN_SLACK = parseInt(__ENV.PER_TURN_SLACK || '45');
-const HOLD_FIXED_BUFFER = parseInt(__ENV.HOLD_FIXED_BUFFER || '180');
+// A full game is NUM_ROUNDS * PLAYERS_PER_ROOM turns. Under heavy concurrent load
+// (e.g. 25k-40k VUs, 5,000-8,000 rooms across workers), turn transitions, word
+// selections (up to 15s), and hint reveals introduce ~60-70s of real-world elapsed
+// time per turn. Budget 70s/turn of slack plus a 300s fixed buffer.
+const PER_TURN_SLACK = parseInt(__ENV.PER_TURN_SLACK || '70');
+const HOLD_FIXED_BUFFER = parseInt(__ENV.HOLD_FIXED_BUFFER || '300');
 
 // Room-formation robustness. Previously the host only started once it saw ALL
 // PLAYERS_PER_ROOM players. Under a ramp, a room's players are different VUs
