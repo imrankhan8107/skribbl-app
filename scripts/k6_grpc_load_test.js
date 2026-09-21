@@ -55,7 +55,7 @@
 // though the server and OS were idle. k6/websockets drives sockets on the event
 // loop so 15k+ connections can be established without blocking VUs.
 import { WebSocket } from 'k6/websockets';
-import { setTimeout, setInterval, clearInterval } from 'k6/timers';
+import { setTimeout, setInterval, clearInterval, clearTimeout } from 'k6/timers';
 import http from 'k6/http';
 import { sleep } from 'k6';
 import { Counter, Trend, Rate, Gauge } from 'k6/metrics';
@@ -447,10 +447,52 @@ export default function () {
       sendMsg({ type: 'toggle_ready', payload: {} });
     }
 
+    const activeTimers = new Set();
+    const activeIntervals = new Set();
+
+    function safeSetTimeout(fn, ms) {
+      let id;
+      id = setTimeout(function () {
+        activeTimers.delete(id);
+        if (!sessionEnded) {
+          fn();
+        }
+      }, ms);
+      activeTimers.add(id);
+      return id;
+    }
+
+    function safeSetInterval(fn, ms) {
+      let id;
+      id = setInterval(function () {
+        if (sessionEnded) {
+          clearInterval(id);
+          activeIntervals.delete(id);
+          return;
+        }
+        fn();
+      }, ms);
+      activeIntervals.add(id);
+      return id;
+    }
+
     function stopLoops() {
-      drawingActive = false; guessingActive = false;
-      if (strokeTimer !== null) { clearInterval(strokeTimer); strokeTimer = null; }
-      if (guessTimer !== null) { clearInterval(guessTimer); guessTimer = null; }
+      drawingActive = false;
+      guessingActive = false;
+      for (const id of activeIntervals) {
+        try { clearInterval(id); } catch (e) {}
+      }
+      activeIntervals.clear();
+      strokeTimer = null;
+      guessTimer = null;
+    }
+
+    function clearAllTimers() {
+      stopLoops();
+      for (const id of activeTimers) {
+        try { clearTimeout(id); } catch (e) {}
+      }
+      activeTimers.clear();
     }
 
     function endSession(reason) {
@@ -464,7 +506,7 @@ export default function () {
       // Per-GAME outcome recorded ONCE per room, by the host only, so N players
       // in a room count as a single game — a true game-completion rate.
       if (isHost) { gameCompletionRate.add(completed ? 1 : 0); }
-      stopLoops();
+      clearAllTimers();
       try { socket.close(); } catch (e) { /* ignore */ }
     }
 
@@ -484,13 +526,13 @@ export default function () {
       }
       if (isHost) {
         sendMsg({ type: 'create_room', payload: { name: playerName } });
-        setTimeout(function () { if (state === 'connecting') { roomCreateFailures.add(1); recordError('timeout'); endSession('error'); } }, CONNECT_TIMEOUT_MS);
+        safeSetTimeout(function () { if (state === 'connecting') { roomCreateFailures.add(1); recordError('timeout'); endSession('error'); } }, CONNECT_TIMEOUT_MS);
       } else {
         sendMsg({ type: 'join_room', payload: { name: playerName, room_code: roomCode } });
-        setTimeout(function () { if (state === 'connecting') { roomJoinFailures.add(1); recordError('timeout'); endSession('error'); } }, CONNECT_TIMEOUT_MS);
+        safeSetTimeout(function () { if (state === 'connecting') { roomJoinFailures.add(1); recordError('timeout'); endSession('error'); } }, CONNECT_TIMEOUT_MS);
       }
       // Overall session patience timer — game never reached game_over in time.
-      setTimeout(function () { if (!gameCompleted) { recordError('timeout'); endSession('aborted'); } }, HOLD_SECONDS * 1000);
+      safeSetTimeout(function () { if (!gameCompleted) { recordError('timeout'); endSession('aborted'); } }, HOLD_SECONDS * 1000);
     };
 
     // Both error and close route through the same outcome recorder. We do NOT
@@ -521,7 +563,7 @@ export default function () {
       }
       // A close before any open is also a definitive initial-connect failure.
       recordConnectFailureIfNeverOpened();
-      stopLoops();
+      clearAllTimers();
     };
 
     socket.onmessage = function (e) {
@@ -564,13 +606,13 @@ export default function () {
         roomCode = msg.payload.room_code; playerId = msg.payload.player_id;
         state = 'lobby';
         publishRoomCode(roomIndex, roomCode);
-        setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') { recordError('timeout'); endSession('aborted'); } }, LOBBY_TIMEOUT_MS);
+        safeSetTimeout(function () { if (state === 'lobby' || state === 'waiting_start') { recordError('timeout'); endSession('aborted'); } }, LOBBY_TIMEOUT_MS);
       } else if (msg.type === 'room_joined') {
         roomJoinRtt.add(Date.now() - connectStart); roomsJoined.add(1);
         roomCode = msg.payload.room_code; playerId = msg.payload.player_id;
         state = 'lobby';
-        setTimeout(function () { if (state === 'lobby') sendReady(); }, Math.floor(randomBetween(1000, 2000)));
-        setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') { recordError('timeout'); endSession('aborted'); } }, LOBBY_TIMEOUT_MS);
+        safeSetTimeout(function () { if (state === 'lobby') sendReady(); }, Math.floor(randomBetween(1000, 2000)));
+        safeSetTimeout(function () { if (state === 'lobby' || state === 'waiting_start') { recordError('timeout'); endSession('aborted'); } }, LOBBY_TIMEOUT_MS);
       } else if (msg.type === 'error') {
         const code = (msg.payload && msg.payload.code) || 'UNKNOWN';
         const message = (msg.payload && msg.payload.message) || '';
@@ -594,7 +636,7 @@ export default function () {
           startArmed = true;
           sendMsg({ type: 'update_settings', payload: { num_rounds: NUM_ROUNDS, turn_duration: TURN_DURATION, max_players: PLAYERS_PER_ROOM } });
           sendReady();
-          setTimeout(function () {
+          safeSetTimeout(function () {
             if (state !== 'lobby') return;
             sendMsg({ type: 'start_game', payload: {} });
             gameStartRequests.add(1); // request sent (not yet confirmed by server)
@@ -655,7 +697,7 @@ export default function () {
           isDrawer = true; // Receiving word_choices proves we are the designated drawer
           if (msg.payload && msg.payload.choices && msg.payload.choices.length > 0) {
             const choices = msg.payload.choices;
-            setTimeout(function () { sendMsg({ type: 'select_word', payload: { word: choices[Math.floor(Math.random() * choices.length)] } }); }, Math.floor(randomBetween(1000, 3000)));
+            safeSetTimeout(function () { sendMsg({ type: 'select_word', payload: { word: choices[Math.floor(Math.random() * choices.length)] } }); }, Math.floor(randomBetween(1000, 3000)));
           } break;
         case 'turn_started':
           turnActive = true; isDrawer = msg.payload && msg.payload.drawer_id === playerId;
@@ -669,9 +711,10 @@ export default function () {
 
     function startDrawing() {
       if (sessionEnded) return;
+      stopLoops();
       drawingActive = true;
       if (STROKE_HZ <= 0) {
-        strokeTimer = setInterval(function () {
+        strokeTimer = safeSetInterval(function () {
           if (!drawingActive || !turnActive || sessionEnded) return;
           sendMsg({ type: 'stroke', payload: { points: [{ x: Math.random()*800, y: Math.random()*600 }, { x: Math.random()*800, y: Math.random()*600 }], color: '#000', lineWidth: 3 } });
         }, Math.floor(randomBetween(2000, 5000)));
@@ -682,7 +725,7 @@ export default function () {
       const intervalMs = Math.max(1, Math.floor(1000 / STROKE_HZ));
       let lastX = Math.random() * 800;
       let lastY = Math.random() * 600;
-      strokeTimer = setInterval(function () {
+      strokeTimer = safeSetInterval(function () {
         if (!drawingActive || !turnActive || sessionEnded) return;
         const points = [];
         for (let i = 0; i < STROKE_POINTS; i++) {
@@ -696,9 +739,10 @@ export default function () {
 
     function startGuessing() {
       if (sessionEnded) return;
+      stopLoops();
       guessingActive = true;
       const words = ['cat','dog','house','tree','car','sun','moon','fish','bird','star','flower','mountain','river','boat'];
-      guessTimer = setInterval(function () {
+      guessTimer = safeSetInterval(function () {
         if (!guessingActive || !turnActive || sessionEnded) return;
         sendMsg({ type: 'guess', payload: { text: words[Math.floor(Math.random() * words.length)] } });
       }, Math.floor(randomBetween(3000, 8000)));
