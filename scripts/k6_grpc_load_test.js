@@ -164,6 +164,10 @@ function recordError(category) {
 const HOST = __ENV.HOST || 'localhost';
 const PORT = __ENV.PORT || '9000';
 const COORD_HOST = __ENV.COORD_HOST || HOST;
+const COORD_HOSTS = (__ENV.COORD_HOSTS || COORD_HOST)
+  .split(',')
+  .map((h) => h.trim())
+  .filter((h) => h.length > 0);
 // Coordination runs on a SEPARATE gateway port (default 9100) that bypasses
 // nginx, so load-test coord HTTP does not contend with WebSocket upgrades at the
 // LB. Set COORD_PORT=0 to fall back to the data-plane PORT (single-gateway / no
@@ -171,6 +175,12 @@ const COORD_HOST = __ENV.COORD_HOST || HOST;
 const COORD_PORT = __ENV.COORD_PORT || '9100';
 const COORD_HOST_PORT = COORD_PORT === '0' ? PORT : COORD_PORT;
 const COORD_URL = `http://${COORD_HOST}:${COORD_HOST_PORT}/rooms`;
+
+function getCoordUrl(roomIndex) {
+  if (!COORD_HOSTS || COORD_HOSTS.length === 0) return COORD_URL;
+  const host = COORD_HOSTS[roomIndex % COORD_HOSTS.length];
+  return `http://${host}:${COORD_HOST_PORT}/rooms`;
+}
 const WS_URL = `ws://${HOST}:${PORT}/ws`;
 // Comma-separated full /health URLs. In AWS this is populated with every
 // gateway's private address by run-test.sh. A single LB health URL remains a
@@ -226,11 +236,11 @@ const HOLD_FIXED_BUFFER = parseInt(__ENV.HOLD_FIXED_BUFFER || '180');
 // game_completion_rate track SERVER capacity. Set MIN_PLAYERS_TO_START =
 // PLAYERS_PER_ROOM to restore the old strict behaviour.
 const MIN_PLAYERS_TO_START = parseInt(__ENV.MIN_PLAYERS_TO_START || '2');
-const START_GRACE_MS = parseInt(__ENV.START_GRACE_MS || '8000');
+const START_GRACE_MS = parseInt(__ENV.START_GRACE_MS || '15000');
 const CONNECT_TIMEOUT_MS = parseInt(__ENV.CONNECT_TIMEOUT_MS || '30000');
 // Lobby patience window: how long players wait in the lobby for the game to start.
-// Under a 120s ramp, late players in a room arrive up to 90-100s after the host. Default to 180s.
-const LOBBY_TIMEOUT_MS = parseInt(__ENV.LOBBY_TIMEOUT_MS || '180000');
+// Under a 180s ramp, late players in a room arrive up to 150-180s after the host. Default to 240s.
+const LOBBY_TIMEOUT_MS = parseInt(__ENV.LOBBY_TIMEOUT_MS || '240000');
 
 const HOLD_SECONDS =
   NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + PER_TURN_SLACK) + HOLD_FIXED_BUFFER;
@@ -307,26 +317,25 @@ function isHostVU(vu) { return (vu - 1) % PLAYERS_PER_ROOM === 0; }
 function randomBetween(min, max) { return min + Math.random() * (max - min); }
 
 function publishRoomCode(roomIndex, roomCode) {
-  http.post(`${COORD_URL}/${roomIndex}`, JSON.stringify({ room_code: roomCode }), {
+  http.post(`${getCoordUrl(roomIndex)}/${roomIndex}`, JSON.stringify({ room_code: roomCode }), {
     headers: { 'Content-Type': 'application/json' }, tags: { name: 'coord_publish' },
   });
 }
 
 // pollRoomCode discovers a room's code published by its host, against the
-// DEDICATED coord port (bypasses nginx). Polls at a steady ~800ms with light
+// DEDICATED coord port (bypasses nginx). Polls at a steady ~1-2s with light
 // jitter to de-sync the herd. A 404 just means "host hasn't published yet" —
 // normal, so it's tagged separately and simply retried rather than treated as a
-// hard failure. (Earlier: a fixed 500ms poll THROUGH nginx stormed the LB at
-// 15k; over-aggressive 4s backoff then starved joiners. Fix is the dedicated
-// port + a sane steady interval, not extreme backoff.)
+// hard failure.
 function pollRoomCode(roomIndex, timeoutMs) {
   const start = Date.now();
+  const url = getCoordUrl(roomIndex);
   while (Date.now() - start < timeoutMs) {
-    const res = http.get(`${COORD_URL}/${roomIndex}`, { tags: { name: 'coord_poll' } });
+    const res = http.get(`${url}/${roomIndex}`, { tags: { name: 'coord_poll' } });
     if (res.status === 200) {
       try { const b = JSON.parse(res.body); if (b.room_code) return b.room_code; } catch (e) {}
     }
-    sleep(1.5 + Math.random() * 1.0); // ~1.5-2.5s jittered to reduce HTTP request pressure
+    sleep(1.2 + Math.random() * 0.8); // ~1.2-2.0s jittered to reduce HTTP request pressure
   }
   return null;
 }
@@ -684,6 +693,9 @@ export default function () {
         } else {
           endSession('completed');
         }
+      } else if (msg.type === 'game_ended_insufficient_players') {
+        recordError('game');
+        endSession('aborted');
       } else if (msg.type === 'error') { recordError('protocol'); endSession('error'); }
     }
 

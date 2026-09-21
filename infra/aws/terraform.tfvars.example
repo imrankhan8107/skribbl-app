@@ -14,12 +14,15 @@ allowed_cidr = "YOUR_PUBLIC_IP/32"
 ssh_public_key = "ssh-ed25519 AAAA..."
 
 # Scale of the cluster
+# Dev / baseline: gateway_count=2, gateways_per_host=1, worker_count=2, workers_per_host=2
+# 10k-15k load:   gateway_count=2, gateways_per_host=2, worker_count=3, workers_per_host=4
+# 25k load:       gateway_count=3, gateways_per_host=2, worker_count=4, workers_per_host=6 (c5a.2xlarge)
 gateway_count     = 2
 gateways_per_host = 1
 worker_count      = 2
 workers_per_host  = 2
 
-# Instance types (t3.medium for dev/cost-saving, c5a.xlarge for heavy benchmarks)
+# Instance types (t3.medium for dev/cost-saving, c5a.xlarge for heavy benchmarks, c5a.2xlarge for 25k)
 lb_instance_type      = "t3.medium"
 gateway_instance_type = "t3.medium"
 worker_instance_type  = "t3.medium"
