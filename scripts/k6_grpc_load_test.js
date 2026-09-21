@@ -168,27 +168,42 @@ const COORD_HOSTS = (__ENV.COORD_HOSTS || COORD_HOST)
   .split(',')
   .map((h) => h.trim())
   .filter((h) => h.length > 0);
-// Coordination runs on a SEPARATE gateway port (default 9100) that bypasses
-// nginx, so load-test coord HTTP does not contend with WebSocket upgrades at the
-// LB. Set COORD_PORT=0 to fall back to the data-plane PORT (single-gateway / no
-// nginx setups). Coord is Redis-backed, so any gateway's coord port works.
+// Coordination endpoint strategy:
+//
+//   COORD_VIA_LB=1 (default in AWS): route coord through the nginx LB on
+//   HOST:PORT/rooms/. The LB now has a dedicated coord upstream with keepalive
+//   that round-robins across all gateway coord ports. This avoids per-poll TCP
+//   handshake overhead and eliminates the Go HTTP accept-queue saturation that
+//   caused ~18-20% coord failures at 25k VUs.
+//
+//   COORD_VIA_LB=0: use direct gateway IPs from COORD_URLS/COORD_HOSTS.
+//   Use this only when the LB is not available (local/dev runs on COORD_PORT).
+//
+const COORD_VIA_LB = (__ENV.COORD_VIA_LB !== '0'); // default: true
 const COORD_PORT = __ENV.COORD_PORT || '9100';
 const COORD_HOST_PORT = COORD_PORT === '0' ? PORT : COORD_PORT;
-const COORD_URL = `http://${COORD_HOST}:${COORD_HOST_PORT}/rooms`;
+// LB-based coord URL: uses HOST:PORT (port 80 in AWS) so all coord HTTP goes
+// through nginx's /rooms/ proxy → coord upstream → gateway containers.
+const COORD_URL_LB = `http://${HOST}:${PORT}/rooms`;
+// Direct coord URL (legacy/local): hits a gateway coord port directly.
+const COORD_URL_DIRECT = `http://${COORD_HOST}:${COORD_HOST_PORT}/rooms`;
+const COORD_URL = COORD_VIA_LB ? COORD_URL_LB : COORD_URL_DIRECT;
 
-// COORD_URLS = comma-separated "host:port" pairs for EVERY gateway container's
-// coord port (e.g. "10.0.0.1:9100,10.0.0.1:9102,10.0.0.1:9104,10.0.0.2:9100,...").
-// When set (AWS deployments), this spreads coord load across all 6 containers.
-// Falls back to building URLs from COORD_HOSTS + COORD_PORT for local/compat runs.
+// COORD_URLS = comma-separated "host:port" pairs for direct gateway coord
+// endpoints. Used only when COORD_VIA_LB=0. Kept for backward compat.
 const _rawCoordUrls = __ENV.COORD_URLS
   ? __ENV.COORD_URLS.split(',').map((u) => u.trim()).filter((u) => u.length > 0)
   : COORD_HOSTS.map((h) => `${h}:${COORD_HOST_PORT}`);
 
 function getCoordUrl(roomIndex) {
+  if (COORD_VIA_LB) {
+    // All coord goes through the LB — no per-room routing needed; LB balances.
+    return COORD_URL_LB;
+  }
   const endpoint = _rawCoordUrls[roomIndex % _rawCoordUrls.length];
-  // endpoint is already "host:port" — just prefix http:// and append /rooms
   return `http://${endpoint}/rooms`;
 }
+
 
 const WS_URL = `ws://${HOST}:${PORT}/ws`;
 // Comma-separated full /health URLs. In AWS this is populated with every

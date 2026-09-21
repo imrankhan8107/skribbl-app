@@ -266,8 +266,10 @@ resource "aws_instance" "lb" {
 
   user_data = templatefile("${path.module}/templates/cloud-init-lb.tftpl", {
     nginx_config = templatefile("${path.module}/templates/nginx.conf.tftpl", {
-      gateway_ips   = aws_instance.gateways[*].private_ip
+      gateway_ips  = aws_instance.gateways[*].private_ip
       gateway_ports = [for i in range(var.gateways_per_host) : 9000 + i * 2]
+      # Coord ports mirror the gateway cloud-init formula: 9100 + (i * 2) per container.
+      coord_ports  = [for i in range(var.gateways_per_host) : 9100 + i * 2]
     })
   })
 

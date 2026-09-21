@@ -16,6 +16,21 @@ http {
 %{ endfor ~}
     }
 
+    # Coord upstream: plain round-robin across all gateway coord ports.
+    # Redis-backed so any container can serve any room — no stickiness needed.
+    # keepalive reuses connections to gateways so each k6 poll doesn't create a
+    # new TCP handshake, eliminating the accept-queue pressure that caused ~18-20%
+    # coord failures under 25k VUs.
+    upstream coord {
+        least_conn;
+%{ for ip in gateway_ips ~}
+%{ for port in coord_ports ~}
+        server ${ip}:${port};
+%{ endfor ~}
+%{ endfor ~}
+        keepalive 128;
+    }
+
     map $http_upgrade $connection_upgrade {
         default upgrade;
         ''      close;
@@ -23,6 +38,18 @@ http {
 
     server {
         listen 80;
+
+        # Coord REST endpoint — routed to coord upstream (bypasses WS stickiness)
+        location /rooms/ {
+            proxy_pass http://coord;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_connect_timeout 5s;
+            proxy_read_timeout 10s;
+            proxy_send_timeout 5s;
+        }
 
         location / {
             proxy_pass http://gateways;
