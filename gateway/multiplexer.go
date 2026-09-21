@@ -105,13 +105,13 @@ func (m *Multiplexer) HandleClientMessage(session *PlayerSession, rawMsg []byte)
 			if err := json.Unmarshal(msg.Payload, &payload); err != nil || payload.RoomCode == "" {
 				return m.sendErrorToClient(session.Conn, "INVALID_PAYLOAD", "Missing room_code in join_room")
 			}
-			return m.handleJoinRoom(session, rawMsg, payload.RoomCode)
+			return m.handleJoinRoom(session, rawMsg, payload.RoomCode, "join_room")
 		case "reconnect":
 			var payload joinPayload
 			if err := json.Unmarshal(msg.Payload, &payload); err != nil || payload.RoomCode == "" {
 				return m.sendErrorToClient(session.Conn, "INVALID_PAYLOAD", "Missing room_code in reconnect")
 			}
-			return m.handleJoinRoom(session, rawMsg, payload.RoomCode)
+			return m.handleJoinRoom(session, rawMsg, payload.RoomCode, "reconnect")
 		default:
 			// Client not identified — reject with NOT_IDENTIFIED
 			return m.sendErrorToClient(session.Conn, "NOT_IDENTIFIED", "Must send create_room, join_room, or reconnect first")
@@ -209,7 +209,7 @@ func (m *Multiplexer) handleCreateRoom(session *PlayerSession, rawMsg []byte, pa
 // The session is already registered in the registry by handleGRPCPath with the
 // pending PlayerID. The response interceptor in the receiver updates the session's
 // PlayerID when the room_joined/reconnected response arrives.
-func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, roomCode string) error {
+func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, roomCode string, messageType string) error {
 	// Room-sticky routing (Path A): if another gateway owns this room, redirect
 	// the client there instead of serving it locally. Serving locally would put
 	// this room's players on two gateways, and fan-out is per-gateway — they
@@ -294,7 +294,7 @@ func (m *Multiplexer) handleJoinRoom(session *PlayerSession, rawMsg []byte, room
 	envelope := &proto.GameMessage{
 		PlayerId:    session.PlayerID,
 		RoomCode:    roomCode,
-		MessageType: "join_room",
+		MessageType: messageType,
 		Payload:     rawMsg,
 	}
 

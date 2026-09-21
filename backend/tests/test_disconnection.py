@@ -458,3 +458,25 @@ async def test_reconnect_broadcasts_player_reconnected(room_manager):
     assert len(reconnect_msgs) >= 1
     assert reconnect_msgs[0]["payload"]["player_id"] == "player_1"
     assert reconnect_msgs[0]["payload"]["name"] == "Player1"
+
+
+@pytest.mark.asyncio
+async def test_reconnect_takeover_when_still_marked_connected(room_manager):
+    """If browser refreshes quickly and reconnect arrives before disconnect event, take over session."""
+    room = make_room_with_players(2, state=RoomState.PLAYING)
+    room_manager.rooms["TESTAB"] = room
+    player_1 = room.players[1]
+    assert player_1.is_connected is True
+    old_ws = player_1.websocket
+
+    new_ws = FakeWebSocket()
+    result = await room_manager.handle_reconnect("Player1", "TESTAB", new_ws)
+
+    assert result["type"] == "reconnected"
+    assert result["payload"]["player_id"] == "player_1"
+    assert player_1.is_connected is True
+    assert player_1.websocket == new_ws
+    # Allow background close task to execute
+    await asyncio.sleep(0.01)
+    assert old_ws.closed is True
+

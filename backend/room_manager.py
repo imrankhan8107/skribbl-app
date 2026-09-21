@@ -627,6 +627,21 @@ class RoomManager:
             None,
         )
         if player is None:
+            # Fast reconnect fallback: player exists with matching name but is still
+            # marked connected (e.g. fast browser refresh where the new connection
+            # arrived before the old socket teardown finished). Take over the session.
+            player = next(
+                (p for p in room.players if p.name == name),
+                None,
+            )
+            if player is not None and player.websocket is not None and player.websocket != websocket:
+                try:
+                    if hasattr(player.websocket, "close"):
+                        asyncio.create_task(player.websocket.close())
+                except Exception:
+                    pass
+
+        if player is None:
             return {
                 "type": "error",
                 "payload": {

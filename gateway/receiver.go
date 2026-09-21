@@ -213,7 +213,7 @@ func handleClientDisconnect(registry *SessionRegistry, sm *StreamManager, sessio
 
 	// Step 2: Send disconnect notification to the worker via Room_Stream
 	disconnectPayload, _ := json.Marshal(map[string]interface{}{
-		"type": "leave_room",
+		"type": "client_disconnected",
 		"payload": map[string]string{
 			"player_id": playerID,
 			"room_code": roomCode,
@@ -224,7 +224,7 @@ func handleClientDisconnect(registry *SessionRegistry, sm *StreamManager, sessio
 	disconnectMsg := &proto.GameMessage{
 		PlayerId:    playerID,
 		RoomCode:    roomCode,
-		MessageType: "leave_room",
+		MessageType: "client_disconnected",
 		Payload:     disconnectPayload,
 	}
 

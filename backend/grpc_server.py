@@ -468,10 +468,19 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                     logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type"))
 
         elif message_type == "leave_room":
-            result = await room_manager.leave_room(player_id)
-            await transport.send_json(result)
-            if _TRACE_ENABLED:
-                logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type") if isinstance(result, dict) else None)
+            if isinstance(payload, dict) and payload.get("reason") == "disconnect":
+                # Disconnection from gateway (e.g. browser refresh / tab close)
+                await room_manager.handle_disconnect(player_id, game_engine)
+            else:
+                # Voluntary leave in lobby
+                result = await room_manager.leave_room(player_id)
+                await transport.send_json(result)
+                if _TRACE_ENABLED:
+                    logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type") if isinstance(result, dict) else None)
+
+        elif message_type == "client_disconnected":
+            # Explicit disconnect notification from gateway
+            await room_manager.handle_disconnect(player_id, game_engine)
 
         elif message_type == "reaction":
             room = room_manager._find_room_by_player(player_id)
