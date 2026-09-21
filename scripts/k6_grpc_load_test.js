@@ -58,7 +58,7 @@ import { WebSocket } from 'k6/websockets';
 import { setTimeout, setInterval, clearInterval } from 'k6/timers';
 import http from 'k6/http';
 import { sleep } from 'k6';
-import { Counter, Trend, Rate } from 'k6/metrics';
+import { Counter, Trend, Rate, Gauge } from 'k6/metrics';
 import exec from 'k6/execution';
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 
@@ -108,6 +108,15 @@ const roomsCreated = new Counter('rooms_created');
 const roomCreateFailures = new Counter('room_create_failures');
 const roomsJoined = new Counter('rooms_joined');
 const roomJoinFailures = new Counter('room_join_failures');
+// A joiner that cannot obtain its host's room code never opens a WebSocket.
+// Keep this distinct from join_room and connection failures.
+const roomCodeDiscoveryFailures = new Counter('room_code_discovery_failures');
+// Server errors are split by the operation that caused them. The tagged counter
+// preserves the exact server code in time-series output; the two untagged
+// counters make the terminal summary immediately useful.
+const serverErrors = new Counter('server_errors');
+const serverCreateErrors = new Counter('server_create_errors');
+const serverJoinErrors = new Counter('server_join_errors');
 // gameStartRequests = host sent start_game; gamesStarted = server actually
 // began (game_started/turn_started seen). Under load these diverge.
 const gameStartRequests = new Counter('game_start_requests');
@@ -132,6 +141,10 @@ const errorsRoom = new Counter('errors_room');          // create/join failed or
 const errorsProtocol = new Counter('errors_protocol');  // server sent an `error` message frame
 const errorsGame = new Counter('errors_game');          // game aborted mid-play (e.g. insufficient players)
 const errorsTimeout = new Counter('errors_timeout');    // client patience/lobby/start timers fired
+const gatewayHealthFailures = new Counter('gateway_health_failures');
+const gatewayControlDrops = new Gauge('gateway_fanout_control_drops');
+const gatewayLossyDrops = new Gauge('gateway_fanout_lossy_drops');
+const gatewaySendDrops = new Gauge('gateway_send_drops');
 
 // recordError bumps the grand-total AND the category, so callers have one call
 // site and both metrics stay in sync.
@@ -159,6 +172,12 @@ const COORD_PORT = __ENV.COORD_PORT || '9100';
 const COORD_HOST_PORT = COORD_PORT === '0' ? PORT : COORD_PORT;
 const COORD_URL = `http://${COORD_HOST}:${COORD_HOST_PORT}/rooms`;
 const WS_URL = `ws://${HOST}:${PORT}/ws`;
+// Comma-separated full /health URLs. In AWS this is populated with every
+// gateway's private address by run-test.sh. A single LB health URL remains a
+// useful fallback for local runs.
+const HEALTH_URLS = (__ENV.HEALTH_URLS || `http://${HOST}:${PORT}/health`)
+  .split(',').map((url) => url.trim()).filter((url) => url.length > 0);
+const HEALTH_POLL_SECONDS = parseInt(__ENV.HEALTH_POLL_SECONDS || '15');
 const PLAYERS_PER_ROOM = parseInt(__ENV.PLAYERS_PER_ROOM || '2');
 const TARGET_VUS = parseInt(__ENV.VUS || '100');
 const NUM_ROUNDS = parseInt(__ENV.NUM_ROUNDS || '3');
@@ -236,6 +255,13 @@ export const options = {
       vus: TARGET_VUS,
       iterations: 1,
       maxDuration: `${Math.ceil(SCENARIO_SECONDS / 60) + 3}m`,
+    },
+    gateway_health: {
+      executor: 'constant-vus',
+      exec: 'healthProbe',
+      vus: 1,
+      duration: `${SCENARIO_SECONDS}s`,
+      gracefulStop: '0s',
     },
   },
   // THRESHOLDS = engineering GUARDRAILS (warning floor), NOT the acceptance
@@ -338,11 +364,10 @@ export default function () {
     sleep(1 + Math.random() * 0.5);
     coordRoomCode = pollRoomCode(roomIndex, 60000);
     if (!coordRoomCode) {
-      // Never discovered the room code -> this joiner can't even attempt a
-      // connect. Count it as a room failure (host never published in time) and a
-      // failed player connect.
+      // Never discovered the room code -> this joiner cannot attempt a WebSocket.
+      // It must not affect WS connection or host-only game-completion rates.
       roomJoinFailures.add(1); recordError('room');
-      connectionSuccess.add(0); gameCompletionRate.add(0);
+      roomCodeDiscoveryFailures.add(1);
       return;
     }
   }
@@ -546,9 +571,15 @@ export default function () {
         setTimeout(function () { if (state === 'lobby') sendReady(); }, Math.floor(randomBetween(1000, 2000)));
         setTimeout(function () { if (state === 'lobby' || state === 'waiting_start') { recordError('timeout'); endSession('aborted'); } }, LOBBY_TIMEOUT_MS);
       } else if (msg.type === 'error') {
-        if (errorsProtocol.count < 10) {
-          console.error(`[SERVER_ERROR] code=${msg.payload && msg.payload.code} message=${msg.payload && msg.payload.message}`);
-        }
+        const code = (msg.payload && msg.payload.code) || 'UNKNOWN';
+        const message = (msg.payload && msg.payload.message) || '';
+        const operation = isHost ? 'create_room' : 'join_room';
+        serverErrors.add(1, { code: code, operation: operation });
+        if (isHost) serverCreateErrors.add(1); else serverJoinErrors.add(1);
+        // Custom Counter values are unavailable inside a k6 VU, so the old
+        // errorsProtocol.count guard suppressed every diagnostic. Log each
+        // server error; the tagged metric keeps an aggregate for dashboards.
+        console.error(`[SERVER_ERROR] operation=${operation} code=${code} message=${message}`);
         recordError('protocol'); endSession('error');
       }
     }
@@ -681,6 +712,36 @@ export function setup() {
 }
 
 export function teardown() { console.log('Load test complete.'); }
+
+// Runs as a dedicated one-VU scenario. It does not share state with game VUs,
+// so it observes every configured gateway directly and prints a timestamped
+// snapshot throughout the run rather than only once in setup().
+export function healthProbe() {
+  for (const url of HEALTH_URLS) {
+    const res = http.get(url, { tags: { name: 'gateway_health' }, timeout: '5s' });
+    if (res.status !== 200) {
+      gatewayHealthFailures.add(1, { url: url, status: String(res.status) });
+      console.error(`[GATEWAY_HEALTH_ERROR] url=${url} status=${res.status}`);
+      continue;
+    }
+    try {
+      const health = JSON.parse(res.body);
+      const fanout = health.fanout_dropped || {};
+      const send = health.send_dropped || {};
+      const tags = { url: url };
+      gatewayControlDrops.add(Number(fanout.control || 0), tags);
+      gatewayLossyDrops.add(Number(fanout.lossy || 0), tags);
+      gatewaySendDrops.add(
+        Number(send.stroke || 0) + Number(send.fill || 0) + Number(send.guess || 0), tags,
+      );
+      console.log(`[GATEWAY_HEALTH] url=${url} active_clients=${health.active_clients} streams=${health.grpc_streams_active} control_drops=${fanout.control || 0} lossy_drops=${fanout.lossy || 0} send_drops=${JSON.stringify(send)} stream_errors=${JSON.stringify(health.grpc_stream_errors || {})}`);
+    } catch (e) {
+      gatewayHealthFailures.add(1, { url: url, status: 'invalid_json' });
+      console.error(`[GATEWAY_HEALTH_ERROR] url=${url} invalid_json`);
+    }
+  }
+  sleep(HEALTH_POLL_SECONDS);
+}
 
 // handleSummary appends an ACCEPTANCE report that checks the actual requirement
 // values (99% / 50ms / 80%), independent of the looser guardrail thresholds. A

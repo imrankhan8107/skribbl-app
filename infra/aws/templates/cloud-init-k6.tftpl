@@ -49,13 +49,18 @@ VUS=$${1:-100}
 PLAYERS=$${2:-2}
 HZ=$${3:-20}
 RAMP=$${4:-0}
-COORD_HOST=$${5:-${lb_private_ip}}
-COORD_PORT=$${6:-0}
+# Keep room-code coordination off the LB/WebSocket data plane. The first
+# gateway's dedicated control-plane listener sees the Redis-backed room map for
+# the whole fleet.
+COORD_HOST=$${5:-${coord_host}}
+COORD_PORT=$${6:-9100}
+HEALTH_URLS="${gateway_health_urls}"
 
 echo "=========================================================="
 echo " Starting Skribbl In-VPC k6 Load Test"
 echo " Target LB: http://${lb_private_ip}:80"
 echo " Coord: http://$COORD_HOST:$COORD_PORT/rooms"
+echo " Gateway health targets: $HEALTH_URLS"
 echo " VUs: $VUS | Players/Room: $PLAYERS | Stroke: $${HZ}Hz | Ramp: $${RAMP}s"
 echo "=========================================================="
 
@@ -65,6 +70,7 @@ k6 run \
   -e PORT=80 \
   -e COORD_HOST=$COORD_HOST \
   -e COORD_PORT=$COORD_PORT \
+  -e HEALTH_URLS="$HEALTH_URLS" \
   -e TURN_DURATION=30 \
   -e VUS=$VUS \
   -e PLAYERS_PER_ROOM=$PLAYERS \

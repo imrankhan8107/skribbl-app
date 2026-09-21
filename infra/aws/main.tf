@@ -295,9 +295,11 @@ resource "aws_instance" "load_generator" {
   key_name               = aws_key_pair.deployer.key_name
 
   user_data = templatefile("${path.module}/templates/cloud-init-k6.tftpl", {
-    git_repo_url  = var.git_repo_url
-    git_branch    = var.git_branch
-    lb_private_ip = aws_instance.lb.private_ip
+    git_repo_url        = var.git_repo_url
+    git_branch          = var.git_branch
+    lb_private_ip       = aws_instance.lb.private_ip
+    coord_host          = aws_instance.gateways[0].private_ip
+    gateway_health_urls = join(",", [for ip in aws_instance.gateways[*].private_ip : "http://${ip}:9000/health"])
   })
 
   root_block_device {
