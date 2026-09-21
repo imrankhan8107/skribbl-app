@@ -263,8 +263,10 @@ const MIN_PLAYERS_TO_START = parseInt(__ENV.MIN_PLAYERS_TO_START || '2');
 const START_GRACE_MS = parseInt(__ENV.START_GRACE_MS || '15000');
 const CONNECT_TIMEOUT_MS = parseInt(__ENV.CONNECT_TIMEOUT_MS || '30000');
 // Lobby patience window: how long players wait in the lobby for the game to start.
-// Under a 180s ramp, late players in a room arrive up to 150-180s after the host. Default to 240s.
-const LOBBY_TIMEOUT_MS = parseInt(__ENV.LOBBY_TIMEOUT_MS || '240000');
+// Scaled dynamically with RAMP_SECONDS so wider ramps (e.g. 240s-300s for 35k-40k)
+// give late room joiners adequate time to connect without timing out.
+const DEFAULT_LOBBY_TIMEOUT_MS = Math.max(240000, (RAMP_SECONDS + 60) * 1000);
+const LOBBY_TIMEOUT_MS = parseInt(__ENV.LOBBY_TIMEOUT_MS || String(DEFAULT_LOBBY_TIMEOUT_MS));
 
 const HOLD_SECONDS =
   NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + PER_TURN_SLACK) + HOLD_FIXED_BUFFER;

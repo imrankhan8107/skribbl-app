@@ -14,6 +14,7 @@ net.ipv4.tcp_fin_timeout = 15
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_rmem = 4096 87380 16777216
 net.ipv4.tcp_wmem = 4096 65536 16777216
+vm.swappiness = 20
 EOF
 sysctl -p
 
@@ -28,9 +29,9 @@ ubuntu soft nofile 131072
 ubuntu hard nofile 131072
 EOF
 
-# 1.5 Configure Swap Space (16 GB) to prevent k6 OOM kill on 25k+ VU tests
+# 1.5 Configure Swap Space (24 GB) to prevent k6 OOM kill on 35k-40k VU tests
 if [ ! -f /swapfile ]; then
-  fallocate -l 16G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=16384
+  fallocate -l 24G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=24576
   chmod 600 /swapfile
   mkswap /swapfile
   swapon /swapfile

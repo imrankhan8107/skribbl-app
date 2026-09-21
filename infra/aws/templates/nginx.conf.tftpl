@@ -1,8 +1,8 @@
 worker_processes auto;
-worker_rlimit_nofile 131072;
+worker_rlimit_nofile 262144;
 
 events {
-    worker_connections 65536;
+    worker_connections 131072;
 }
 
 http {
@@ -28,7 +28,7 @@ http {
         server ${ip}:${port};
 %{ endfor ~}
 %{ endfor ~}
-        keepalive 128;
+        keepalive 256;
     }
 
     map $http_upgrade $connection_upgrade {
