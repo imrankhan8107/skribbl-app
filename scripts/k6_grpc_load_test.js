@@ -176,11 +176,20 @@ const COORD_PORT = __ENV.COORD_PORT || '9100';
 const COORD_HOST_PORT = COORD_PORT === '0' ? PORT : COORD_PORT;
 const COORD_URL = `http://${COORD_HOST}:${COORD_HOST_PORT}/rooms`;
 
+// COORD_URLS = comma-separated "host:port" pairs for EVERY gateway container's
+// coord port (e.g. "10.0.0.1:9100,10.0.0.1:9102,10.0.0.1:9104,10.0.0.2:9100,...").
+// When set (AWS deployments), this spreads coord load across all 6 containers.
+// Falls back to building URLs from COORD_HOSTS + COORD_PORT for local/compat runs.
+const _rawCoordUrls = __ENV.COORD_URLS
+  ? __ENV.COORD_URLS.split(',').map((u) => u.trim()).filter((u) => u.length > 0)
+  : COORD_HOSTS.map((h) => `${h}:${COORD_HOST_PORT}`);
+
 function getCoordUrl(roomIndex) {
-  if (!COORD_HOSTS || COORD_HOSTS.length === 0) return COORD_URL;
-  const host = COORD_HOSTS[roomIndex % COORD_HOSTS.length];
-  return `http://${host}:${COORD_HOST_PORT}/rooms`;
+  const endpoint = _rawCoordUrls[roomIndex % _rawCoordUrls.length];
+  // endpoint is already "host:port" — just prefix http:// and append /rooms
+  return `http://${endpoint}/rooms`;
 }
+
 const WS_URL = `ws://${HOST}:${PORT}/ws`;
 // Comma-separated full /health URLs. In AWS this is populated with every
 // gateway's private address by run-test.sh. A single LB health URL remains a
@@ -789,12 +798,30 @@ export function teardown() { console.log('Load test complete.'); }
 // Runs as a dedicated one-VU scenario. It does not share state with game VUs,
 // so it observes every configured gateway directly and prints a timestamped
 // snapshot throughout the run rather than only once in setup().
+//
+// Auto-stop: once all gateways have drained to active_clients=0 for
+// AUTO_STOP_CONSECUTIVE_ZEROS consecutive polls (default 2), the test is
+// aborted cleanly so results are printed without requiring Ctrl+C.
+// A minimum elapsed time of AUTO_STOP_MIN_ELAPSED_S seconds (default 300s / 5min)
+// prevents a false-positive early stop before games have even begun.
+const AUTO_STOP_CONSECUTIVE_ZEROS = parseInt(__ENV.AUTO_STOP_ZEROS || '2');
+const AUTO_STOP_MIN_ELAPSED_S = parseInt(__ENV.AUTO_STOP_MIN_S || '300');
+
+let _healthProbeStart = null;
+let _consecutiveAllZeroPolls = 0;
+
 export function healthProbe() {
+  if (_healthProbeStart === null) _healthProbeStart = Date.now();
+  const elapsedS = (Date.now() - _healthProbeStart) / 1000;
+
+  let allZero = true;
+
   for (const url of HEALTH_URLS) {
     const res = http.get(url, { tags: { name: 'gateway_health' }, timeout: '5s' });
     if (res.status !== 200) {
       gatewayHealthFailures.add(1, { url: url, status: String(res.status) });
       console.error(`[GATEWAY_HEALTH_ERROR] url=${url} status=${res.status}`);
+      allZero = false; // treat error as non-zero to avoid premature stop
       continue;
     }
     try {
@@ -808,13 +835,30 @@ export function healthProbe() {
         Number(send.stroke || 0) + Number(send.fill || 0) + Number(send.guess || 0), tags,
       );
       console.log(`[GATEWAY_HEALTH] url=${url} active_clients=${health.active_clients} streams=${health.grpc_streams_active} control_drops=${fanout.control || 0} lossy_drops=${fanout.lossy || 0} send_drops=${JSON.stringify(send)} stream_errors=${JSON.stringify(health.grpc_stream_errors || {})}`);
+      if (Number(health.active_clients) > 0) allZero = false;
     } catch (e) {
       gatewayHealthFailures.add(1, { url: url, status: 'invalid_json' });
       console.error(`[GATEWAY_HEALTH_ERROR] url=${url} invalid_json`);
+      allZero = false;
     }
   }
+
   sleep(HEALTH_POLL_SECONDS);
+
+  // Auto-stop: abort the whole test once all gateways have fully drained,
+  // but only after the minimum elapsed time to avoid a false early stop.
+  if (elapsedS >= AUTO_STOP_MIN_ELAPSED_S && allZero) {
+    _consecutiveAllZeroPolls++;
+    console.log(`[GATEWAY_HEALTH] All gateways at 0 active_clients (${_consecutiveAllZeroPolls}/${AUTO_STOP_CONSECUTIVE_ZEROS} consecutive). Elapsed: ${elapsedS.toFixed(0)}s`);
+    if (_consecutiveAllZeroPolls >= AUTO_STOP_CONSECUTIVE_ZEROS) {
+      console.log('[GATEWAY_HEALTH] All gateways drained — auto-stopping test to print results.');
+      exec.test.abort('All gateway sessions completed — auto-stop');
+    }
+  } else {
+    _consecutiveAllZeroPolls = 0;
+  }
 }
+
 
 // handleSummary appends an ACCEPTANCE report that checks the actual requirement
 // values (99% / 50ms / 80%), independent of the looser guardrail thresholds. A

@@ -300,6 +300,13 @@ resource "aws_instance" "load_generator" {
     lb_private_ip       = aws_instance.lb.private_ip
     coord_host          = aws_instance.gateways[0].private_ip
     coord_hosts         = join(",", aws_instance.gateways[*].private_ip)
+    # Full host:port coord URLs for every gateway container (port = 9100 + (i*2)).
+    # This distributes coordination across all containers, not just port 9100.
+    coord_urls = join(",", flatten([
+      for ip in aws_instance.gateways[*].private_ip : [
+        for i in range(var.gateways_per_host) : "${ip}:${9100 + i * 2}"
+      ]
+    ]))
     gateway_health_urls = join(",", flatten([
       for ip in aws_instance.gateways[*].private_ip : [
         for i in range(var.gateways_per_host) : "http://${ip}:${9000 + i * 2}/health"

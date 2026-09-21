@@ -58,16 +58,18 @@ PLAYERS=$${2:-2}
 HZ=$${3:-20}
 RAMP=$${4:-0}
 # Keep room-code coordination off the LB/WebSocket data plane.
-# Distribute coordination across all gateway private IPs via round-robin.
+# COORD_URLS = comma-separated host:port for EVERY gateway container coord endpoint.
+# This round-robins across all 6 containers (3 per gateway × 2 gateways).
 COORD_HOST=$${5:-${coord_host}}
 COORD_HOSTS="${coord_hosts}"
+COORD_URLS="${coord_urls}"
 COORD_PORT=$${6:-9100}
 HEALTH_URLS="${gateway_health_urls}"
 
 echo "=========================================================="
 echo " Starting Skribbl In-VPC k6 Load Test"
 echo " Target LB: http://${lb_private_ip}:80"
-echo " Coord Hosts: $COORD_HOSTS (Port $COORD_PORT)"
+echo " Coord URLs: $COORD_URLS"
 echo " Gateway health targets: $HEALTH_URLS"
 echo " VUs: $VUS | Players/Room: $PLAYERS | Stroke: $${HZ}Hz | Ramp: $${RAMP}s"
 echo "=========================================================="
@@ -78,6 +80,7 @@ k6 run \
   -e PORT=80 \
   -e COORD_HOST=$COORD_HOST \
   -e COORD_HOSTS="$COORD_HOSTS" \
+  -e COORD_URLS="$COORD_URLS" \
   -e COORD_PORT=$COORD_PORT \
   -e HEALTH_URLS="$HEALTH_URLS" \
   -e TURN_DURATION=30 \
@@ -87,6 +90,7 @@ k6 run \
   -e RAMP_SECONDS=$RAMP \
   scripts/k6_grpc_load_test.js
 EOF
+
 
 chmod +x /home/ubuntu/run-test.sh
 chown ubuntu:ubuntu /home/ubuntu/run-test.sh
