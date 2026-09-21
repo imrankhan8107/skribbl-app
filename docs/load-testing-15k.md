@@ -6,18 +6,18 @@ This guide documents the architecture, OS kernel tuning, execution profiles, and
 
 ## 1. Workload Sizing & Fan-out Math
 
-| Metric | 10,000 VUs | 12,500 VUs | 15,000 VUs |
-|---|---|---|---|
-| **Players per Room** | 5 | 5 | 5 |
-| **Total Concurrent Rooms** | 2,000 | 2,500 | 3,000 |
-| **Active Drawers (1 per room)** | 2,000 | 2,500 | 3,000 |
-| **Active Guessers (4 per room)** | 8,000 | 10,000 | 12,000 |
-| **Stroke Emission Rate** | 20 Hz (50ms interval) | 20 Hz (50ms interval) | 20 Hz (50ms interval) |
-| **Stroke Ingress to Gateways** | 40,000 msgs/sec | 50,000 msgs/sec | 60,000 msgs/sec |
-| **Stroke Fan-out Egress** | **160,000 msgs/sec** | **200,000 msgs/sec** | **240,000 msgs/sec** |
-| **gRPC Bidirectional Streams** | 2,000 streams | 2,500 streams | 3,000 streams |
-| **Recommended Gateways** | 2–3 × `c5a.xlarge` | 3–4 × `c5a.xlarge` | 4 × `c5a.xlarge` |
-| **Recommended Workers** | 2–3 × `c5a.xlarge` | 3–4 × `c5a.xlarge` | 4 × `c5a.xlarge` |
+| Metric | 10,000 VUs | 12,500 VUs | 15,000 VUs | 25,000 VUs |
+|---|---|---|---|---|
+| **Players per Room** | 5 | 5 | 5 | 5 |
+| **Total Concurrent Rooms** | 2,000 | 2,500 | 3,000 | 5,000 |
+| **Active Drawers (1 per room)** | 2,000 | 2,500 | 3,000 | 5,000 |
+| **Active Guessers (4 per room)** | 8,000 | 10,000 | 12,000 | 20,000 |
+| **Stroke Emission Rate** | 20 Hz | 20 Hz | 20 Hz | 5 Hz (realistic) / 20 Hz |
+| **Stroke Ingress to Gateways** | 40,000 msgs/sec | 50,000 msgs/sec | 60,000 msgs/sec | 25,000 msgs/sec (5Hz) |
+| **Stroke Fan-out Egress** | **160,000 msgs/sec** | **200,000 msgs/sec** | **240,000 msgs/sec** | **100,000+ msgs/sec** |
+| **gRPC Bidirectional Streams** | 2,000 streams | 2,500 streams | 3,000 streams | 5,000 streams |
+| **Recommended Gateways** | 2–3 × `c5a.xlarge` | 3–4 × `c5a.xlarge` | 4 × `c5a.xlarge` | 2 hosts × 3 containers (6 gw) `c5a.2xlarge` |
+| **Recommended Workers** | 2–3 × `c5a.xlarge` | 3–4 × `c5a.xlarge` | 4 × `c5a.xlarge` | 5 hosts × 6 containers (30 workers) `c5a.2xlarge` |
 
 ---
 
@@ -130,7 +130,16 @@ k6 run \
   scripts/k6_grpc_load_test.js
 ```
 
+### E. Peak Scale Milestone (25,000 VUs @ 5Hz)
+Executed in-VPC on the multi-host AWS cluster (2 gateway nodes × 3 containers = 6 gateways; 5 worker nodes × 6 containers = 30 workers):
+```bash
+./run-test.sh 25000 5 5 180
+```
+- **VUs:** 25,000 | **Players/Room:** 5 | **Stroke:** 5Hz | **Ramp:** 180s
+- Validated: **99.98% game completion**, **100% WS connection success**, **0 control/lossy/send drops**, **53k msg/s sustained**.
+
 ---
+
 
 ## 5. Key Metrics & Pass Criteria
 

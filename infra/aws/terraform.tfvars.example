@@ -16,7 +16,7 @@ ssh_public_key = "ssh-ed25519 AAAA..."
 # Scale of the cluster
 # Dev / baseline: gateway_count=2, gateways_per_host=1, worker_count=2, workers_per_host=2
 # 10k-15k load:   gateway_count=2, gateways_per_host=2, worker_count=3, workers_per_host=4
-# 25k load:       gateway_count=3, gateways_per_host=2, worker_count=4, workers_per_host=6 (c5a.2xlarge)
+# 25k load:       gateway_count=2, gateways_per_host=3 (6 gw), worker_count=5, workers_per_host=6 (30 workers on c5a.2xlarge)
 gateway_count     = 2
 gateways_per_host = 1
 worker_count      = 2
