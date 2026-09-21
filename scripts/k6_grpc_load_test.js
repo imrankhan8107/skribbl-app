@@ -603,7 +603,14 @@ export default function () {
         }
       } else if (isGameStartSignal(msg.type)) {
         markGameStarted(msg.type); state = 'playing'; handlePlaying(msg);
-      } else if (msg.type === 'game_over') { endSession('completed'); }
+      } else if (msg.type === 'game_over') {
+        if (isHost && !gameStartedCounted) {
+          recordError('game');
+          endSession('aborted');
+        } else {
+          endSession('completed');
+        }
+      }
     }
 
     // Any of these means the game is underway from the CLIENT's point of view,
@@ -628,11 +635,18 @@ export default function () {
     function handleWaitingStart(msg) {
       if (isGameStartSignal(msg.type)) {
         markGameStarted(msg.type); state = 'playing'; handlePlaying(msg);
-      } else if (msg.type === 'game_over') { endSession('completed'); }
-      else if (msg.type === 'error') { recordError('protocol'); endSession('error'); }
+      } else if (msg.type === 'game_over') {
+        if (isHost && !gameStartedCounted) {
+          recordError('game');
+          endSession('aborted');
+        } else {
+          endSession('completed');
+        }
+      } else if (msg.type === 'error') { recordError('protocol'); endSession('error'); }
     }
 
     function handlePlaying(msg) {
+      if (sessionEnded) return;
       switch (msg.type) {
         case 'drawer_selecting':
           isDrawer = msg.payload && msg.payload.drawer_id === playerId;
@@ -654,10 +668,11 @@ export default function () {
     }
 
     function startDrawing() {
+      if (sessionEnded) return;
       drawingActive = true;
       if (STROKE_HZ <= 0) {
         strokeTimer = setInterval(function () {
-          if (!drawingActive || !turnActive) return;
+          if (!drawingActive || !turnActive || sessionEnded) return;
           sendMsg({ type: 'stroke', payload: { points: [{ x: Math.random()*800, y: Math.random()*600 }, { x: Math.random()*800, y: Math.random()*600 }], color: '#000', lineWidth: 3 } });
         }, Math.floor(randomBetween(2000, 5000)));
         return;
@@ -668,7 +683,7 @@ export default function () {
       let lastX = Math.random() * 800;
       let lastY = Math.random() * 600;
       strokeTimer = setInterval(function () {
-        if (!drawingActive || !turnActive) return;
+        if (!drawingActive || !turnActive || sessionEnded) return;
         const points = [];
         for (let i = 0; i < STROKE_POINTS; i++) {
           lastX = Math.max(0, Math.min(800, lastX + randomBetween(-15, 15)));
@@ -680,10 +695,11 @@ export default function () {
     }
 
     function startGuessing() {
+      if (sessionEnded) return;
       guessingActive = true;
       const words = ['cat','dog','house','tree','car','sun','moon','fish','bird','star','flower','mountain','river','boat'];
       guessTimer = setInterval(function () {
-        if (!guessingActive || !turnActive) return;
+        if (!guessingActive || !turnActive || sessionEnded) return;
         sendMsg({ type: 'guess', payload: { text: words[Math.floor(Math.random() * words.length)] } });
       }, Math.floor(randomBetween(3000, 8000)));
     }

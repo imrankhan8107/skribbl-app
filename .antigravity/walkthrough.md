@@ -109,4 +109,19 @@ Implemented a production-grade, multi-host distributed cluster on **Amazon Web S
     * **HTTP Failures & Dropped Frames**: **0.00% (0 / 10,001 requests)**
     * **Overall Acceptance**: **PASS**
 
+  * **Test 5: 15,000 Players (3,000 rooms × 5 players @ 5Hz, In-VPC AWS Cluster)**:
+    * **Cluster Topology**: Multi-Host AWS Cluster (Terraform) with Nginx LB, Go Gateways, Python Game Workers, and dedicated Redis 7.
+    * **Connection Success (Req 9.1)**: **100.00%** (14,996 / 14,996 WebSocket upgrades succeeded) [PASS]
+    * **Message Latency p95 (Req 9.2)**: **28.0ms** (med = 2ms, p90 = 10ms, p95 = 28ms $\le$ 50ms) [PASS]
+    * **Room Lifecycle & RTT**:
+      * **Rooms Created**: **3,000 / 3,000 (100%)** — `k${vu.toString(36)}` fix completely cleared the earlier 1,000 `INVALID_NAME` errors!
+      * **Rooms Joined**: **11,996 / 12,000 (99.97%)** (Room create p95: 73ms, Room join p95: 61ms, WS open p95: 36ms).
+    * **Gateway Health**: Clean data plane with **0 control drops**, **0 lossy drops**, and **0 send buffer drops**.
+    * **Identified Bottleneck & Root Cause**:
+      * **Player Session Completion**: 27.76% (4,163 completed / 10,833 aborted via `errors_timeout`).
+      * **Lobby Timeout Cascade**: Median session duration was exactly 3m0s (`LOBBY_TIMEOUT_MS = 180000`). Joiners sat in lobbies because hosts only issued 496 `start_game` requests.
+      * **Root Cause Found**: In `backend/grpc_server.py`, the host's `VirtualTransport` was instantiated during `create_room` with `room_code = ""`. While `player_id` was rebound to the assigned UUID, `transport.room_code` remained `""`. On single-stream rooms, `room_manager.broadcast()` used the host transport's `send_room()`, emitting broadcasts with `room_code = ""`. The gateway dropped these into the void, preventing hosts from seeing $\ge 2$ players to start games.
+      * **Interrupted VUs**: 3,001 VUs (the hosts) stayed alive waiting on `HOLD_SECONDS` / `setInterval` after joiners aborted at 3m, and were force-stopped at the 27m scenario deadline.
+
+
 

@@ -45,6 +45,10 @@ func (f *FanOutDispatcher) Deliver(msg *proto.BroadcastMessage) {
 
 	if len(msg.TargetPlayerIds) == 0 {
 		// Broadcast to all players in the room
+		if msg.RoomCode == "" {
+			debugf("[fanout] DROPPED: room broadcast with empty room_code")
+			return
+		}
 		sessions := f.registry.GetByRoom(msg.RoomCode)
 		debugf("[fanout] room=%s targets=0 sessions_found=%d class=%s", msg.RoomCode, len(sessions), class)
 		tracef("[trace] GW_FANOUT_ALL room=%s recipients=%d class=%s", msg.RoomCode, len(sessions), class)

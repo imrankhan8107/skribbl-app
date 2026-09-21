@@ -873,7 +873,7 @@ class RoomManager:
             # gRPC path, single shared stream (production invariant): ONE
             # room-wide fan-out message. Gateway expands to all room sessions.
             try:
-                await single_queue_transport.send_room(data, lossy=lossy)
+                await single_queue_transport.send_room(data, room_code=room_code, lossy=lossy)
             except Exception:
                 pass
         else:

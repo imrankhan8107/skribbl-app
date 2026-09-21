@@ -45,7 +45,7 @@ async def init_redis(handler: Callable[[str, dict], Awaitable[None]]) -> None:
 
     try:
         import redis.asyncio as aioredis
-        _redis_client = aioredis.from_url(REDIS_URL, decode_responses=True, max_connections=100)
+        _redis_client = aioredis.from_url(REDIS_URL, decode_responses=True, max_connections=300)
         _pubsub = _redis_client.pubsub()
         _message_handler = handler
         # Subscribe to a worker-specific control channel to establish the connection

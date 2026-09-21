@@ -28,6 +28,15 @@ ubuntu soft nofile 131072
 ubuntu hard nofile 131072
 EOF
 
+# 1.5 Configure Swap Space (16 GB) to prevent k6 OOM kill on 25k+ VU tests
+if [ ! -f /swapfile ]; then
+  fallocate -l 16G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=16384
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
 # 2. Install Git and k6
 apt-get update -y
 apt-get install -y ca-certificates curl gnupg git htop

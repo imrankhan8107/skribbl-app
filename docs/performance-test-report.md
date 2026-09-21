@@ -853,3 +853,138 @@ Notes:
 - Push past 10k (12.5k–15k @ 20Hz) on 4 gateways to find the new node ceiling.
 - Move gateways to **separate instances** for true multi-box scaling beyond one
   host's core count; nginx/ALB fronts them with the same room-sticky hash.
+
+---
+
+# Addendum 7: 15,000 VU Scale Run & Forensic Bottleneck Analysis (Sep 21, 2026)
+
+**Environment:** AWS Multi-Host Cluster (Terraform). Load Balancer (Nginx) fronting scalable Go Gateways, Python Workers (gRPC multiplexed), Redis 7 cluster, and an in-VPC k6 load generator.
+
+**Workload Profile:**
+- **Target Concurrency:** 15,000 VUs $\to$ 3,000 rooms $\times$ 5 players per room
+- **Stroke Rate:** 5 Hz realistic drawing simulation
+- **Ramp Duration:** 120s gradual arrival
+- **Turn Duration:** 30s turns across 3 rounds
+
+---
+
+## 1. Raw k6 Benchmark Results
+
+| Metric | Result | Target / Requirement | Status |
+|---|---|---|---|
+| **Rooms Created** | **3,000 / 3,000 (100.0%)** | 3,000 rooms | ✅ PASS |
+| **Rooms Joined** | **11,996 / 12,000 (99.97%)** | 12,000 joiners | ✅ PASS |
+| **WebSocket Connection Success (Req 9.1)** | **100.00%** (14,996 / 14,996) | $\ge$ 99.0% | ✅ PASS |
+| **Message Latency p95 (Req 9.2)** | **28.0ms** (med: 2ms, p90: 10ms) | $\le$ 50.0ms | ✅ PASS |
+| **Room Create RTT p95** | **73.04ms** (avg: 16.6ms, med: 5ms) | $\le$ 5,000ms | ✅ PASS |
+| **Room Join RTT p95** | **61.25ms** (avg: 15.38ms, med: 4ms) | $\le$ 5,000ms | ✅ PASS |
+| **WS Open RTT p95** | **36.0ms** (avg: 7.98ms, med: 1ms) | — | ✅ PASS |
+| **Gateway Fanout Control Drops** | **0** | 0 drops | ✅ PASS |
+| **Gateway Fanout Lossy Drops** | **0** | — | ✅ PASS |
+| **Gateway Send Drops** | **0** | — | ✅ PASS |
+| **HTTP Coord Discovery Failures** | **0.80%** (124 / 15,406 reqs) | $\le$ 5% | ✅ PASS |
+| **Player Session Completion Rate** | **27.76%** (4,163 passed / 10,833 aborted) | $\ge$ 80.0% | ❌ FAIL |
+| **True Game Starts** | **1,508 / 3,000** | 3,000 | ⚠️ Anomaly |
+| **Host Game Start Requests** | **496 / 3,000** | 3,000 | ⚠️ Anomaly |
+| **Interrupted VU Iterations** | **3,001 / 15,001** (at 27m deadline) | 0 | ⚠️ Stuck VUs |
+
+---
+
+## 2. Key Findings & Metric Forensic Analysis
+
+### A. Player Name Length Fix Confirmed (Commit `377d292`)
+In the earlier 15k run, exactly 1,000 `create_room` requests failed with server error:
+```
+[SERVER_ERROR] operation=create_room code=INVALID_NAME message=Display name must be between 1 and 20 characters
+```
+This was caused by the naming pattern `k6_host_vu10001_r2000` exceeding the backend's 20-character limit once VUs crossed 10,000. Changing the generator to `k${vu.toString(36)}` resolved this: **all 3,000 rooms were created cleanly and 14,996 WebSockets connected (100% success)**.
+
+### B. The 3-Minute Lobby Timeout Cascade
+Despite 100% connection success, **10,833 sessions aborted due to `errors_timeout`** (out of 20,845 timeout events).
+- `ws_connection_duration`: `min=3m0s`, `med=3m0s`, `p90=8m6s`.
+- The median session lifetime was **exactly 3 minutes**, directly matching `LOBBY_TIMEOUT_MS = 180000` (3 minutes).
+- **Explanation:** Joiners entered the room and waited for the game to start. Because the start condition was not satisfied for the majority of rooms, joiners sat in `state = 'lobby'` until the 180s timer expired:
+  ```javascript
+  setTimeout(function () {
+    if (state === 'lobby' || state === 'waiting_start') {
+      recordError('timeout');
+      endSession('aborted');
+    }
+  }, LOBBY_TIMEOUT_MS);
+  ```
+- These 10,833 joiners aborted, closed their sockets, and finished their iterations around the 3-minute mark, explaining why **~12,000 iterations completed early**.
+
+### C. Why 3,000 VUs Remained Running Until 27 Minutes (`setInterval` Interrupted)
+- At 24m30s, ~12,000 iterations (mostly joiners) had completed or aborted.
+- The remaining **~3,000 VUs (the hosts)** did not abort at 3 minutes because they either armed or transitioned to `playing`.
+- In rooms where a partial turn began or `state` changed, hosts waited on the overarching session patience window:
+  ```javascript
+  setTimeout(function () {
+    if (!gameCompleted) { recordError('timeout'); endSession('aborted'); }
+  }, HOLD_SECONDS * 1000); // 1,305s = 21.75 minutes + arrival ramp
+  ```
+- Moreover, VUs that were drawing or guessing had active `strokeTimer` or `guessTimer` loops (`setInterval`). Because the joiners had already aborted at 3m, game progression broke down, `game_over` was never broadcast, and sessions never finished gracefully.
+- When k6 hit the scenario `maxDuration: 27m`, it forcibly interrupted the remaining 3,001 VUs, triggering:
+  ```
+  WARN[2165] setInterval XX was stopped because the VU iteration was interrupted
+  ```
+- These warnings are the **symptom of stalled game sessions**, not the root cause.
+
+### D. The `game_completion_rate: 100%` False Positive
+- The k6 summary showed `[PASS] 9.3 game completion: 100.00% (✓ 3000 ✗ 0)`.
+- **This metric was misleading.** In commit `d1db54c`, joiners were prevented from recording `game_completion_rate`, restricting the metric to hosts. However, due to how the host outcome and session termination were recorded when games aborted or were interrupted, it registered 3,000 successes.
+- The true completion rate is reflected by **`player_session_completion_rate: 27.76%`** (only 4,163 players completed all rounds).
+
+---
+
+## 3. Root Cause: Empty `room_code` in gRPC Room Fanout
+
+The underlying cause of why hosts did not start games (`game_start_requests: 496`) and joiners remained stranded in lobbies is located in the worker/gateway multiplexing bridge:
+
+1. **Host Transport Instantiation:**
+   When a host calls `create_room`, the gateway forwards the envelope with `RoomCode = ""` because no room exists yet:
+   ```go
+   envelope := &proto.GameMessage{
+       PlayerId: session.PlayerID,
+       RoomCode: "",
+       MessageType: "create_room",
+   }
+   ```
+   In `backend/grpc_server.py`, the worker instantiates the host's transport:
+   ```python
+   transport = VirtualTransport(player_id, room_code, send_queue) # room_code is ""
+   ```
+2. **Missing Room Code Rebind:**
+   In `_rebind_transport()`, the worker rebinds `transport.player_id` to the assigned UUID, but **never updates `transport.room_code`** to the newly generated room code. `transport.room_code` remains `""`.
+3. **Empty Room Broadcast:**
+   In `backend/room_manager.py`, when joiners arrive, `room_manager.broadcast()` selects the O(1) fanout path:
+   ```python
+   if len(seen_queues) == 1 and not has_real_websocket:
+       await single_queue_transport.send_room(data, lossy=lossy)
+   ```
+   Because `single_queue_transport` is the host's transport (`room.players[0]`), `send_room` emits:
+   ```python
+   BroadcastMessage(room_code=self.room_code, ...) # room_code is ""!
+   ```
+4. **Gateway Delivery Drop:**
+   The gateway receives a broadcast with `msg.RoomCode == ""` and queries `registry.GetByRoom("")`, which returns zero sessions.
+   - The `player_list` broadcast is never delivered to the host or joiners.
+   - The host never sees `count >= 2`, never arms start, and never sends `start_game`.
+   - Joiners sit in the lobby until `LOBBY_TIMEOUT_MS` (3 minutes) expires and abort.
+   - The few rooms that did start (496 requests / 1,508 starts) occurred when players spanned multiple gateways/queues, falling back to the targeted `send_text` path.
+
+---
+
+## 4. Next Steps & Remediation Plan
+
+1. **Fix Worker `VirtualTransport.room_code` Rebinding:**
+   Update `backend/grpc_server.py` in `_rebind_transport` and `create_room` dispatch to explicitly set:
+   ```python
+   transport.room_code = real_room_code
+   ```
+   Ensure `single_queue_transport.send_room()` always carries the valid 6-character room code.
+2. **Fix `game_completion_rate` Metric Accounting in k6:**
+   Ensure hosts record `gameCompletionRate.add(0)` whenever the lobby timeout expires or the session aborts.
+3. **Re-run 15,000 VU Benchmark:**
+   Verify that all 3,000 rooms receive `player_list`, hosts trigger `start_game`, and player session completion matches the $\ge 80\%$ target.
+

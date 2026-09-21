@@ -302,3 +302,40 @@ func TestConcurrentAccess(t *testing.T) {
 	wg.Wait()
 	// If we get here without a race detector panic, concurrency is safe
 }
+
+func TestEmptyRoomCodeNotIndexed(t *testing.T) {
+	sr := NewSessionRegistry()
+	_, serverConn, cleanup := newTestConn(t)
+	defer cleanup()
+
+	sr.Register("player-pending", "", serverConn)
+	defer sr.Unregister("player-pending")
+
+	if sessions := sr.GetByRoom(""); sessions != nil {
+		t.Fatalf("expected nil for GetByRoom(\"\"), got %d sessions", len(sessions))
+	}
+}
+
+func TestUpdateIdentityCleansUpOldRoom(t *testing.T) {
+	sr := NewSessionRegistry()
+	_, serverConn, cleanup := newTestConn(t)
+	defer cleanup()
+
+	sr.Register("pending-1", "", serverConn)
+
+	// Simulate room_created confirming identity and room
+	sr.UpdateIdentity("pending-1", "real-p1", "ROOM99")
+	defer sr.Unregister("real-p1")
+
+	if sessions := sr.GetByRoom(""); sessions != nil {
+		t.Fatalf("expected empty room to have no sessions, got %d", len(sessions))
+	}
+
+	sessions := sr.GetByRoom("ROOM99")
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session in ROOM99, got %d", len(sessions))
+	}
+	if sessions[0].PlayerID != "real-p1" {
+		t.Fatalf("expected real-p1, got %s", sessions[0].PlayerID)
+	}
+}

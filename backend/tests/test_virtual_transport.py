@@ -99,3 +99,26 @@ async def test_send_json_is_awaitable(transport, send_queue):
     coro = transport.send_json({"key": "value"})
     assert asyncio.iscoroutine(coro)
     await coro
+
+
+async def test_send_room_uses_explicit_room_code(transport, send_queue):
+    """send_room prioritizes explicit room_code over transport.room_code."""
+    await transport.send_room('{"type": "chat"}', room_code="XYZ789")
+
+    msg = await send_queue.get()
+    assert isinstance(msg, BroadcastMessage)
+    assert msg.room_code == "XYZ789"
+    assert msg.message_type == "broadcast"
+    assert msg.payload == b'{"type": "chat"}'
+
+
+async def test_send_room_falls_back_to_transport_room_code(transport, send_queue):
+    """send_room falls back to transport.room_code if room_code not provided."""
+    await transport.send_room('{"type": "chat"}')
+
+    msg = await send_queue.get()
+    assert isinstance(msg, BroadcastMessage)
+    assert msg.room_code == "ABC123"
+    assert msg.message_type == "broadcast"
+
+

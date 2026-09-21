@@ -73,10 +73,12 @@ func (sr *SessionRegistry) Register(playerID, roomCode string, conn *websocket.C
 
 	sr.sessions[playerID] = session
 
-	if sr.byRoom[roomCode] == nil {
-		sr.byRoom[roomCode] = make(map[string]*PlayerSession)
+	if roomCode != "" {
+		if sr.byRoom[roomCode] == nil {
+			sr.byRoom[roomCode] = make(map[string]*PlayerSession)
+		}
+		sr.byRoom[roomCode][playerID] = session
 	}
-	sr.byRoom[roomCode][playerID] = session
 
 	sr.mu.Unlock()
 
@@ -126,8 +128,12 @@ func (sr *SessionRegistry) Update(playerID string, conn *websocket.Conn) {
 
 	// Update indices
 	sr.sessions[playerID] = newSession
-	if roomMap := sr.byRoom[newSession.RoomCode]; roomMap != nil {
-		roomMap[playerID] = newSession
+	if newSession.RoomCode != "" {
+		if roomMap := sr.byRoom[newSession.RoomCode]; roomMap != nil {
+			roomMap[playerID] = newSession
+		} else {
+			sr.byRoom[newSession.RoomCode] = map[string]*PlayerSession{playerID: newSession}
+		}
 	}
 
 	sr.mu.Unlock()
@@ -154,10 +160,11 @@ func (sr *SessionRegistry) UpdateIdentity(oldPlayerID, newPlayerID, newRoomCode 
 
 	// Remove from old indices
 	delete(sr.sessions, oldPlayerID)
-	if roomMap := sr.byRoom[session.RoomCode]; roomMap != nil {
+	for rCode, roomMap := range sr.byRoom {
 		delete(roomMap, oldPlayerID)
+		delete(roomMap, newPlayerID)
 		if len(roomMap) == 0 {
-			delete(sr.byRoom, session.RoomCode)
+			delete(sr.byRoom, rCode)
 		}
 	}
 
@@ -169,15 +176,20 @@ func (sr *SessionRegistry) UpdateIdentity(oldPlayerID, newPlayerID, newRoomCode 
 
 	// Re-insert under new indices
 	sr.sessions[newPlayerID] = session
-	if sr.byRoom[session.RoomCode] == nil {
-		sr.byRoom[session.RoomCode] = make(map[string]*PlayerSession)
+	if session.RoomCode != "" {
+		if sr.byRoom[session.RoomCode] == nil {
+			sr.byRoom[session.RoomCode] = make(map[string]*PlayerSession)
+		}
+		sr.byRoom[session.RoomCode][newPlayerID] = session
 	}
-	sr.byRoom[session.RoomCode][newPlayerID] = session
 }
 
 // GetByRoom returns a snapshot of all player sessions in the given room.
-// Returns nil if the room has no sessions.
+// Returns nil if the room has no sessions or if roomCode is empty.
 func (sr *SessionRegistry) GetByRoom(roomCode string) []*PlayerSession {
+	if roomCode == "" {
+		return nil
+	}
 	sr.mu.RLock()
 	defer sr.mu.RUnlock()
 
@@ -217,10 +229,10 @@ func (sr *SessionRegistry) removeLocked(session *PlayerSession) {
 
 	delete(sr.sessions, session.PlayerID)
 
-	if roomMap := sr.byRoom[session.RoomCode]; roomMap != nil {
+	for rCode, roomMap := range sr.byRoom {
 		delete(roomMap, session.PlayerID)
 		if len(roomMap) == 0 {
-			delete(sr.byRoom, session.RoomCode)
+			delete(sr.byRoom, rCode)
 		}
 	}
 }

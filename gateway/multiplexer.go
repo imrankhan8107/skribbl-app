@@ -192,9 +192,7 @@ func (m *Multiplexer) handleCreateRoom(session *PlayerSession, rawMsg []byte, pa
 
 	// Store the workerID on the session so the response interceptor knows
 	// which worker stream to associate with the new room.
-	// RoomCode is temporarily set to workerID; the interceptor replaces it
-	// with the real room_code when room_created arrives.
-	session.RoomCode = workerID
+	// RoomCode remains empty until confirmed by the worker's room_created response.
 	session.WorkerID = workerID
 
 	debugf("[multiplexer] create_room sent player=%s worker=%s (async)", session.PlayerID, workerID)

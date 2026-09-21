@@ -215,6 +215,9 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                     player_rooms[player_id] = room_code
 
                 transport = transports[player_id]
+                if room_code and not transport.room_code:
+                    transport.room_code = room_code
+                    player_rooms[player_id] = room_code
 
                 # Dispatch the message through existing game logic
                 try:
@@ -224,10 +227,13 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                     # Track actual player_ids assigned by identity messages
                     if result and isinstance(result, dict):
                         assigned_id = result.get("payload", {}).get("player_id")
+                        assigned_room = result.get("payload", {}).get("room_code", room_code)
                         if assigned_id and assigned_id != player_id:
                             # Register the assigned player_id for cleanup
-                            player_rooms[assigned_id] = result.get("payload", {}).get("room_code", room_code)
+                            player_rooms[assigned_id] = assigned_room
                             transports[assigned_id] = transport
+                        if assigned_room and not transport.room_code:
+                            transport.room_code = assigned_room
                 except Exception as exc:
                     logger.exception(
                         "Error dispatching gRPC message type '%s' for player %s: %s",
@@ -274,12 +280,18 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
         """
         if not isinstance(result, dict) or result.get("type") == "error":
             return
+        real_room_code = result.get("payload", {}).get("room_code")
+        if real_room_code and not transport.room_code:
+            transport.room_code = real_room_code
+
         real_player_id = result.get("payload", {}).get("player_id")
         if not real_player_id or real_player_id == transport.player_id:
             return
 
         prev_id = transport.player_id
         transport.player_id = real_player_id
+        if real_room_code and not transport.room_code:
+            transport.room_code = real_room_code
         if transports is not None:
             # Re-key the transport map: real_player_id now maps to this transport.
             transports[real_player_id] = transport
@@ -287,8 +299,8 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             # still resolves; it will be cleaned up on stream close.
         if _TRACE_ENABLED:
             logger.info(
-                "[trace] BE_TRANSPORT_REBIND old=%s new=%s (was_pending=%s)",
-                prev_id, real_player_id, old_player_id,
+                "[trace] BE_TRANSPORT_REBIND old=%s new=%s room=%s (was_pending=%s)",
+                prev_id, real_player_id, transport.room_code, old_player_id,
             )
 
     async def _dispatch_message(

@@ -105,7 +105,7 @@ class VirtualTransport:
         """
         await self.send_text(json.dumps(data))
 
-    async def send_room(self, data: str, lossy: bool = False) -> None:
+    async def send_room(self, data: str, room_code: str = "", lossy: bool = False) -> None:
         """Enqueue a single room-wide BroadcastMessage (empty target list).
 
         This is the O(1) fan-out path: instead of emitting one targeted
@@ -130,10 +130,12 @@ class VirtualTransport:
 
         Args:
             data: The already-serialized JSON string to deliver to the room.
+            room_code: Optional explicit room code. Defaults to self.room_code.
             lossy: True for droppable draw events; False for must-deliver events.
         """
+        target_room = room_code or self.room_code
         msg = BroadcastMessage(
-            room_code=self.room_code,
+            room_code=target_room,
             message_type="broadcast_lossy" if lossy else "broadcast",
             payload=data.encode("utf-8"),
             target_player_ids=[],  # empty → gateway fans out to whole room
