@@ -299,11 +299,15 @@ resource "aws_instance" "load_generator" {
     git_branch          = var.git_branch
     lb_private_ip       = aws_instance.lb.private_ip
     coord_host          = aws_instance.gateways[0].private_ip
-    gateway_health_urls = join(",", [for ip in aws_instance.gateways[*].private_ip : "http://${ip}:9000/health"])
+    gateway_health_urls = join(",", flatten([
+      for ip in aws_instance.gateways[*].private_ip : [
+        for i in range(var.gateways_per_host) : "http://${ip}:${9000 + i * 2}/health"
+      ]
+    ]))
   })
 
   root_block_device {
-    volume_size = 30
+    volume_size = 50
     volume_type = "gp3"
   }
 
