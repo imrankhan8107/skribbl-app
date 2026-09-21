@@ -337,7 +337,8 @@ export default function () {
   const vu = exec.vu.idInTest;
   const roomIndex = getRoomIndex(vu);
   const isHost = isHostVU(vu);
-  const playerName = `k6_${isHost ? 'host' : 'p' + ((vu - 1) % PLAYERS_PER_ROOM)}_vu${vu}_r${roomIndex}`;
+  // const playerName = `k6_${isHost ? 'host' : 'p' + ((vu - 1) % PLAYERS_PER_ROOM)}_vu${vu}_r${roomIndex}`;
+  const playerName = `k${vu.toString(36)}`;
 
   // Arrival ramp — staggered BY ROOM, not by VU. All PLAYERS_PER_ROOM VUs of a
   // room share the same ramp offset so a room's whole roster arrives together
