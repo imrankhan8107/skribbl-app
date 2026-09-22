@@ -87,13 +87,19 @@ variable "git_branch" {
 }
 
 variable "enable_load_generator" {
-  description = "Whether to provision a dedicated EC2 instance for running k6 load tests in-VPC"
+  description = "Whether to provision dedicated EC2 instances for running k6 load tests in-VPC"
   type        = bool
   default     = true
 }
 
+variable "load_generator_count" {
+  description = "Number of dedicated in-VPC k6 load generator instances (e.g. 1 for <=50k, 2 for 75k-100k distributed tests)"
+  type        = number
+  default     = 1
+}
+
 variable "load_generator_instance_type" {
-  description = "EC2 instance type for k6 load generator (e.g. c5a.xlarge for 10k-15k tests, t3.medium for dev)"
+  description = "EC2 instance type for k6 load generator (e.g. c5a.xlarge for 10k-15k tests, c5a.8xlarge for 50k+)"
   type        = string
   default     = "t3.medium"
 }

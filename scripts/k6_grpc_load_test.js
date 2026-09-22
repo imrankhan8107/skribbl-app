@@ -214,6 +214,9 @@ const HEALTH_URLS = (__ENV.HEALTH_URLS || `http://${HOST}:${PORT}/health`)
 const HEALTH_POLL_SECONDS = parseInt(__ENV.HEALTH_POLL_SECONDS || '15');
 const PLAYERS_PER_ROOM = parseInt(__ENV.PLAYERS_PER_ROOM || '2');
 const TARGET_VUS = parseInt(__ENV.VUS || '100');
+// VU_OFFSET allows multiple distributed k6 load generators to run concurrently
+// without overlapping room indices or player names (e.g. runner 2 sets VU_OFFSET=50000).
+const VU_OFFSET = parseInt(__ENV.VU_OFFSET || '0');
 const NUM_ROUNDS = parseInt(__ENV.NUM_ROUNDS || '3');
 const TURN_DURATION = parseInt(__ENV.TURN_DURATION || '80');
 // Stroke config — simulate a drawer dragging on the canvas. STROKE_HZ strokes/
@@ -366,7 +369,7 @@ function pollRoomCode(roomIndex, timeoutMs) {
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 export default function () {
-  const vu = exec.vu.idInTest;
+  const vu = exec.vu.idInTest + VU_OFFSET;
   const roomIndex = getRoomIndex(vu);
   const isHost = isHostVU(vu);
   // const playerName = `k6_${isHost ? 'host' : 'p' + ((vu - 1) % PLAYERS_PER_ROOM)}_vu${vu}_r${roomIndex}`;

@@ -49,13 +49,23 @@ output "ssh_lb_command" {
 }
 
 output "load_generator_public_ip" {
-  description = "Public IP of the dedicated k6 Load Generator instance"
+  description = "Public IP of the first dedicated k6 Load Generator instance"
   value       = try(aws_instance.load_generator[0].public_ip, "disabled")
 }
 
+output "load_generator_public_ips" {
+  description = "Public IPs of all dedicated k6 Load Generator instances"
+  value       = aws_instance.load_generator[*].public_ip
+}
+
 output "ssh_k6_runner_command" {
-  description = "SSH command to connect to the dedicated in-VPC k6 Load Generator"
+  description = "SSH command to connect to the first in-VPC k6 Load Generator"
   value       = try("ssh ubuntu@${aws_instance.load_generator[0].public_ip}", "disabled")
+}
+
+output "ssh_k6_runner_commands" {
+  description = "SSH commands to connect to each in-VPC k6 Load Generator"
+  value       = [for ip in aws_instance.load_generator[*].public_ip : "ssh ubuntu@${ip}"]
 }
 
 output "in_vpc_k6_quick_run" {

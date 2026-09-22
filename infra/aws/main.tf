@@ -297,7 +297,7 @@ resource "aws_instance" "lb" {
 # --- In-VPC k6 Load Generator Instance ---
 
 resource "aws_instance" "load_generator" {
-  count                  = var.enable_load_generator ? 1 : 0
+  count                  = var.enable_load_generator ? var.load_generator_count : 0
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.load_generator_instance_type
   subnet_id              = aws_subnet.public.id
@@ -307,6 +307,8 @@ resource "aws_instance" "load_generator" {
   user_data = templatefile("${path.module}/templates/cloud-init-k6.tftpl", {
     git_repo_url        = var.git_repo_url
     git_branch          = var.git_branch
+    runner_id           = count.index + 1
+    runner_count        = var.load_generator_count
     lb_private_ip       = aws_instance.lb.private_ip
     coord_host          = aws_instance.gateways[0].private_ip
     coord_hosts         = join(",", aws_instance.gateways[*].private_ip)
@@ -338,7 +340,7 @@ resource "aws_instance" "load_generator" {
   depends_on = [aws_instance.lb, aws_instance.workers, aws_instance.gateways, aws_instance.redis]
 
   tags = {
-    Name = "${var.app_name}-k6-runner"
+    Name = var.load_generator_count > 1 ? "${var.app_name}-k6-runner-${count.index + 1}" : "${var.app_name}-k6-runner"
     Tier = "load-generator"
   }
 }

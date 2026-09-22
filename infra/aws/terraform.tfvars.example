@@ -36,11 +36,11 @@ redis_instance_type   = "c5a.large"
 git_repo_url = "https://github.com/imrankhan8107/skribbl-app.git"
 git_branch   = "hotfix/scale-and-fanout-remediation"
 
-# In-VPC k6 load generator instance
-# For <=15k: c5a.xlarge
-# For 25k-35k: c5a.4xlarge
-# For 45k-75k: c5a.8xlarge (32 vCPUs, 64 GB RAM required to avoid client-side swap)
+# In-VPC k6 load generator instances
+# For <=50k: load_generator_count=1, load_generator_instance_type="c5a.8xlarge"
+# For 75k+:  load_generator_count=2 (distributes client event loops across 2 machines to avoid 100% runner CPU)
 enable_load_generator        = true
+load_generator_count         = 1
 load_generator_instance_type = "c5a.8xlarge"
 
 # Verbose per-message tracing (true for dev/small runs, false for 15k+ benchmarks to avoid logger mutex contention)

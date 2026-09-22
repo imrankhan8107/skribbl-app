@@ -53,7 +53,7 @@ git clone -b ${git_branch} ${git_repo_url} skribbl-app
 chown -R ubuntu:ubuntu /home/ubuntu/skribbl-app
 
 # Start cluster monitor agent on load generator host
-nohup python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py agent --role "load-gen" --port 9101 > /var/log/skribbl-monitor.log 2>&1 &
+nohup python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py agent --role "load-gen-${runner_id}" --port 9101 > /var/log/skribbl-monitor.log 2>&1 &
 
 cat << 'EOF' > /home/ubuntu/run-test.sh
 #!/bin/bash
@@ -61,22 +61,27 @@ VUS=$${1:-100}
 PLAYERS=$${2:-2}
 HZ=$${3:-20}
 RAMP=$${4:-0}
+
+# Runner identity & automated VU_OFFSET calculation
+RUNNER_ID=${runner_id}
+DEFAULT_OFFSET=$(( (RUNNER_ID - 1) * VUS ))
+VU_OFFSET=$${5:-$DEFAULT_OFFSET}
+
 # Keep room-code coordination off the LB/WebSocket data plane.
 # COORD_URLS = comma-separated host:port for EVERY gateway container coord endpoint.
-# This round-robins across all 6 containers (3 per gateway × 2 gateways).
-COORD_HOST=$${5:-${coord_host}}
+COORD_HOST="${coord_host}"
 COORD_HOSTS="${coord_hosts}"
 COORD_URLS="${coord_urls}"
-COORD_PORT=$${6:-9100}
+COORD_PORT=9100
 HEALTH_URLS="${gateway_health_urls}"
-CLUSTER_NODES="${cluster_nodes},load-gen:127.0.0.1:9101"
+CLUSTER_NODES="${cluster_nodes},load-gen-${runner_id}:127.0.0.1:9101"
 
 echo "=========================================================="
-echo " Starting Skribbl In-VPC k6 Load Test"
+echo " Starting Skribbl In-VPC k6 Load Test (Runner $RUNNER_ID/${runner_count})"
 echo " Target LB: http://${lb_private_ip}:80"
 echo " Coord URLs: $COORD_URLS"
 echo " Gateway health targets: $HEALTH_URLS"
-echo " VUs: $VUS | Players/Room: $PLAYERS | Stroke: $${HZ}Hz | Ramp: $${RAMP}s"
+echo " VUs: $VUS (VU_OFFSET: $VU_OFFSET) | Players/Room: $PLAYERS | Stroke: $${HZ}Hz | Ramp: $${RAMP}s"
 echo "=========================================================="
 
 echo ""
@@ -95,6 +100,7 @@ k6 run \
   -e HEALTH_URLS="$HEALTH_URLS" \
   -e TURN_DURATION=30 \
   -e VUS=$VUS \
+  -e VU_OFFSET=$VU_OFFSET \
   -e PLAYERS_PER_ROOM=$PLAYERS \
   -e STROKE_HZ=$HZ \
   -e RAMP_SECONDS=$RAMP \
