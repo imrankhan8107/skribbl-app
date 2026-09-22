@@ -136,21 +136,22 @@ python scripts/perf_test_sticky.py --host localhost --port 8080 --clients 10
 | Concurrent connections | 500/500 established |
 | Message throughput | 6,781 msgs/sec |
 
-### Enterprise Scale Milestone (AWS Distributed Cluster — 50,000 VUs)
+### Enterprise Scale Milestone (AWS Distributed Cluster — 100,000–120,000 VUs)
 
-Tested on AWS with 9 Go Gateway containers, 30 Python Worker containers (`orjson`), and Redis:
+Tested on AWS across a 17-node distributed fleet (1 × `c5a.4xlarge` Nginx Load Balancer, 6 × `c5a.2xlarge` Go Gateways [18 containers], 8 × `c5a.2xlarge` Python Workers [48 containers], 1 × `c5a.large` Redis, and 3 × `c5a.8xlarge` distributed load generators):
 
-| Scale Metric | Validated Production Result |
-|---|---|
-| **Concurrent Players (VUs)** | **50,001 concurrent connections** |
-| **Connection Success Rate** | **99.33%** (49,213 successful handshakes) |
-| **Game Completion Rate** | **89.02%** (43,904 full games completed) |
-| **Total Messages Processed** | **109,644,646 messages** (38,107 msg/sec sustained) |
-| **Total Network Traffic** | **232.06 GB transferred** (112 GB RX / 120 GB TX) |
-| **Gateway Fan-out Drops** | **0 control drops, 0 lossy drops** (100% reliable) |
-| **Python Worker CPU** | **24.0% average CPU** across 30 containers |
+| Scale Metric | Validated 100,000 VU Run | 120,000 VU Peak Scale Run | Target SLA |
+|---|---|---|---|
+| **Concurrent Players (VUs)** | **100,000 VUs** | **120,000 VUs** | Fleet Target |
+| **Game Completion Rate** | **97.29%** (19,251 rooms) | **96.34%** (19,181 rooms) | $\ge 80.0\%$ ✅ |
+| **Player Session Completion** | **99.44%** (95,745 games) | **99.18%** (94,946 games) | $\ge 90.0\%$ ✅ |
+| **Server Create Errors** | **0** (100% eliminated) | **0** (100% eliminated) | 0 ✅ |
+| **Total Messages Processed** | **212,504,506 messages** | **261,868,912 messages** | Sustained throughput |
+| **Peak Fleet Bandwidth** | **1.43 Gbps TX / 1.36 Gbps RX** | **1.40 Gbps TX / 1.30 Gbps RX** | AWS Line Rate |
+| **Gateway Fan-out Drops** | **0 control, 0 lossy drops** | **0 control, 0 lossy drops** | 0 drops ✅ |
+| **Python Worker Memory** | **2,057 MB max** (<13% RAM) | **2,052 MB max** (<13% RAM) | Zero OOMs ✅ |
 
-See the full [Performance Test Report](docs/performance-test-report.md#5-aws-distributed-cluster-load-test--50000-concurrent-players-milestone) for detailed telemetry.
+See the full [Performance Test Report](docs/performance-test-report.md) for detailed telemetry.
 
 ## Deployment
 
