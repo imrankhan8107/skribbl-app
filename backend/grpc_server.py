@@ -42,6 +42,9 @@ _TRACE_ENABLED = os.environ.get("TRACE_ENABLED", "false").lower() in ("true", "1
 # gRPC port from environment (default 50051)
 GRPC_PORT = int(os.environ.get("GRPC_PORT", "50051"))
 
+# Outbound send queue buffer size per stream (default 1024, mirrors gateway SEND_BUFFER)
+GRPC_SEND_QUEUE_MAXSIZE = int(os.environ.get("GRPC_SEND_QUEUE_MAXSIZE", "1024"))
+
 
 class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
     """Handles RoomStream RPCs from the gateway.
@@ -69,8 +72,8 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
         Yields:
             BroadcastMessage envelopes to send back to the gateway.
         """
-        # Per-stream queue for outbound BroadcastMessages
-        send_queue: asyncio.Queue[BroadcastMessage | None] = asyncio.Queue()
+        # Per-stream queue for outbound BroadcastMessages (bounded to prevent unbounded memory growth)
+        send_queue: asyncio.Queue[BroadcastMessage | None] = asyncio.Queue(maxsize=GRPC_SEND_QUEUE_MAXSIZE)
 
         # Track VirtualTransports created for players on this stream
         # player_id -> VirtualTransport

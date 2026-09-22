@@ -53,7 +53,7 @@ for i in $(seq 1 ${gateways_per_host}); do
     -e GATEWAY_ID=$GW_ID \
     -e GATEWAY_ADDR=$PRIVATE_IP \
     -e SEND_BUFFER=1024 \
-    -e TRACE_ENABLED=true \
+    -e TRACE_ENABLED=${trace_enabled} \
     skribbl-gateway \
     -port $DATA_PORT \
     -coord-port $COORD_PORT \

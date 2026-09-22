@@ -122,3 +122,45 @@ async def test_send_room_falls_back_to_transport_room_code(transport, send_queue
     assert msg.message_type == "broadcast"
 
 
+async def test_backpressure_drops_lossy_when_queue_full():
+    """When bounded send_queue is full, lossy messages are dropped without error."""
+    bounded_queue = asyncio.Queue(maxsize=2)
+    vt = VirtualTransport(player_id="p1", room_code="ROOM1", send_queue=bounded_queue)
+
+    # Fill queue to capacity
+    await vt.send_room('{"type": "stroke_1"}', lossy=True)
+    await vt.send_room('{"type": "stroke_2"}', lossy=True)
+    assert bounded_queue.full()
+
+    # Third lossy message should be dropped silently
+    await vt.send_room('{"type": "stroke_3"}', lossy=True)
+    assert bounded_queue.qsize() == 2
+
+    m1 = await bounded_queue.get()
+    m2 = await bounded_queue.get()
+    assert m1.payload == b'{"type": "stroke_1"}'
+    assert m2.payload == b'{"type": "stroke_2"}'
+
+
+async def test_backpressure_evicts_older_for_control_when_queue_full():
+    """When bounded send_queue is full, control (lossy=False) messages evict older items."""
+    bounded_queue = asyncio.Queue(maxsize=2)
+    vt = VirtualTransport(player_id="p1", room_code="ROOM1", send_queue=bounded_queue)
+
+    # Fill queue
+    await vt.send_room('{"type": "stroke_1"}', lossy=True)
+    await vt.send_room('{"type": "stroke_2"}', lossy=True)
+    assert bounded_queue.full()
+
+    # Control message must evict oldest item to ensure delivery
+    await vt.send_room('{"type": "game_over"}', lossy=False)
+    assert bounded_queue.qsize() == 2
+
+    # Oldest (stroke_1) was evicted; stroke_2 and game_over remain
+    m1 = await bounded_queue.get()
+    m2 = await bounded_queue.get()
+    assert m1.payload == b'{"type": "stroke_2"}'
+    assert m2.payload == b'{"type": "game_over"}'
+
+
+

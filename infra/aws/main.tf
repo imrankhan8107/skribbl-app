@@ -212,6 +212,7 @@ resource "aws_instance" "workers" {
     git_repo_url     = var.git_repo_url
     git_branch       = var.git_branch
     workers_per_host = var.workers_per_host
+    trace_enabled    = var.trace_enabled
   })
 
   root_block_device {
@@ -243,6 +244,7 @@ resource "aws_instance" "gateways" {
     git_repo_url      = var.git_repo_url
     git_branch        = var.git_branch
     gateways_per_host = var.gateways_per_host
+    trace_enabled     = var.trace_enabled
   })
 
   root_block_device {

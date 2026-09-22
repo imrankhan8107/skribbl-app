@@ -98,3 +98,10 @@ variable "load_generator_instance_type" {
   default     = "t3.medium"
 }
 
+variable "trace_enabled" {
+  description = "Enable verbose per-message trace logging (set false for high-scale benchmarks to avoid log lock contention)"
+  type        = bool
+  default     = false
+}
+
+

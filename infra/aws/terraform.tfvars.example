@@ -43,3 +43,7 @@ git_branch   = "hotfix/scale-and-fanout-remediation"
 enable_load_generator        = true
 load_generator_instance_type = "c5a.8xlarge"
 
+# Verbose per-message tracing (true for dev/small runs, false for 15k+ benchmarks to avoid logger mutex contention)
+trace_enabled = false
+
+

@@ -53,7 +53,7 @@ for i in $(seq 1 ${workers_per_host}); do
     -e PORT=$HTTP_PORT \
     -e GRPC_PORT=$GRPC_PORT \
     -e WORKER_ADVERTISE_HOST=$PRIVATE_IP \
-    -e TRACE_ENABLED=true \
+    -e TRACE_ENABLED=${trace_enabled} \
     skribbl-worker
 
   # Stream filtered logs to a file in the background (only keeping errors/warnings to save space)
