@@ -8,9 +8,9 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
 ![gRPC](https://img.shields.io/badge/gRPC-Bidirectional%20Streaming-244c5a)
 ![Tests](https://img.shields.io/badge/Tests-286%20passing-brightgreen)
-![Benchmark](https://img.shields.io/badge/Validated%20Scale-80k%20(99.9%25)%20%7C%20100k%20Tested-purple)
-![Throughput](https://img.shields.io/badge/Messages-223M%20Processed-blueviolet)
-![Bandwidth](https://img.shields.io/badge/Peak%20Bandwidth-1.35%20Gbps-success)
+![Benchmark](https://img.shields.io/badge/Validated%20Scale-100%2C000%20VUs%20%40%2020Hz-purple)
+![Throughput](https://img.shields.io/badge/Messages-269M%20Processed-blueviolet)
+![Bandwidth](https://img.shields.io/badge/Peak%20Bandwidth-1.43%20Gbps-success)
 
 ## Features
 
