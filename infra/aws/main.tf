@@ -181,7 +181,10 @@ resource "aws_instance" "redis" {
   vpc_security_group_ids = [aws_security_group.cluster.id]
   key_name               = aws_key_pair.deployer.key_name
 
-  user_data = templatefile("${path.module}/templates/cloud-init-redis.tftpl", {})
+  user_data = templatefile("${path.module}/templates/cloud-init-redis.tftpl", {
+    git_repo_url = var.git_repo_url
+    git_branch   = var.git_branch
+  })
 
   root_block_device {
     volume_size = 20
@@ -265,6 +268,8 @@ resource "aws_instance" "lb" {
   key_name               = aws_key_pair.deployer.key_name
 
   user_data = templatefile("${path.module}/templates/cloud-init-lb.tftpl", {
+    git_repo_url = var.git_repo_url
+    git_branch   = var.git_branch
     nginx_config = templatefile("${path.module}/templates/nginx.conf.tftpl", {
       gateway_ips  = aws_instance.gateways[*].private_ip
       gateway_ports = [for i in range(var.gateways_per_host) : 9000 + i * 2]
@@ -314,6 +319,12 @@ resource "aws_instance" "load_generator" {
         for i in range(var.gateways_per_host) : "http://${ip}:${9000 + i * 2}/health"
       ]
     ]))
+    cluster_nodes = join(",", flatten([
+      ["lb:${aws_instance.lb.private_ip}:9101"],
+      ["redis:${aws_instance.redis.private_ip}:9101"],
+      [for idx, ip in aws_instance.gateways[*].private_ip : "gateway-${idx + 1}:${ip}:9101"],
+      [for idx, ip in aws_instance.workers[*].private_ip : "worker-${idx + 1}:${ip}:9101"],
+    ]))
   })
 
   root_block_device {
@@ -321,7 +332,7 @@ resource "aws_instance" "load_generator" {
     volume_type = "gp3"
   }
 
-  depends_on = [aws_instance.lb]
+  depends_on = [aws_instance.lb, aws_instance.workers, aws_instance.gateways, aws_instance.redis]
 
   tags = {
     Name = "${var.app_name}-k6-runner"

@@ -26,3 +26,4 @@ def test_json_loads_invalid_raises_error():
 
     with pytest.raises(JSONDecodeError):
         json_loads(b"invalid json bytes {")
+

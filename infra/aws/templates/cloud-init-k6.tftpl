@@ -52,6 +52,9 @@ cd /home/ubuntu
 git clone -b ${git_branch} ${git_repo_url} skribbl-app
 chown -R ubuntu:ubuntu /home/ubuntu/skribbl-app
 
+# Start cluster monitor agent on load generator host
+nohup python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py agent --role "load-gen" --port 9101 > /var/log/skribbl-monitor.log 2>&1 &
+
 cat << 'EOF' > /home/ubuntu/run-test.sh
 #!/bin/bash
 VUS=$${1:-100}
@@ -66,6 +69,7 @@ COORD_HOSTS="${coord_hosts}"
 COORD_URLS="${coord_urls}"
 COORD_PORT=$${6:-9100}
 HEALTH_URLS="${gateway_health_urls}"
+CLUSTER_NODES="${cluster_nodes},load-gen:127.0.0.1:9101"
 
 echo "=========================================================="
 echo " Starting Skribbl In-VPC k6 Load Test"
@@ -74,6 +78,11 @@ echo " Coord URLs: $COORD_URLS"
 echo " Gateway health targets: $HEALTH_URLS"
 echo " VUs: $VUS | Players/Room: $PLAYERS | Stroke: $${HZ}Hz | Ramp: $${RAMP}s"
 echo "=========================================================="
+
+echo ""
+echo "=== Resetting measurement window across all cluster instances ==="
+python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py reset --nodes "$CLUSTER_NODES" || true
+echo ""
 
 cd /home/ubuntu/skribbl-app
 k6 run \
@@ -90,6 +99,10 @@ k6 run \
   -e STROKE_HZ=$HZ \
   -e RAMP_SECONDS=$RAMP \
   scripts/k6_grpc_load_test.js
+
+echo ""
+echo "=== Fetching Cluster Performance & Network Traffic Report ==="
+python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py report --nodes "$CLUSTER_NODES" --output /home/ubuntu/k6-cluster-metrics.json
 EOF
 
 

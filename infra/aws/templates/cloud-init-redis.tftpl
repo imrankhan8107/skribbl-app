@@ -19,7 +19,7 @@ chmod a+r /etc/apt/keyrings/docker.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 apt-get update -y
-apt-get install -y docker-ce docker-ce-cli containerd.io
+apt-get install -y docker-ce docker-ce-cli containerd.io git python3 curl
 
 systemctl enable docker
 systemctl start docker
@@ -35,6 +35,16 @@ docker run -d \
   -v /data/redis:/data \
   redis:7-alpine \
   redis-server --appendonly yes --protected-mode no
+
+# Clone repository for monitoring agent
+mkdir -p /opt
+cd /opt
+git clone -b ${git_branch} ${git_repo_url} skribbl-app || true
+
+# Start cluster monitor agent on port 9101
+if [ -f /opt/skribbl-app/scripts/cluster_monitor.py ]; then
+  nohup python3 /opt/skribbl-app/scripts/cluster_monitor.py agent --role "redis" --port 9101 > /var/log/skribbl-monitor.log 2>&1 &
+fi
 
 echo "=== Redis initialization finished at $(date) ==="
 

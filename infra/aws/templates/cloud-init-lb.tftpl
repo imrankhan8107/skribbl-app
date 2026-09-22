@@ -20,9 +20,9 @@ echo "* hard nofile 262144" >> /etc/security/limits.conf
 echo "root soft nofile 262144" >> /etc/security/limits.conf
 echo "root hard nofile 262144" >> /etc/security/limits.conf
 
-# Install Nginx
+# Install Nginx, Git, and Python3
 apt-get update -y
-apt-get install -y nginx
+apt-get install -y nginx git python3 curl
 
 # Write rendered Nginx configuration
 cat <<'EOF' > /etc/nginx/nginx.conf
@@ -40,6 +40,16 @@ systemctl daemon-reload
 nginx -t
 systemctl enable nginx
 systemctl restart nginx
+
+# Clone repository for monitoring agent
+mkdir -p /opt
+cd /opt
+git clone -b ${git_branch} ${git_repo_url} skribbl-app || true
+
+# Start cluster monitor agent on port 9101
+if [ -f /opt/skribbl-app/scripts/cluster_monitor.py ]; then
+  nohup python3 /opt/skribbl-app/scripts/cluster_monitor.py agent --role "lb" --port 9101 > /var/log/skribbl-monitor.log 2>&1 &
+fi
 
 echo "=== Load Balancer initialization finished at $(date) ==="
 
