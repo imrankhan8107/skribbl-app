@@ -13,10 +13,10 @@ preventing interleaved frames on the shared gRPC stream.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 
+from backend.fast_json import json_dumps, json_loads
 from backend.proto.game_pb2 import BroadcastMessage
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ class VirtualTransport:
         """
         if _TRACE_ENABLED:
             try:
-                parsed = json.loads(data)
+                parsed = json_loads(data)
                 extracted_type = parsed.get("type", "?") if isinstance(parsed, dict) else "?"
             except (ValueError, TypeError):
                 extracted_type = "?"
@@ -103,7 +103,7 @@ class VirtualTransport:
         Args:
             data: Dictionary to serialize and send.
         """
-        await self.send_text(json.dumps(data))
+        await self.send_text(json_dumps(data))
 
     async def send_room(self, data: str, room_code: str = "", lossy: bool = False) -> None:
         """Enqueue a single room-wide BroadcastMessage (empty target list).

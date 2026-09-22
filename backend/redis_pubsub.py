@@ -8,11 +8,12 @@ If REDIS_URL is not set, this module is a no-op (single-worker mode).
 """
 
 import asyncio
-import json
 import logging
 import os
 from typing import Optional, Callable, Awaitable
 from uuid import uuid4
+
+from backend.fast_json import json_dumps, json_loads
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ async def _subscribe_loop():
             )
             if message and message["type"] == "message":
                 channel = message["channel"]
-                data = json.loads(message["data"])
+                data = json_loads(message["data"])
                 # Ignore messages from ourselves
                 if data.get("source_worker") == WORKER_ID:
                     continue
@@ -138,7 +139,7 @@ async def publish_to_room(room_code: str, message: dict) -> None:
     if _redis_client is None:
         return
 
-    payload = json.dumps({
+    payload = json_dumps({
         "source_worker": WORKER_ID,
         "message": message,
     })
@@ -183,16 +184,14 @@ async def get_room_info(room_code: str) -> Optional[dict]:
     info = await _redis_client.hget("room_info", room_code)
     if info is None:
         return None
-    import json as _json
-    return _json.loads(info)
+    return json_loads(info)
 
 
 async def set_room_info(room_code: str, info: dict) -> None:
     """Store basic room info in Redis for cross-worker discovery."""
     if _redis_client is None:
         return
-    import json as _json
-    await _redis_client.hset("room_info", room_code, _json.dumps(info))
+    await _redis_client.hset("room_info", room_code, json_dumps(info))
 
 
 async def remove_room_info(room_code: str) -> None:
@@ -206,7 +205,7 @@ async def publish_rpc_request(target_worker: str, request: dict) -> None:
     """Publish an RPC request to a specific worker's channel."""
     if _redis_client is None:
         return
-    payload = json.dumps({
+    payload = json_dumps({
         "source_worker": WORKER_ID,
         "rpc": request,
     })
@@ -255,7 +254,7 @@ async def wait_for_rpc_response(request_id: str, timeout: float = 5.0) -> Option
         result = await _redis_client.get(key)
         if result is not None:
             await _redis_client.delete(key)
-            return json.loads(result)
+            return json_loads(result)
         await asyncio.sleep(0.05)
     return None
 
@@ -264,7 +263,7 @@ async def set_rpc_response(request_id: str, response: dict) -> None:
     """Set an RPC response for a waiting caller."""
     if _redis_client is None:
         return
-    await _redis_client.set(f"rpc_response:{request_id}", json.dumps(response), ex=10)
+    await _redis_client.set(f"rpc_response:{request_id}", json_dumps(response), ex=10)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -473,7 +472,7 @@ async def save_room_snapshot(room_code: str, snapshot_data: dict, ttl_seconds: i
     if _redis_client is None:
         return
     try:
-        payload = json.dumps(snapshot_data)
+        payload = json_dumps(snapshot_data)
         await asyncio.gather(
             _redis_client.set(f"room_snapshot:{room_code}", payload, ex=ttl_seconds),
             _redis_client.delete(f"room_owner:{room_code}"),
@@ -499,7 +498,7 @@ async def get_room_snapshot(room_code: str) -> Optional[dict]:
     try:
         data = await _redis_client.get(f"room_snapshot:{room_code}")
         if data:
-            return json.loads(data)
+            return json_loads(data)
     except Exception as e:
         logger.error("Failed to get room snapshot for %s: %s", room_code, e)
     return None

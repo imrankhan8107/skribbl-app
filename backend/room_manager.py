@@ -11,7 +11,6 @@ Owns the in-memory registry of all active Room objects. Responsible for:
 """
 
 import asyncio
-import json
 import logging
 import os
 import random
@@ -19,6 +18,8 @@ import string
 import time
 from collections import deque
 from uuid import uuid4
+
+from backend.fast_json import json_dumps, json_loads
 
 from backend.models import GameConfig, Player, Room, RoomState, TurnState
 from backend import redis_pubsub
@@ -835,7 +836,7 @@ class RoomManager:
         # None websocket is our race-free signal that a cross-worker relay is
         # actually needed. All-local rooms (the common gateway-routed case) skip
         # the redundant publish + self-loopback entirely.
-        data = json.dumps(message)
+        data = json_dumps(message)
         local_recipients = 0
         has_remote_players = False
 
@@ -960,7 +961,7 @@ class RoomManager:
         if room is None:
             return
 
-        json_data = json.dumps(message)
+        json_data = json_dumps(message)
         for player in room.players:
             if player.is_connected and player.websocket is not None:
                 try:
@@ -1422,7 +1423,7 @@ class RoomManager:
         # Send kicked message to the target player's websocket
         if target.websocket is not None and target.is_connected:
             try:
-                kicked_msg = json.dumps({
+                kicked_msg = json_dumps({
                     "type": "kicked",
                     "payload": {"message": "You have been kicked by the host"},
                 })

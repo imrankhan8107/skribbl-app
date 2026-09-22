@@ -1,13 +1,13 @@
 """Game engine module for turn/round logic, scoring, and hint progression."""
 
 import asyncio
-import json
 import logging
 import random
 import re
 import time
 from collections import deque
 
+from backend.fast_json import json_dumps
 from backend.models import Room, RoomState, TurnEndReason, TurnState
 from backend.words import WORDS
 
@@ -190,7 +190,7 @@ async def start_turn(room: Room, room_manager) -> None:
     room._pending_word_choices = choices
 
     # Send word_choices only to the drawer
-    message = json.dumps({
+    message = json_dumps({
         "type": "word_choices",
         "payload": {"choices": choices},
     })
@@ -292,8 +292,7 @@ async def handle_word_selection(room: Room, player_id: str, word: str, room_mana
     # Send the selected word privately to the drawer (for auto-select case)
     if drawer.is_connected and drawer.websocket is not None:
         try:
-            import json as _json
-            await drawer.websocket.send_text(_json.dumps({
+            await drawer.websocket.send_text(json_dumps({
                 "type": "word_assigned",
                 "payload": {"word": word},
             }))

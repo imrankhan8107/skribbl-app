@@ -6,3 +6,4 @@ redis[hiredis]==5.0.0
 aiohttp
 grpcio==1.68.1
 grpcio-tools==1.68.1
+orjson>=3.10.0

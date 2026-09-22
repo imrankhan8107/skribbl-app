@@ -15,11 +15,12 @@ locally. Broadcasts from the owner reach this worker via Redis pub/sub and
 are forwarded to the player's WebSocket by the existing handle_redis_message.
 """
 
-import json
 import logging
 from uuid import uuid4
 
 from fastapi import WebSocket, WebSocketDisconnect
+
+from backend.fast_json import JSONDecodeError, json_loads
 
 from backend import game_engine
 from backend import redis_pubsub
@@ -59,8 +60,8 @@ async def websocket_handler(websocket: WebSocket) -> None:
                 if len(raw) > 65536:
                     await _send_error(websocket, "MESSAGE_TOO_LARGE", "Message exceeds 64KB limit")
                     continue
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
+                msg = json_loads(raw)
+            except JSONDecodeError:
                 await _send_error(websocket, "INVALID_MESSAGE", "Invalid JSON")
                 continue
 
