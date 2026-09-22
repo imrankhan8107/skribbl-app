@@ -142,6 +142,14 @@ Running k6 inside the AWS VPC eliminates home network bandwidth and Wi-Fi latenc
    ./run-test.sh 40000 5 20 30
    # Runner 2: VUs 40,001..80,000 (Offset 40,000 auto-applied)
    ./run-test.sh 40000 5 20 30
+
+   # 100k Distributed Scale Run (Run concurrently across 3 runners):
+   # Runner 1: VUs 1..33,334 (Offset 0)
+   ./run-test.sh 33334 5 20 60
+   # Runner 2: VUs 33,335..66,667 (Offset 33,334 auto-applied)
+   ./run-test.sh 33333 5 20 60
+   # Runner 3: VUs 66,668..100,000 (Offset 66,667 auto-applied)
+   ./run-test.sh 33333 5 20 60
    ```
 
 3. **Automated Cluster Metrics Report**:
