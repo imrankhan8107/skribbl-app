@@ -54,6 +54,7 @@ for i in $(seq 1 ${workers_per_host}); do
     -e GRPC_PORT=$GRPC_PORT \
     -e WORKER_ADVERTISE_HOST=$PRIVATE_IP \
     -e TRACE_ENABLED=${trace_enabled} \
+    -e GRPC_SEND_QUEUE_MAXSIZE=${grpc_send_queue_maxsize} \
     skribbl-worker
 
   # Stream filtered logs to a file in the background (only keeping errors/warnings to save space)

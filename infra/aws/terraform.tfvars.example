@@ -46,4 +46,8 @@ load_generator_instance_type = "c5a.8xlarge"
 # Verbose per-message tracing (true for dev/small runs, false for 15k+ benchmarks to avoid logger mutex contention)
 trace_enabled = false
 
+# Worker outbound gRPC stream buffer capacity per room (prevents memory explosion during high-rate stroke fan-out)
+grpc_send_queue_maxsize = 1024
+
+
 

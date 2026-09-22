@@ -104,4 +104,11 @@ variable "trace_enabled" {
   default     = false
 }
 
+variable "grpc_send_queue_maxsize" {
+  description = "Worker outbound gRPC stream send queue buffer size (prevents memory explosion at high stroke rates)"
+  type        = number
+  default     = 1024
+}
+
+
 
