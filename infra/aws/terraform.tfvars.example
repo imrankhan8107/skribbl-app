@@ -13,26 +13,33 @@ allowed_cidr = "YOUR_PUBLIC_IP/32"
 # e.g. "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
 ssh_public_key = "ssh-ed25519 AAAA..."
 
-# Scale of the cluster
-# Dev / baseline: gateway_count=2, gateways_per_host=1, worker_count=2, workers_per_host=2
-# 10k-15k load:   gateway_count=2, gateways_per_host=2, worker_count=3, workers_per_host=4
-# 25k load:       gateway_count=2, gateways_per_host=3 (6 gw), worker_count=5, workers_per_host=6 (30 workers on c5a.2xlarge)
-gateway_count     = 2
-gateways_per_host = 1
-worker_count      = 2
-workers_per_host  = 2
+# Scale presets:
+# Dev / baseline: gateway_count=2, gateways_per_host=1, worker_count=2, workers_per_host=2 (t3.medium)
+# 25k load:       gateway_count=3, gateways_per_host=2 (6 gw), worker_count=4, workers_per_host=6 (24 workers, c5a.2xlarge)
+# 50k load:       gateway_count=3, gateways_per_host=3 (9 gw), worker_count=5, workers_per_host=6 (30 workers, c5a.2xlarge)
+# 75k load:       gateway_count=4, gateways_per_host=3 (12 gw), worker_count=5, workers_per_host=6 (30 workers, c5a.2xlarge)
+gateway_count     = 3
+gateways_per_host = 3
+worker_count      = 5
+workers_per_host  = 6
 
-# Instance types (t3.medium for dev/cost-saving, c5a.xlarge for heavy benchmarks, c5a.2xlarge for 25k)
-lb_instance_type      = "t3.medium"
-gateway_instance_type = "t3.medium"
-worker_instance_type  = "t3.medium"
-redis_instance_type   = "t3.medium"
+# Instance types:
+# For <=15k: t3.medium / c5a.xlarge
+# For 35k-50k: c5a.2xlarge for gateways and workers, c5a.xlarge for LB, c5a.large for Redis
+# For 75k+:    c5a.2xlarge for LB, gateways, and workers
+lb_instance_type      = "c5a.xlarge"
+gateway_instance_type = "c5a.2xlarge"
+worker_instance_type  = "c5a.2xlarge"
+redis_instance_type   = "c5a.large"
 
 # Git repository configuration
 git_repo_url = "https://github.com/imrankhan8107/skribbl-app.git"
-git_branch   = "feature/go-gateway"
+git_branch   = "hotfix/scale-and-fanout-remediation"
 
 # In-VPC k6 load generator instance
+# For <=15k: c5a.xlarge
+# For 25k-35k: c5a.4xlarge
+# For 45k-75k: c5a.8xlarge (32 vCPUs, 64 GB RAM required to avoid client-side swap)
 enable_load_generator        = true
-load_generator_instance_type = "t3.medium"
+load_generator_instance_type = "c5a.8xlarge"
 

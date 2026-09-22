@@ -3,10 +3,12 @@
 A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and **React 18** (TypeScript). Players create or join rooms, take turns drawing words on a shared canvas while others race to guess correctly via chat.
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
+![Go](https://img.shields.io/badge/Go-1.22-00ADD8)
 ![React](https://img.shields.io/badge/React-18-61DAFB)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
-![WebSocket](https://img.shields.io/badge/WebSocket-Real--time-green)
-![Tests](https://img.shields.io/badge/Tests-275%20passing-brightgreen)
+![gRPC](https://img.shields.io/badge/gRPC-Bidirectional%20Streaming-244c5a)
+![Tests](https://img.shields.io/badge/Tests-284%20passing-brightgreen)
+![Benchmark](https://img.shields.io/badge/Validated%20Scale-50%2C000%20VUs-purple)
 
 ## Features
 
@@ -26,11 +28,13 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 - 👋 Leave room voluntarily
 - 💬 Lobby chat before game starts
 
-**Resilience**
+**Resilience & Scale**
+- ⚡ **High-Speed Rust Serialization:** Integrated `orjson` with zero-copy Protobuf payload bytes.
+- 🚀 **High-Concurrency Go Gateway:** Dedicated epoll-based Go Gateways terminating 50,000+ WebSockets with O(1) fan-out.
 - 🔌 Auto-reconnect on page refresh (120-second grace window)
 - ⏳ 20-second countdown before ending game on disconnect (with "End Now" option for host)
 - 🏠 Host reassignment on disconnect
-- 🔄 Sticky session support for multi-worker deployments
+- 🔄 Consistent-hash load balancing for distributed room ownership
 
 **Social**
 - 😂 Emoji reactions (👍 😂 🔥 ❤️ 👏 😮)
@@ -39,14 +43,16 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 ## Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
-| Backend | Python 3.12, FastAPI, uvicorn, asyncio |
+|---|---|
+| Edge Gateway | Go 1.22, Gorilla WebSocket, gRPC client, Epoll event loop |
+| Backend | Python 3.12, FastAPI, gRPC servicer, `orjson` (Rust JSON), asyncio |
 | Frontend | React 18, TypeScript, Vite, React Router v6 |
-| Communication | WebSocket (JSON protocol) |
-| Testing | pytest + Hypothesis (backend), Vitest + Testing Library (frontend) |
-| Multi-worker | Redis pub/sub, nginx sticky sessions |
-| Deployment | Docker, nginx, Oracle Cloud / Azure |
-| IaC | Terraform (OCI + Azure) |
+| IPC / Inter-Tier | gRPC bidirectional streaming (`RoomStream`) with Protobuf bytes |
+| Multi-Worker State | Redis 7 (AOF persistence, local-first pub/sub bypass, worker discovery) |
+| Reverse Proxy | Nginx (consistent hashing by room and client ID) |
+| Observability | 1-second `/proc` cluster metrics monitor, k6 telemetry, structured logs |
+| Testing | pytest + Hypothesis (284 tests), Vitest, k6 distributed suite |
+| Cloud IaC | Terraform (AWS, Azure, OCI) |
 
 ## Architecture
 
@@ -125,6 +131,22 @@ python scripts/perf_test_sticky.py --host localhost --port 8080 --clients 10
 | Stroke broadcast latency | 1.1ms avg (P95: 1.85ms) |
 | Concurrent connections | 500/500 established |
 | Message throughput | 6,781 msgs/sec |
+
+### Enterprise Scale Milestone (AWS Distributed Cluster — 50,000 VUs)
+
+Tested on AWS with 9 Go Gateway containers, 30 Python Worker containers (`orjson`), and Redis:
+
+| Scale Metric | Validated Production Result |
+|---|---|
+| **Concurrent Players (VUs)** | **50,001 concurrent connections** |
+| **Connection Success Rate** | **99.33%** (49,213 successful handshakes) |
+| **Game Completion Rate** | **89.02%** (43,904 full games completed) |
+| **Total Messages Processed** | **109,644,646 messages** (38,107 msg/sec sustained) |
+| **Total Network Traffic** | **232.06 GB transferred** (112 GB RX / 120 GB TX) |
+| **Gateway Fan-out Drops** | **0 control drops, 0 lossy drops** (100% reliable) |
+| **Python Worker CPU** | **24.0% average CPU** across 30 containers |
+
+See the full [Performance Test Report](docs/performance-test-report.md#5-aws-distributed-cluster-load-test--50000-concurrent-players-milestone) for detailed telemetry.
 
 ## Deployment
 

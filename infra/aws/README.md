@@ -125,18 +125,26 @@ Running k6 inside the AWS VPC eliminates home network bandwidth and Wi-Fi latenc
    ```
 2. Run the pre-configured runner script:
    ```bash
-   # Quick test: 100 VUs, 2 players/room, 20Hz drawing
+   # Smoke test: 100 VUs, 2 players/room, 20Hz drawing
    ./run-test.sh 100 2 20
-
-   # Scaled test: 1,000 VUs, 5 players/room, 20Hz drawing, 30s ramp
-   ./run-test.sh 1000 5 20 30
 
    # High scale test: 5,000 VUs, 5 players/room, 20Hz drawing, 60s ramp
    ./run-test.sh 5000 5 20 60
 
-   # Peak target: 15,000 VUs, 5 players/room, 20Hz drawing, 90s ramp
-   ./run-test.sh 15000 5 20 90
+   # Enterprise 35k run: 35,000 VUs, 5 players/room, 5Hz stroke, 240s ramp
+   ./run-test.sh 35000 5 5 240
+
+   # 50k Milestone run: 50,000 VUs, 5 players/room, 5Hz stroke, 240s ramp
+   ./run-test.sh 50000 5 5 240
    ```
+
+3. **Automated Cluster Metrics Report**:
+   When the test completes, `/home/ubuntu/run-test.sh` automatically polls all cluster instances (Gateways, Workers, LB, Redis, Load Generator) and prints a high-resolution performance table showing:
+   - **CPU Utilization (%)**: Min, Avg, Peak Max
+   - **Memory Usage (MB)**: Avg, Peak Max
+   - **Network Bandwidth (Mbps)**: Avg, Peak Max for Ingress (RX) and Egress (TX)
+   - **Total Transferred Data**: Total GB received and sent
+   - The report is also saved to `/home/ubuntu/k6-cluster-metrics.json`.
 
 ---
 
