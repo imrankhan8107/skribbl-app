@@ -18,6 +18,8 @@ ssh_public_key = "ssh-ed25519 AAAA..."
 # 25k load:       gateway_count=3, gateways_per_host=2 (6 gw), worker_count=4, workers_per_host=6 (24 workers, c5a.2xlarge)
 # 50k load:       gateway_count=3, gateways_per_host=3 (9 gw), worker_count=5, workers_per_host=6 (30 workers, c5a.2xlarge)
 # 75k load:       gateway_count=4, gateways_per_host=3 (12 gw), worker_count=5, workers_per_host=6 (30 workers, c5a.2xlarge)
+# 100k load:      gateway_count=6, gateways_per_host=3 (18 gw), worker_count=8, workers_per_host=6 (48 workers, c5a.2xlarge), lb=c5a.4xlarge, load_generator_count=3
+# 120k load:      gateway_count=6, gateways_per_host=3 (18 gw), worker_count=8, workers_per_host=6 (48 workers, c5a.2xlarge), lb=c5a.4xlarge, redis=c5a.xlarge, load_generator_count=4
 gateway_count     = 3
 gateways_per_host = 3
 worker_count      = 5
@@ -27,6 +29,7 @@ workers_per_host  = 6
 # For <=15k: t3.medium / c5a.xlarge
 # For 35k-50k: c5a.2xlarge for gateways and workers, c5a.xlarge for LB, c5a.large for Redis
 # For 75k+:    c5a.2xlarge for LB, gateways, and workers
+# For 100k-120k: c5a.4xlarge for LB, c5a.xlarge for Redis, c5a.2xlarge for Gateways/Workers
 lb_instance_type      = "c5a.xlarge"
 gateway_instance_type = "c5a.2xlarge"
 worker_instance_type  = "c5a.2xlarge"
@@ -38,7 +41,8 @@ git_branch   = "hotfix/scale-and-fanout-remediation"
 
 # In-VPC k6 load generator instances
 # For <=50k: load_generator_count=1, load_generator_instance_type="c5a.8xlarge"
-# For 75k+:  load_generator_count=2 (distributes client event loops across 2 machines to avoid 100% runner CPU)
+# For 80k-100k: load_generator_count=3 (33k VUs each)
+# For 120k+: load_generator_count=4 (30k VUs each to eliminate client-side socket saturation)
 enable_load_generator        = true
 load_generator_count         = 1
 load_generator_instance_type = "c5a.8xlarge"
@@ -47,10 +51,8 @@ load_generator_instance_type = "c5a.8xlarge"
 trace_enabled = false
 
 # Worker outbound gRPC stream buffer capacity per room (prevents memory explosion during high-rate stroke fan-out)
-grpc_send_queue_maxsize = 1024
+# Set to 8096 for 100k-120k 20Hz runs
+grpc_send_queue_maxsize = 8096
 
 # Go Gateway outbound gRPC stream buffer capacity per worker stream (prevents room creation drops at 100k scale)
 grpc_stream_buffer_size = 4096
-
-
-

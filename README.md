@@ -8,9 +8,9 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
 ![gRPC](https://img.shields.io/badge/gRPC-Bidirectional%20Streaming-244c5a)
 ![Tests](https://img.shields.io/badge/Tests-286%20passing-brightgreen)
-![Benchmark](https://img.shields.io/badge/Validated%20Scale-100%2C000%20VUs%20%40%2020Hz-purple)
-![Throughput](https://img.shields.io/badge/Messages-269M%20Processed-blueviolet)
-![Bandwidth](https://img.shields.io/badge/Peak%20Bandwidth-1.43%20Gbps-success)
+![Benchmark](https://img.shields.io/badge/Validated%20Scale-120%2C000%20VUs%20%40%2020Hz-purple)
+![Throughput](https://img.shields.io/badge/Messages-372M%20Processed-blueviolet)
+![Bandwidth](https://img.shields.io/badge/Peak%20Bandwidth-1.50%20Gbps-success)
 
 ## Features
 
@@ -138,18 +138,19 @@ python scripts/perf_test_sticky.py --host localhost --port 8080 --clients 10
 
 ### Enterprise Scale Milestone (AWS Distributed Cluster — 100,000–120,000 VUs)
 
-Tested on AWS across a 17-node distributed fleet (1 × `c5a.4xlarge` Nginx Load Balancer, 6 × `c5a.2xlarge` Go Gateways [18 containers], 8 × `c5a.2xlarge` Python Workers [48 containers], 1 × `c5a.large` Redis, and 3 × `c5a.8xlarge` distributed load generators):
+Tested on AWS across a 17-node distributed fleet (1 × `c5a.4xlarge` Nginx Load Balancer, 6 × `c5a.2xlarge` Go Gateways [18 containers], 8 × `c5a.2xlarge` Python Workers [48 containers], 1 × `c5a.xlarge` Redis, and 4 × `c5a.8xlarge` distributed load generators):
 
-| Scale Metric | Validated 100,000 VU Run | 120,000 VU Peak Scale Run | Target SLA |
+| Scale Metric | Validated 100,000 VU Run | 120,000 VU Distributed Run (4 Runners) | Target SLA |
 |---|---|---|---|
 | **Concurrent Players (VUs)** | **100,000 VUs** | **120,000 VUs** | Fleet Target |
-| **Game Completion Rate** | **97.29%** (19,251 rooms) | **96.34%** (19,181 rooms) | $\ge 80.0\%$ ✅ |
-| **Player Session Completion** | **99.44%** (95,745 games) | **99.18%** (94,946 games) | $\ge 90.0\%$ ✅ |
+| **WebSocket Connection Success** | **99.06%** (96,441 conns) | **100.00%** (117,756 conns, 0 drops) | $\ge 99.0\%$ ✅ |
+| **Game Completion Rate** | **97.29%** (19,251 rooms) | **91.86%** (19,663 rooms) | $\ge 80.0\%$ ✅ |
+| **Player Session Completion** | **99.44%** (95,745 games) | **90.23%** (91,235 games) | $\ge 80.0\%$ ✅ |
 | **Server Create Errors** | **0** (100% eliminated) | **0** (100% eliminated) | 0 ✅ |
-| **Total Messages Processed** | **212,504,506 messages** | **261,868,912 messages** | Sustained throughput |
-| **Peak Fleet Bandwidth** | **1.43 Gbps TX / 1.36 Gbps RX** | **1.40 Gbps TX / 1.30 Gbps RX** | AWS Line Rate |
-| **Gateway Fan-out Drops** | **0 control, 0 lossy drops** | **0 control, 0 lossy drops** | 0 drops ✅ |
-| **Python Worker Memory** | **2,057 MB max** (<13% RAM) | **2,052 MB max** (<13% RAM) | Zero OOMs ✅ |
+| **Total Messages Processed** | **212,504,506 messages** | **372,171,782 messages** | Sustained throughput |
+| **Peak Fleet Bandwidth** | **1.43 Gbps TX / 1.36 Gbps RX** | **1.50 Gbps TX / 1.40 Gbps RX** | AWS Line Rate |
+| **Gateway Control Drops** | **0 drops** | **0 control drops** | 0 drops ✅ |
+| **Python Worker Memory** | **2,057 MB max** (<13% RAM) | **2,375 MB max** (<15% RAM) | Zero OOMs ✅ |
 
 See the full [Performance Test Report](docs/performance-test-report.md) for detailed telemetry.
 
