@@ -116,5 +116,11 @@ variable "grpc_send_queue_maxsize" {
   default     = 1024
 }
 
+variable "grpc_stream_buffer_size" {
+  description = "Go Gateway outbound gRPC stream buffer capacity per worker stream (default: 4096, prevents room creation drops at 100k scale)"
+  type        = number
+  default     = 4096
+}
+
 
 

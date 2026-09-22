@@ -49,5 +49,8 @@ trace_enabled = false
 # Worker outbound gRPC stream buffer capacity per room (prevents memory explosion during high-rate stroke fan-out)
 grpc_send_queue_maxsize = 1024
 
+# Go Gateway outbound gRPC stream buffer capacity per worker stream (prevents room creation drops at 100k scale)
+grpc_stream_buffer_size = 4096
+
 
 

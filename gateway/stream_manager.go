@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,17 +34,23 @@ type StreamConfig struct {
 	KeepaliveInterval time.Duration // Interval between keepalive pings (default: 15s)
 	KeepaliveTimeout  time.Duration // Max wait for keepalive response (default: 5s)
 	MaxRetries        int           // Reconnection attempts before fallback (default: 3)
-	BufferSize        int           // Max buffered messages during reconnection (default: 500)
+	BufferSize        int           // Max buffered messages during reconnection (default: 4096)
 }
 
 // DefaultStreamConfig returns a StreamConfig with sensible defaults.
 func DefaultStreamConfig() StreamConfig {
+	bufSize := 4096
+	if env := os.Getenv("GRPC_STREAM_BUFFER_SIZE"); env != "" {
+		if val, err := strconv.Atoi(env); err == nil && val > 0 {
+			bufSize = val
+		}
+	}
 	return StreamConfig{
 		IdleTimeout:       30 * time.Second,
 		KeepaliveInterval: 15 * time.Second,
 		KeepaliveTimeout:  5 * time.Second,
 		MaxRetries:        3,
-		BufferSize:        500,
+		BufferSize:        bufSize,
 	}
 }
 
@@ -84,10 +92,10 @@ type StreamManager struct {
 	resolver   *WorkerResolver
 	redis      *redis.Client
 	config     StreamConfig
-	directAddr string            // Direct gRPC address (bypasses Redis discovery)
-	fanOut     *FanOutDispatcher // For starting receive loops on new streams
-	registry   *SessionRegistry  // For receiver disconnect handling
-	gwRegistry *GatewayRegistry  // For claiming room ownership on room_created (room-sticky routing)
+	directAddr string             // Direct gRPC address (bypasses Redis discovery)
+	fanOut     *FanOutDispatcher  // For starting receive loops on new streams
+	registry   *SessionRegistry   // For receiver disconnect handling
+	gwRegistry *GatewayRegistry   // For claiming room ownership on room_created (room-sticky routing)
 	sf         singleflight.Group // Prevents thundering herd on GetOrCreate
 
 	// grpcAddrCache caches workerID -> gRPC address so resolveGRPCAddress isn't
@@ -164,7 +172,7 @@ func (sm *StreamManager) GetOrCreate(workerID string) (*RoomStream, error) {
 			done:     make(chan struct{}),
 		}
 		rs.state.Store(streamStateHealthy)
-		
+
 		sm.mu.Lock()
 		if existing, ok := sm.streams[workerID]; ok {
 			sm.closeStreamLocked(existing)
@@ -192,6 +200,18 @@ func (sm *StreamManager) GetOrCreate(workerID string) (*RoomStream, error) {
 	return rs, nil
 }
 
+// isLossyClientMessage returns true if a message type is safe to drop under
+// transient backpressure (e.g. continuous drawing strokes or cursor movements).
+// Must-deliver control frames (create_room, join_room, start_game, guess, etc.)
+// return false and will wait for buffer capacity rather than failing immediately.
+func isLossyClientMessage(msgType string) bool {
+	switch msgType {
+	case "stroke", "draw_stroke", "cursor_move":
+		return true
+	default:
+		return false
+	}
+}
 
 // Send routes a GameMessage to the RoomStream for the given worker.
 // Returns an error if no stream exists or the stream is unhealthy.
@@ -212,7 +232,7 @@ func (sm *StreamManager) Send(workerID string, msg *proto.GameMessage) error {
 		return fmt.Errorf("stream for worker %s is unhealthy (state=%d)", workerID, rs.state.Load())
 	}
 
-	// Non-blocking send to the buffered channel
+	// Fast path: non-blocking send to the buffered channel
 	select {
 	case rs.sendCh <- msg:
 		rs.markActivity()
@@ -221,13 +241,34 @@ func (sm *StreamManager) Send(workerID string, msg *proto.GameMessage) error {
 		tracef("[trace] GW_STREAM_SEND worker=%s type=%s player=%s", workerID, msg.GetMessageType(), msg.GetPlayerId())
 		return nil
 	default:
-		// sendCh full: the per-worker gRPC forwarding path can't keep up, so this
-		// inbound message is dropped here — upstream of the worker and fan-out.
-		// This is the suspected choke point for strokes under the storm.
+	}
+
+	// sendCh full: differentiate high-frequency lossy drawing strokes from critical control frames.
+	// For lossy messages, drop immediately to protect low drawing latency and avoid head-of-line blocking.
+	if isLossyClientMessage(msg.GetMessageType()) {
 		RecordSendDropped(msg.GetMessageType())
-		debugf("[sm:send] worker=%s FAILED buffer full", workerID)
+		debugf("[sm:send] worker=%s FAILED buffer full (lossy dropped)", workerID)
 		tracef("[trace] GW_STREAM_SEND_FAIL worker=%s reason=buffer_full", workerID)
 		return fmt.Errorf("send buffer full for worker %s", workerID)
+	}
+
+	// For critical control messages (create_room, join_room, start_game, etc.),
+	// do NOT drop immediately — wait up to 2 seconds for sendLoop to drain queue space.
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+
+	select {
+	case rs.sendCh <- msg:
+		rs.markActivity()
+		RecordSendQueued(msg.GetMessageType())
+		debugf("[sm:send] worker=%s queued after backpressure wait ok", workerID)
+		tracef("[trace] GW_STREAM_SEND worker=%s type=%s player=%s (waited)", workerID, msg.GetMessageType(), msg.GetPlayerId())
+		return nil
+	case <-timer.C:
+		RecordSendDropped(msg.GetMessageType())
+		debugf("[sm:send] worker=%s FAILED buffer full (control frame timed out)", workerID)
+		tracef("[trace] GW_STREAM_SEND_FAIL worker=%s reason=buffer_full_timeout", workerID)
+		return fmt.Errorf("send buffer full for worker %s (timeout)", workerID)
 	}
 }
 

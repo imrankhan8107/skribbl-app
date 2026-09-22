@@ -240,12 +240,13 @@ resource "aws_instance" "gateways" {
   key_name               = aws_key_pair.deployer.key_name
 
   user_data = templatefile("${path.module}/templates/cloud-init-gateway.tftpl", {
-    gateway_id        = "gateway-${count.index + 1}"
-    redis_ip          = aws_instance.redis.private_ip
-    git_repo_url      = var.git_repo_url
-    git_branch        = var.git_branch
-    gateways_per_host = var.gateways_per_host
-    trace_enabled     = var.trace_enabled
+    gateway_id              = "gateway-${count.index + 1}"
+    redis_ip                = aws_instance.redis.private_ip
+    git_repo_url            = var.git_repo_url
+    git_branch              = var.git_branch
+    gateways_per_host       = var.gateways_per_host
+    trace_enabled           = var.trace_enabled
+    grpc_stream_buffer_size = var.grpc_stream_buffer_size
   })
 
   root_block_device {
