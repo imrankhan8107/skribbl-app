@@ -134,8 +134,14 @@ Running k6 inside the AWS VPC eliminates home network bandwidth and Wi-Fi latenc
    # Enterprise 35k run: 35,000 VUs, 5 players/room, 5Hz stroke, 240s ramp
    ./run-test.sh 35000 5 5 240
 
-   # 50k Milestone run: 50,000 VUs, 5 players/room, 5Hz stroke, 240s ramp
-   ./run-test.sh 50000 5 5 240
+   # 50k Milestone run: 50,000 VUs, 5 players/room, 20Hz stroke, 240s ramp
+   ./run-test.sh 50000 5 20 240
+
+   # 80k Distributed Milestone (Run concurrently on Runner 1 and Runner 2):
+   # Runner 1: VUs 1..40,000 (Offset 0)
+   ./run-test.sh 40000 5 20 30
+   # Runner 2: VUs 40,001..80,000 (Offset 40,000 auto-applied)
+   ./run-test.sh 40000 5 20 30
    ```
 
 3. **Automated Cluster Metrics Report**:

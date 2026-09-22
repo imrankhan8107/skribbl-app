@@ -8,8 +8,9 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
 ![gRPC](https://img.shields.io/badge/gRPC-Bidirectional%20Streaming-244c5a)
 ![Tests](https://img.shields.io/badge/Tests-286%20passing-brightgreen)
-![Benchmark](https://img.shields.io/badge/Validated%20Scale-60%2C000%20VUs%20%40%2020Hz-purple)
-![Throughput](https://img.shields.io/badge/Throughput-101%2C116%20msg%2Fs-blueviolet)
+![Benchmark](https://img.shields.io/badge/Validated%20Scale-80%2C000%20VUs%20%40%2020Hz-purple)
+![Throughput](https://img.shields.io/badge/Throughput-179%2C769%20msg%2Fs-blueviolet)
+![Bandwidth](https://img.shields.io/badge/Peak%20Bandwidth-1.04%20Gbps-success)
 
 ## Features
 
@@ -31,8 +32,9 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 
 **Resilience & Scale**
 - ⚡ **High-Speed Rust Serialization:** Integrated `orjson` with zero-copy Protobuf payload bytes.
-- 🚀 **High-Concurrency Go Gateway:** Dedicated epoll-based Go Gateways terminating 60,000+ WebSockets with O(1) fan-out.
+- 🚀 **High-Concurrency Go Gateway:** Dedicated epoll-based Go Gateways terminating 80,000+ WebSockets with O(1) fan-out at ~180,000 msg/sec.
 - 🛡️ **Class-Aware Backpressure:** Bounded worker gRPC queue (`GRPC_SEND_QUEUE_MAXSIZE`) protects must-deliver control frames while shedding lossy strokes under 20 Hz load.
+- 🌐 **Distributed Load Generation:** Dual in-VPC k6 generators with automatic `VU_OFFSET` partitioning to avoid client event-loop saturation.
 - 🔌 Auto-reconnect on page refresh (120-second grace window)
 - ⏳ 20-second countdown before ending game on disconnect (with "End Now" option for host)
 - 🏠 Host reassignment on disconnect
