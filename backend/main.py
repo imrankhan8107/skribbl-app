@@ -9,6 +9,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, Request, Response
+from fastapi.responses import ORJSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -112,7 +113,11 @@ async def lifespan(app: FastAPI):
     logger.info("Application shutdown (worker_id=%s)", redis_pubsub.get_worker_id())
 
 
-app = FastAPI(title="Pictionary Game", lifespan=lifespan)
+app = FastAPI(
+    title="Pictionary Game",
+    lifespan=lifespan,
+    default_response_class=ORJSONResponse,
+)
 
 # CORS middleware for development
 app.add_middleware(
