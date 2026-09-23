@@ -70,10 +70,7 @@ const defaultGameState: GameState = {
   reconnectCountdown: 0,
 };
 
-function renderCanvas(
-  isDrawer: boolean,
-  overrides: Partial<WebSocketContextValue> = {}
-) {
+function renderCanvas(isDrawer: boolean, overrides: Partial<WebSocketContextValue> = {}) {
   const send = vi.fn();
   const contextValue: WebSocketContextValue = {
     gameState: { ...defaultGameState, isDrawer },
@@ -155,18 +152,20 @@ describe("Canvas", () => {
   });
 
   describe("Drawing toolbar contents (Requirement 5.4, 5.5)", () => {
-    it("renders at least 8 color options", () => {
+    it("renders 16 color options", () => {
       renderCanvas(true);
       const colorPicker = screen.getByTestId("color-picker");
       const colorButtons = colorPicker.querySelectorAll("button");
-      expect(colorButtons.length).toBeGreaterThanOrEqual(8);
+      expect(colorButtons.length).toBe(16);
     });
 
-    it("renders brush size options (small, medium, large)", () => {
+    it("renders 5 brush size options (xs, small, medium, large, xl)", () => {
       renderCanvas(true);
+      expect(screen.getByTestId("brush-xs")).toBeInTheDocument();
       expect(screen.getByTestId("brush-small")).toBeInTheDocument();
       expect(screen.getByTestId("brush-medium")).toBeInTheDocument();
       expect(screen.getByTestId("brush-large")).toBeInTheDocument();
+      expect(screen.getByTestId("brush-xl")).toBeInTheDocument();
     });
 
     it("renders eraser button", () => {
@@ -177,6 +176,55 @@ describe("Canvas", () => {
     it("renders fill tool button", () => {
       renderCanvas(true);
       expect(screen.getByTestId("tool-fill")).toBeInTheDocument();
+    });
+
+    it("renders undo and redo buttons with correct initial disabled state", () => {
+      renderCanvas(true);
+      const undoBtn = screen.getByTestId("undo-btn");
+      const redoBtn = screen.getByTestId("redo-btn");
+      expect(undoBtn).toBeDisabled();
+      expect(redoBtn).toBeDisabled();
+    });
+
+    it("enables undo after drawing a stroke and sends undo on click", async () => {
+      const user = userEvent.setup();
+      const { send } = renderCanvas(true);
+      const canvas = screen.getByTestId("drawing-canvas");
+
+      // Draw a stroke
+      fireEvent.mouseDown(canvas, { clientX: 100, clientY: 100 });
+      fireEvent.mouseMove(canvas, { clientX: 110, clientY: 110 });
+      fireEvent.mouseUp(canvas, { clientX: 110, clientY: 110 });
+
+      const undoBtn = screen.getByTestId("undo-btn");
+      expect(undoBtn).not.toBeDisabled();
+
+      await user.click(undoBtn);
+      expect(send).toHaveBeenCalledWith(
+        "undo",
+        expect.objectContaining({ actions: expect.any(Array) })
+      );
+
+      // After undo, redo should now be enabled
+      const redoBtn = screen.getByTestId("redo-btn");
+      expect(redoBtn).not.toBeDisabled();
+    });
+
+    it("supports Ctrl+Z keyboard shortcut for undo", () => {
+      const { send } = renderCanvas(true);
+      const canvas = screen.getByTestId("drawing-canvas");
+
+      // Draw a stroke
+      fireEvent.mouseDown(canvas, { clientX: 100, clientY: 100 });
+      fireEvent.mouseMove(canvas, { clientX: 110, clientY: 110 });
+      fireEvent.mouseUp(canvas, { clientX: 110, clientY: 110 });
+
+      // Trigger Ctrl+Z
+      fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+      expect(send).toHaveBeenCalledWith(
+        "undo",
+        expect.objectContaining({ actions: expect.any(Array) })
+      );
     });
   });
 });

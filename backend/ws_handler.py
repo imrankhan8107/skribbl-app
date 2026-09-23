@@ -298,6 +298,14 @@ async def _handle_local_message(
                 "payload": {},
             })
 
+    elif msg_type == "undo":
+        room = room_manager._find_room_by_player(player_id)
+        if room is not None and room.turn and room.turn.drawer_id == player_id:
+            await room_manager.broadcast(room.code, {
+                "type": "undo",
+                "payload": payload if isinstance(payload, dict) else {},
+            })
+
     elif msg_type == "kick_player":
         target_id = payload.get("target_player_id", "")
         result = await room_manager.kick_player(player_id, target_id)

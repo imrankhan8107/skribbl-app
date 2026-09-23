@@ -1,7 +1,7 @@
 import { useRef, useEffect } from "react";
 import { useCanvas } from "../hooks/useCanvas";
 import { useWebSocket } from "../hooks/useWebSocket";
-import type { BrushSize } from "../hooks/useCanvas";
+import type { BrushSize, DrawingAction } from "../hooks/useCanvas";
 import { subscribeDrawing } from "../context/drawingBus";
 import RoundTransition from "./RoundTransition";
 
@@ -22,21 +22,29 @@ export interface CanvasProps {
 
 const COLOR_PALETTE = [
   "#000000", // Black
+  "#666666", // Dark Gray
+  "#A3A3A3", // Light Gray
   "#FFFFFF", // White
-  "#FF0000", // Red
-  "#00FF00", // Green
-  "#0000FF", // Blue
-  "#FFFF00", // Yellow
-  "#FF8000", // Orange
-  "#800080", // Purple
-  "#00FFFF", // Cyan
-  "#FF69B4", // Pink
+  "#E50000", // Red
+  "#FF7930", // Orange
+  "#FFD700", // Gold / Yellow
+  "#00C853", // Green
+  "#00796B", // Teal
+  "#00B0FF", // Light Blue
+  "#2979FF", // Blue
+  "#6200EA", // Indigo / Purple
+  "#D500F9", // Magenta
+  "#FF4081", // Pink
+  "#795548", // Brown
+  "#F5DEB3", // Beige / Tan
 ];
 
 const BRUSH_SIZE_OPTIONS: { label: string; value: BrushSize }[] = [
+  { label: "XS", value: "xs" },
   { label: "S", value: "small" },
   { label: "M", value: "medium" },
   { label: "L", value: "large" },
+  { label: "XL", value: "xl" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -59,8 +67,13 @@ export default function Canvas({
     tool,
     setTool,
     clearCanvas,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
     renderRemoteStroke,
     renderRemoteFill,
+    renderRemoteUndo,
   } = useCanvas(canvasRef, isDrawer);
 
   // Initialize canvas with white background on mount
@@ -87,28 +100,23 @@ export default function Canvas({
         renderRemoteFill(p);
       } else if (type === "clear_canvas") {
         clearCanvas();
+      } else if (type === "undo") {
+        const p = payload as { actions?: DrawingAction[] } | undefined;
+        renderRemoteUndo(p?.actions);
       }
     });
     return unsubscribe;
-  }, [renderRemoteStroke, renderRemoteFill, clearCanvas]);
-
-  // Expose render methods for incoming server events via a ref-based approach
-  // The parent Game page will call these when receiving stroke/fill/clear events
-  // We attach them to the canvas element's dataset for access, or expose via useEffect
-  const renderMethodsRef = useRef({ renderRemoteStroke, renderRemoteFill, clearCanvas });
-  useEffect(() => {
-    renderMethodsRef.current = { renderRemoteStroke, renderRemoteFill, clearCanvas };
-  }, [renderRemoteStroke, renderRemoteFill, clearCanvas]);
+  }, [renderRemoteStroke, renderRemoteFill, clearCanvas, renderRemoteUndo]);
 
   // Expose render methods on the canvas element for parent access
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    // Attach methods as custom properties on the DOM element
     (canvas as unknown as Record<string, unknown>).__renderRemoteStroke = renderRemoteStroke;
     (canvas as unknown as Record<string, unknown>).__renderRemoteFill = renderRemoteFill;
+    (canvas as unknown as Record<string, unknown>).__renderRemoteUndo = renderRemoteUndo;
     (canvas as unknown as Record<string, unknown>).__clearCanvas = clearCanvas;
-  }, [renderRemoteStroke, renderRemoteFill, clearCanvas]);
+  }, [renderRemoteStroke, renderRemoteFill, renderRemoteUndo, clearCanvas]);
 
   const handleClear = () => {
     clearCanvas();
@@ -224,6 +232,44 @@ export default function Canvas({
               active={tool === "fill"}
               onClick={() => setTool("fill")}
             />
+          </div>
+
+          {/* Undo / Redo Buttons */}
+          <div className="toolbar-section" data-testid="undo-redo-buttons">
+            <button
+              type="button"
+              aria-label="Undo"
+              data-testid="undo-btn"
+              disabled={!canUndo}
+              onClick={undo}
+              style={{
+                padding: "4px 10px",
+                border: "1px solid #ccc",
+                borderRadius: 4,
+                cursor: canUndo ? "pointer" : "not-allowed",
+                opacity: canUndo ? 1 : 0.5,
+                margin: 2,
+              }}
+            >
+              Undo
+            </button>
+            <button
+              type="button"
+              aria-label="Redo"
+              data-testid="redo-btn"
+              disabled={!canRedo}
+              onClick={redo}
+              style={{
+                padding: "4px 10px",
+                border: "1px solid #ccc",
+                borderRadius: 4,
+                cursor: canRedo ? "pointer" : "not-allowed",
+                opacity: canRedo ? 1 : 0.5,
+                margin: 2,
+              }}
+            >
+              Redo
+            </button>
           </div>
 
           {/* Clear Canvas Button */}

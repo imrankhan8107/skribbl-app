@@ -7,3 +7,4 @@ aiohttp
 grpcio==1.68.1
 grpcio-tools==1.68.1
 orjson>=3.10.0
+prometheus-client>=0.20.0

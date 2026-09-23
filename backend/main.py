@@ -172,6 +172,17 @@ async def health_endpoint():
     }
 
 
+@app.get("/metrics")
+async def metrics_endpoint():
+    """Prometheus metrics endpoint."""
+    from backend.ws_handler import room_manager
+    from backend.metrics_exporter import set_active_rooms, set_active_players, generate_prometheus_metrics
+    set_active_rooms(len(room_manager.rooms))
+    set_active_players(len(room_manager._player_to_room))
+    data, content_type = generate_prometheus_metrics()
+    return Response(content=data, media_type=content_type)
+
+
 @app.get("/ready")
 async def ready_endpoint(response: Response):
     """Readiness probe. Returns 503 if draining, 200 if ready to accept traffic."""

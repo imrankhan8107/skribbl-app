@@ -1,0 +1,27 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: 'go-gateways'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+          - 'gateway-1:9000'
+          - 'gateway-2:9000'
+          - 'gateway:9000'
+          - 'host.docker.internal:9000'
+        labels:
+          role: 'gateway'
+
+  - job_name: 'python-workers'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+          - 'worker-1:8000'
+          - 'worker-2:8000'
+          - 'backend:8000'
+          - 'host.docker.internal:8000'
+        labels:
+          role: 'worker'
+

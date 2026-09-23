@@ -528,7 +528,12 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
         // so the canvas renders every segment in order, synchronously. Routing
         // these through the reducer collapsed rapid bursts into a single slot
         // (React batching), dropping intermediate strokes -> dashed drawings.
-        if (msg.type === "stroke" || msg.type === "fill" || msg.type === "clear_canvas") {
+        if (
+          msg.type === "stroke" ||
+          msg.type === "fill" ||
+          msg.type === "clear_canvas" ||
+          msg.type === "undo"
+        ) {
           publishDrawing({ type: msg.type, payload: msg.payload });
           return;
         }

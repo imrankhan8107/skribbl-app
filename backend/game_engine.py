@@ -33,6 +33,26 @@ def _levenshtein_distance(s1: str, s2: str) -> int:
     return prev_row[-1]
 
 
+PROFANITY_WORDS = frozenset({
+    "fuck", "shit", "bitch", "asshole", "cunt", "dick", "pussy", "bastard", "nigger", "faggot", "slut", "whore"
+})
+
+
+def filter_profanity(text: str) -> str:
+    """Mask obvious profanity words with asterisks."""
+    if not text:
+        return text
+    words = text.split()
+    censored = []
+    for word in words:
+        clean_word = "".join(c for c in word.lower() if c.isalnum())
+        if clean_word in PROFANITY_WORDS:
+            censored.append("*" * len(word))
+        else:
+            censored.append(word)
+    return " ".join(censored)
+
+
 def draw_word_choices(room: Room) -> list[str]:
     """Return 3 unique word choices for the drawer from the room's word pool.
 
@@ -381,6 +401,12 @@ async def handle_guess(room: Room, player_id: str, text: str, room_manager) -> N
     # Case-insensitive strip comparison (Property 13)
     if text.strip().lower() == room.turn.word.lower():
         # Correct guess
+        try:
+            from backend.metrics_exporter import record_guess
+            record_guess("correct")
+        except Exception:
+            pass
+
         player.has_guessed = True
         player._guess_time = time.time()
 
@@ -412,6 +438,12 @@ async def handle_guess(room: Room, player_id: str, text: str, room_manager) -> N
                 is_close = True
 
         if is_close:
+            try:
+                from backend.metrics_exporter import record_guess
+                record_guess("close")
+            except Exception:
+                pass
+
             # Close guess — DON'T broadcast the actual guess (it's too revealing)
             # Only show the "is very close!" system message
             await room_manager.broadcast(room.code, {
@@ -423,12 +455,18 @@ async def handle_guess(room: Room, player_id: str, text: str, room_manager) -> N
                 },
             })
         else:
-            # Not close — broadcast as normal chat_message
+            try:
+                from backend.metrics_exporter import record_guess
+                record_guess("incorrect")
+            except Exception:
+                pass
+
+            # Not close — broadcast as normal chat_message (profanity-filtered)
             await room_manager.broadcast(room.code, {
                 "type": "chat_message",
                 "payload": {
                     "player_name": player.name,
-                    "text": text,
+                    "text": filter_profanity(text),
                     "is_system": False,
                 },
             })
@@ -462,6 +500,7 @@ async def handle_chat(room: Room, player_id: str, text: str, room_manager) -> No
     # Strip the current word from the message (case-insensitive) to prevent reveals (Requirement 6.6)
     word = room.turn.word
     sanitized_text = re.sub(re.escape(word), "***", text, flags=re.IGNORECASE)
+    sanitized_text = filter_profanity(sanitized_text)
 
     # Broadcast chat_message
     await room_manager.broadcast(room.code, {

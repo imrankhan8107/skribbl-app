@@ -7,16 +7,19 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 ![React](https://img.shields.io/badge/React-18-61DAFB)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
 ![gRPC](https://img.shields.io/badge/gRPC-Bidirectional%20Streaming-244c5a)
-![Tests](https://img.shields.io/badge/Tests-286%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-290%20backend%20%2B%2065%20frontend%20passing-brightgreen)
 ![Benchmark](https://img.shields.io/badge/Validated%20Scale-120%2C000%20VUs%20%40%2020Hz-purple)
 ![Throughput](https://img.shields.io/badge/Messages-400M%20Processed-blueviolet)
 ![Bandwidth](https://img.shields.io/badge/Peak%20Bandwidth-1.50%20Gbps-success)
+![Observability](https://img.shields.io/badge/Metrics-Prometheus%20%2B%20Grafana-orange)
 
 ## Features
 
-**Game Mechanics**
-- 🎨 Real-time collaborative canvas with pen, eraser, fill tool, and color picker
+**Game Mechanics & Creative Canvas**
+- 🎨 Real-time collaborative canvas with pen, eraser, fill tool, expanded 16-color palette, and 5 brush sizes (XS, S, M, L, XL)
+- ↩️ Full Canvas Undo & Redo with synchronized remote replay and hotkeys (`Ctrl+Z`, `Ctrl+Y`, `B`, `E`, `F`)
 - 💬 Live chat with guessing — incorrect guesses visible to all, correct guesses hidden
+- 🔍 "Close Guess" assistance (notifies player when within Levenshtein distance $\le 2$) & automated chat profanity moderation
 - 🏆 Exponential scoring with position multiplier (first guesser earns most)
 - 🔄 Turn rotation — every player gets to draw each round
 - ⏱️ Configurable turn duration (30–180 seconds) with hint reveals at 40% and 70%
@@ -113,10 +116,10 @@ Access from other devices: `http://<your-ip>:5173`
 ## Testing
 
 ```bash
-# Backend (213 tests — unit + property-based + integration)
+# Backend (290 tests — unit + property-based + integration + metrics + undo)
 python -m pytest backend/tests/ -v
 
-# Frontend (62 tests — component + reducer)
+# Frontend (65 tests — component + reducer + canvas + shortcuts)
 cd frontend && npx vitest run
 
 # Performance test (simulates concurrent WebSocket clients)
@@ -125,6 +128,21 @@ python scripts/perf_test.py --clients 100
 # Performance test with sticky sessions (multi-worker)
 python scripts/perf_test_sticky.py --host localhost --port 8080 --clients 10
 ```
+
+## Observability & Metrics (Prometheus & Grafana)
+
+The platform includes an out-of-the-box telemetry stack exposing real-time worker and gateway metrics.
+
+- **FastAPI `/metrics`**: Exposes active rooms, connected players, gRPC streaming channels, turn durations, and message/guess counters.
+- **Go Gateway `/metrics`**: Exposes active WebSockets, epoll queue size, lossy vs. control drops, and network fanout throughput.
+
+To launch the pre-configured Prometheus & Grafana stack:
+```bash
+docker compose -f monitoring/docker-compose.yml up -d
+```
+- **Prometheus**: Accessible at `http://localhost:9090`
+- **Grafana**: Accessible at `http://localhost:3000` (auto-loaded dashboard: `Skribbl Cluster Overview`)
+
 
 ### Performance Results (100 clients)
 

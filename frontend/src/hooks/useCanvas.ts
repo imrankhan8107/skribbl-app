@@ -6,7 +6,11 @@ import { useWebSocket } from "./useWebSocket";
 // ---------------------------------------------------------------------------
 
 export type DrawingTool = "pen" | "fill" | "eraser";
-export type BrushSize = "small" | "medium" | "large";
+export type BrushSize = "xs" | "small" | "medium" | "large" | "xl";
+
+export type DrawingAction =
+  | { type: "stroke"; points: [number, number][]; color: string; size: number }
+  | { type: "fill"; x: number; y: number; color: string };
 
 export interface UseCanvasReturn {
   color: string;
@@ -16,12 +20,13 @@ export interface UseCanvasReturn {
   tool: DrawingTool;
   setTool: (tool: DrawingTool) => void;
   clearCanvas: () => void;
-  renderRemoteStroke: (stroke: {
-    points: [number, number][];
-    color: string;
-    size: number;
-  }) => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  renderRemoteStroke: (stroke: { points: [number, number][]; color: string; size: number }) => void;
   renderRemoteFill: (fill: { x: number; y: number; color: string }) => void;
+  renderRemoteUndo: (actions?: DrawingAction[]) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -30,10 +35,12 @@ export interface UseCanvasReturn {
 
 const CANVAS_BG = "#FFFFFF";
 
-const BRUSH_SIZES: Record<BrushSize, number> = {
+export const BRUSH_SIZES: Record<BrushSize, number> = {
+  xs: 2,
   small: 4,
   medium: 8,
   large: 16,
+  xl: 32,
 };
 
 // ---------------------------------------------------------------------------
@@ -49,10 +56,16 @@ export function useCanvas(
   const [color, setColor] = useState<string>("#000000");
   const [brushSize, setBrushSize] = useState<BrushSize>("medium");
   const [tool, setTool] = useState<DrawingTool>("pen");
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
 
   // Drawing state (mutable refs to avoid re-renders on each event)
   const isDrawingRef = useRef(false);
   const pointsRef = useRef<[number, number][]>([]);
+
+  // Action history for undo/redo
+  const actionHistoryRef = useRef<DrawingAction[]>([]);
+  const redoStackRef = useRef<DrawingAction[]>([]);
 
   // Keep refs to current tool state for use in event handlers
   const colorRef = useRef(color);
@@ -68,6 +81,16 @@ export function useCanvas(
   useEffect(() => {
     toolRef.current = tool;
   }, [tool]);
+
+  // Reset undo/redo when drawer role changes
+  useEffect(() => {
+    if (!isDrawer) {
+      actionHistoryRef.current = [];
+      redoStackRef.current = [];
+      setCanUndo(false);
+      setCanRedo(false);
+    }
+  }, [isDrawer]);
 
   // ---------------------------------------------------------------------------
   // Helper: get 2D context
@@ -212,6 +235,28 @@ export function useCanvas(
   );
 
   // ---------------------------------------------------------------------------
+  // Replay actions (redraw from scratch)
+  // ---------------------------------------------------------------------------
+  const replayActions = useCallback(
+    (actions: DrawingAction[]) => {
+      const canvas = canvasRef.current;
+      const ctx = getCtx();
+      if (!canvas || !ctx) return;
+      ctx.fillStyle = CANVAS_BG;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      for (const action of actions) {
+        if (action.type === "stroke") {
+          drawStroke(action.points, action.color, action.size);
+        } else if (action.type === "fill") {
+          floodFill(action.x, action.y, action.color);
+        }
+      }
+    },
+    [canvasRef, getCtx, drawStroke, floodFill]
+  );
+
+  // ---------------------------------------------------------------------------
   // Clear canvas
   // ---------------------------------------------------------------------------
   const clearCanvas = useCallback(() => {
@@ -220,7 +265,50 @@ export function useCanvas(
     if (!canvas || !ctx) return;
     ctx.fillStyle = CANVAS_BG;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    actionHistoryRef.current = [];
+    redoStackRef.current = [];
+    setCanUndo(false);
+    setCanRedo(false);
   }, [canvasRef, getCtx]);
+
+  // ---------------------------------------------------------------------------
+  // Undo & Redo (Drawer actions)
+  // ---------------------------------------------------------------------------
+  const undo = useCallback(() => {
+    if (!isDrawer || actionHistoryRef.current.length === 0) return;
+    const popped = actionHistoryRef.current.pop();
+    if (popped) {
+      redoStackRef.current.push(popped);
+    }
+    replayActions(actionHistoryRef.current);
+    setCanUndo(actionHistoryRef.current.length > 0);
+    setCanRedo(redoStackRef.current.length > 0);
+    send("undo", { actions: actionHistoryRef.current });
+  }, [isDrawer, replayActions, send]);
+
+  const redo = useCallback(() => {
+    if (!isDrawer || redoStackRef.current.length === 0) return;
+    const action = redoStackRef.current.pop();
+    if (!action) return;
+    actionHistoryRef.current.push(action);
+    if (action.type === "stroke") {
+      drawStroke(action.points, action.color, action.size);
+      send("stroke", {
+        points: action.points,
+        color: action.color,
+        size: action.size,
+      });
+    } else if (action.type === "fill") {
+      floodFill(action.x, action.y, action.color);
+      send("fill", {
+        x: action.x,
+        y: action.y,
+        color: action.color,
+      });
+    }
+    setCanUndo(actionHistoryRef.current.length > 0);
+    setCanRedo(redoStackRef.current.length > 0);
+  }, [isDrawer, drawStroke, floodFill, send]);
 
   // ---------------------------------------------------------------------------
   // Render remote stroke
@@ -243,6 +331,59 @@ export function useCanvas(
   );
 
   // ---------------------------------------------------------------------------
+  // Render remote undo
+  // ---------------------------------------------------------------------------
+  const renderRemoteUndo = useCallback(
+    (actions?: DrawingAction[]) => {
+      if (actions) {
+        replayActions(actions);
+      }
+    },
+    [replayActions]
+  );
+
+  // ---------------------------------------------------------------------------
+  // Keyboard Shortcuts (B=Pen, E=Eraser, F=Fill, Ctrl+Z=Undo, Ctrl+Y=Redo)
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!isDrawer) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        undo();
+      } else if (
+        ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "z")
+      ) {
+        e.preventDefault();
+        redo();
+      } else if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (e.key.toLowerCase() === "b") {
+          setTool("pen");
+        } else if (e.key.toLowerCase() === "e") {
+          setTool("eraser");
+        } else if (e.key.toLowerCase() === "f") {
+          setTool("fill");
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isDrawer, undo, redo]);
+
+  // ---------------------------------------------------------------------------
   // Pointer event handlers (attached only when isDrawer is true)
   // ---------------------------------------------------------------------------
   useEffect(() => {
@@ -258,6 +399,10 @@ export function useCanvas(
         const fillColor = colorRef.current;
         floodFill(x, y, fillColor);
         send("fill", { x, y, color: fillColor });
+        actionHistoryRef.current.push({ type: "fill", x, y, color: fillColor });
+        redoStackRef.current = [];
+        setCanUndo(true);
+        setCanRedo(false);
         return;
       }
 
@@ -283,11 +428,7 @@ export function useCanvas(
       const size = BRUSH_SIZES[brushSizeRef.current];
       const points = pointsRef.current;
       if (points.length >= 2) {
-        drawStroke(
-          [points[points.length - 2], points[points.length - 1]],
-          strokeColor,
-          size
-        );
+        drawStroke([points[points.length - 2], points[points.length - 1]], strokeColor, size);
       }
 
       // Stream each segment to the server in real-time
@@ -313,6 +454,18 @@ export function useCanvas(
       if (points.length === 1) {
         // Single dot — already sent on pointerdown
         drawStroke(points, strokeColor, size);
+      }
+
+      if (points.length > 0) {
+        actionHistoryRef.current.push({
+          type: "stroke",
+          points: [...points],
+          color: strokeColor,
+          size,
+        });
+        redoStackRef.current = [];
+        setCanUndo(true);
+        setCanRedo(false);
       }
 
       pointsRef.current = [];
@@ -379,8 +532,13 @@ export function useCanvas(
     tool,
     setTool,
     clearCanvas,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
     renderRemoteStroke,
     renderRemoteFill,
+    renderRemoteUndo,
   };
 }
 

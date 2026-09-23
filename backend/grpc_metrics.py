@@ -27,6 +27,12 @@ def increment_streams() -> None:
     global _grpc_streams_serving
     with _lock:
         _grpc_streams_serving += 1
+        current = _grpc_streams_serving
+    try:
+        from backend.metrics_exporter import set_grpc_streams
+        set_grpc_streams(current)
+    except Exception:
+        pass
 
 
 def decrement_streams() -> None:
@@ -37,6 +43,12 @@ def decrement_streams() -> None:
     global _grpc_streams_serving
     with _lock:
         _grpc_streams_serving = max(0, _grpc_streams_serving - 1)
+        current = _grpc_streams_serving
+    try:
+        from backend.metrics_exporter import set_grpc_streams
+        set_grpc_streams(current)
+    except Exception:
+        pass
 
 
 def get_grpc_metrics() -> dict:

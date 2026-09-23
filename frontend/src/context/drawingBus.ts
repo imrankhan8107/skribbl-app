@@ -15,7 +15,7 @@
 // ---------------------------------------------------------------------------
 
 export interface DrawingEvent {
-  type: "stroke" | "fill" | "clear_canvas";
+  type: "stroke" | "fill" | "clear_canvas" | "undo";
   payload: unknown;
 }
 
