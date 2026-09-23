@@ -43,7 +43,7 @@
       "pluginVersion": "10.3.0",
       "targets": [
         {
-          "expr": "sum(grpc_streams_active) or sum(skribbl_worker_active_rooms)",
+          "expr": "sum(skribbl_worker_active_rooms)",
           "legendFormat": "Active Rooms",
           "refId": "A"
         }
