@@ -20,9 +20,20 @@ echo "* hard nofile 262144" >> /etc/security/limits.conf
 echo "root soft nofile 262144" >> /etc/security/limits.conf
 echo "root hard nofile 262144" >> /etc/security/limits.conf
 
-# Install Nginx, Git, and Python3
+# Install Nginx, Git, Python3, and Docker
 apt-get update -y
-apt-get install -y nginx git python3 curl
+apt-get install -y ca-certificates curl gnupg nginx git python3
+
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+systemctl enable docker
+systemctl start docker
 
 # Write rendered Nginx configuration
 cat <<'EOF' > /etc/nginx/nginx.conf
@@ -41,10 +52,46 @@ nginx -t
 systemctl enable nginx
 systemctl restart nginx
 
-# Clone repository for monitoring agent
+# Clone repository for monitoring agent and Prometheus/Grafana stack
 mkdir -p /opt
 cd /opt
 git clone -b ${git_branch} ${git_repo_url} skribbl-app || true
+
+# Render Prometheus configuration with dynamically discovered AWS Gateway & Worker private IPs
+cat <<'EOF' > /opt/skribbl-app/monitoring/prometheus/prometheus.yml
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: 'go-gateways'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+%{ for ip in gateway_ips ~}
+%{ for port in gateway_ports ~}
+          - '${ip}:${port}'
+%{ endfor ~}
+%{ endfor ~}
+        labels:
+          role: 'gateway'
+
+  - job_name: 'python-workers'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+%{ for ip in worker_ips ~}
+%{ for port in worker_ports ~}
+          - '${ip}:${port}'
+%{ endfor ~}
+%{ endfor ~}
+        labels:
+          role: 'worker'
+EOF
+
+# Start Prometheus and Grafana monitoring stack via Docker Compose
+cd /opt/skribbl-app/monitoring
+docker compose up -d
 
 # Start cluster monitor agent on port 9101
 if [ -f /opt/skribbl-app/scripts/cluster_monitor.py ]; then
@@ -52,4 +99,3 @@ if [ -f /opt/skribbl-app/scripts/cluster_monitor.py ]; then
 fi
 
 echo "=== Load Balancer initialization finished at $(date) ==="
-

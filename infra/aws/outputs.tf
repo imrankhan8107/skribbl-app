@@ -8,6 +8,16 @@ output "app_url" {
   value       = "http://${aws_instance.lb.public_ip}"
 }
 
+output "grafana_url" {
+  description = "URL to access Grafana Dashboard (strictly bounded to allowed_cidr)"
+  value       = "http://${aws_instance.lb.public_ip}:3000"
+}
+
+output "prometheus_url" {
+  description = "URL to access Prometheus UI (strictly bounded to allowed_cidr)"
+  value       = "http://${aws_instance.lb.public_ip}:9090"
+}
+
 output "gateway_public_ips" {
   description = "Public IPs of the Go Gateway instances"
   value       = aws_instance.gateways[*].public_ip

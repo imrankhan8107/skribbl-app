@@ -103,13 +103,19 @@ Apply complete! Resources: 11 added, 0 changed, 0 destroyed.
 Outputs:
 
 app_url = "http://54.x.x.x"
+grafana_url = "http://54.x.x.x:3000"
+prometheus_url = "http://54.x.x.x:9090"
 gateway_public_ips = ["54.y.y.1", "54.y.y.2"]
 lb_public_ip = "54.x.x.x"
 ssh_lb_command = "ssh ubuntu@54.x.x.x"
 k6_load_test_command = "k6 run --env HOST=54.x.x.x --env PORT=80 --env COORD_HOST=54.y.y.1 --env COORD_PORT=9100 --env VUS=1000 scripts/k6_grpc_load_test.js"
 ```
 
-Open `http://<lb_public_ip>` in your browser to verify gameplay.
+1. **Gameplay App**: Open `http://<lb_public_ip>` in your browser to play and test the game.
+2. **Live Grafana Dashboard**: Open `http://<lb_public_ip>:3000` to view real-time metrics (Active Rooms, Players, gRPC Streams, and Msg/sec).
+   - Ingress on port 3000 (Grafana) and port 9090 (Prometheus) is **strictly restricted to `allowed_cidr` (your IP)** via the AWS Security Group.
+   - Prometheus runs on the Load Balancer instance and automatically discovers and scrapes all Go Gateways (`:9000`) and Python Workers (`:8000`) across the cluster private network.
+
 
 ---
 

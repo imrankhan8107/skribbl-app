@@ -132,6 +132,24 @@ resource "aws_security_group" "cluster" {
     cidr_blocks = [var.allowed_cidr]
   }
 
+  # Grafana dashboard (3000) strictly from allowed_cidr
+  ingress {
+    description = "Grafana dashboard strictly from allowed IP"
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = [var.allowed_cidr]
+  }
+
+  # Prometheus UI (9090) strictly from allowed_cidr
+  ingress {
+    description = "Prometheus UI strictly from allowed IP"
+    from_port   = 9090
+    to_port     = 9090
+    protocol    = "tcp"
+    cidr_blocks = [var.allowed_cidr]
+  }
+
   # Outbound egress for package installations, docker hub, git
   egress {
     description = "Allow all outbound traffic"
@@ -272,13 +290,17 @@ resource "aws_instance" "lb" {
   key_name               = aws_key_pair.deployer.key_name
 
   user_data = templatefile("${path.module}/templates/cloud-init-lb.tftpl", {
-    git_repo_url = var.git_repo_url
-    git_branch   = var.git_branch
-    nginx_config = templatefile("${path.module}/templates/nginx.conf.tftpl", {
-      gateway_ips  = aws_instance.gateways[*].private_ip
+    git_repo_url  = var.git_repo_url
+    git_branch    = var.git_branch
+    gateway_ips   = aws_instance.gateways[*].private_ip
+    gateway_ports = [for i in range(var.gateways_per_host) : 9000 + i * 2]
+    worker_ips    = aws_instance.workers[*].private_ip
+    worker_ports  = [for i in range(var.workers_per_host) : 8000 + i]
+    nginx_config  = templatefile("${path.module}/templates/nginx.conf.tftpl", {
+      gateway_ips   = aws_instance.gateways[*].private_ip
       gateway_ports = [for i in range(var.gateways_per_host) : 9000 + i * 2]
       # Coord ports mirror the gateway cloud-init formula: 9100 + (i * 2) per container.
-      coord_ports  = [for i in range(var.gateways_per_host) : 9100 + i * 2]
+      coord_ports   = [for i in range(var.gateways_per_host) : 9100 + i * 2]
     })
   })
 
@@ -287,7 +309,7 @@ resource "aws_instance" "lb" {
     volume_type = "gp3"
   }
 
-  depends_on = [aws_instance.gateways]
+  depends_on = [aws_instance.gateways, aws_instance.workers]
 
   tags = {
     Name = "${var.app_name}-lb"

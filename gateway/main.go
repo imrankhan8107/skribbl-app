@@ -197,6 +197,7 @@ func main() {
 	mux.HandleFunc("/live", gw.HandleLive)    // liveness probe (process is up)
 	mux.HandleFunc("/ready", gw.HandleReady)  // readiness probe (Redis + ≥1 worker)
 	mux.HandleFunc("/rooms/", gw.HandleCoord) // Coord: GET/POST /rooms/{index}
+	RegisterMetricsHandler(mux)               // Prometheus /metrics endpoint
 
 	// Serve static frontend (SPA with fallback to index.html)
 	if *staticDir != "" {
@@ -227,6 +228,7 @@ func main() {
 		coordMux.HandleFunc("/health", gw.HandleHealth)
 		coordMux.HandleFunc("/ready", gw.HandleReady)
 		coordMux.HandleFunc("/live", gw.HandleLive)
+		RegisterMetricsHandler(coordMux)
 		coordServer = &http.Server{
 			Addr:    fmt.Sprintf(":%d", *coordPort),
 			Handler: coordMux,
