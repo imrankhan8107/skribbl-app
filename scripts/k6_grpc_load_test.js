@@ -383,9 +383,11 @@ export default function () {
   // real cause of the completion ceiling (NOT the server).
   const totalRooms = Math.max(1, Math.ceil(TARGET_VUS / PLAYERS_PER_ROOM));
   if (RAMP_SECONDS > 0) {
-    // Base offset for this room, plus a tiny per-player jitter so the host still
-    // lands slightly before its joiners.
-    const roomOffset = (roomIndex / totalRooms) * RAMP_SECONDS;
+    // Arrival ramp: In multi-runner distributed mode with VU_OFFSET, use the
+    // runner-local room index (0 to totalRooms-1) so all runners ramp in parallel from t=0.
+    // This produces true fleet-wide simultaneous concurrency across all VUs.
+    const localRoomIndex = Math.floor((exec.vu.idInTest - 1) / PLAYERS_PER_ROOM);
+    const roomOffset = (localRoomIndex / totalRooms) * RAMP_SECONDS;
     sleep(roomOffset);
   }
 
@@ -398,7 +400,7 @@ export default function () {
     // room code (not proportional to roomIndex, which grew to 150s+ at high room
     // counts and stranded late rooms). Then poll the coord endpoint.
     sleep(1 + Math.random() * 0.5);
-    coordRoomCode = pollRoomCode(roomIndex, 60000);
+    coordRoomCode = pollRoomCode(roomIndex, Math.max(60000, LOBBY_TIMEOUT_MS));
     if (!coordRoomCode) {
       // Never discovered the room code -> this joiner cannot attempt a WebSocket.
       // It must not affect WS connection or host-only game-completion rates.
