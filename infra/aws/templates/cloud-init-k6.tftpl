@@ -106,6 +106,7 @@ k6 run \
   -e STROKE_HZ=$HZ \
   -e RAMP_SECONDS=$RAMP \
   -e HOLD_SECONDS=$HOLD \
+  -e CONNECT_TIMEOUT_MS=$${CONNECT_TIMEOUT_MS:-60000} \
   scripts/k6_grpc_load_test.js
 
 echo ""

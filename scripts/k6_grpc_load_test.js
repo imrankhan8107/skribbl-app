@@ -261,7 +261,7 @@ const HOLD_FIXED_BUFFER = parseInt(__ENV.HOLD_FIXED_BUFFER || '300');
 // PLAYERS_PER_ROOM to restore the old strict behaviour.
 const MIN_PLAYERS_TO_START = parseInt(__ENV.MIN_PLAYERS_TO_START || '2');
 const START_GRACE_MS = parseInt(__ENV.START_GRACE_MS || '15000');
-const CONNECT_TIMEOUT_MS = parseInt(__ENV.CONNECT_TIMEOUT_MS || '30000');
+const CONNECT_TIMEOUT_MS = parseInt(__ENV.CONNECT_TIMEOUT_MS || '60000');
 // Lobby patience window: how long players wait in the lobby for the game to start.
 // Scaled dynamically with RAMP_SECONDS so wider ramps (e.g. 240s-300s for 35k-40k)
 // give late room joiners adequate time to connect without timing out.
