@@ -123,33 +123,24 @@ Running k6 inside the AWS VPC eliminates home network bandwidth and Wi-Fi latenc
    ```bash
    ssh ubuntu@<load_generator_public_ip>
    ```
-2. Run the pre-configured runner script:
+2. Run the pre-configured runner script (`./run-test.sh <VUS> <PLAYERS> <STROKE_HZ> <RAMP_SECONDS> [HOLD_SECONDS] [VU_OFFSET]`):
    ```bash
    # Smoke test: 100 VUs, 2 players/room, 20Hz drawing
    ./run-test.sh 100 2 20
 
-   # High scale test: 5,000 VUs, 5 players/room, 20Hz drawing, 60s ramp
-   ./run-test.sh 5000 5 20 60
+   # High scale test: 5,000 VUs, 5 players/room, 20Hz drawing, 60s ramp, 2400s hold
+   ./run-test.sh 5000 5 20 60 2400
 
-   # Enterprise 35k run: 35,000 VUs, 5 players/room, 5Hz stroke, 240s ramp
-   ./run-test.sh 35000 5 5 240
-
-   # 50k Milestone run: 50,000 VUs, 5 players/room, 20Hz stroke, 240s ramp
-   ./run-test.sh 50000 5 20 240
-
-   # 80k Distributed Milestone (Run concurrently on Runner 1 and Runner 2):
-   # Runner 1: VUs 1..40,000 (Offset 0)
-   ./run-test.sh 40000 5 20 30
-   # Runner 2: VUs 40,001..80,000 (Offset 40,000 auto-applied)
-   ./run-test.sh 40000 5 20 30
-
-   # 100k Distributed Scale Run (Run concurrently across 3 runners):
-   # Runner 1: VUs 1..33,334 (Offset 0)
-   ./run-test.sh 33334 5 20 60
-   # Runner 2: VUs 33,335..66,667 (Offset 33,334 auto-applied)
-   ./run-test.sh 33333 5 20 60
-   # Runner 3: VUs 66,668..100,000 (Offset 66,667 auto-applied)
-   ./run-test.sh 33333 5 20 60
+   # 120k True Simultaneous Milestone (Run concurrently across 4 runners):
+   # All runners ramp simultaneously with automated VU_OFFSET partitioning:
+   # Runner 1 (Offset 0 auto-applied):
+   ./run-test.sh 30000 5 20 300 2400
+   # Runner 2 (Offset 30,000 auto-applied):
+   ./run-test.sh 30000 5 20 300 2400
+   # Runner 3 (Offset 60,000 auto-applied):
+   ./run-test.sh 30000 5 20 300 2400
+   # Runner 4 (Offset 90,000 auto-applied):
+   ./run-test.sh 30000 5 20 300 2400
    ```
 
 3. **Automated Cluster Metrics Report**:

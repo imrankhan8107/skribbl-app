@@ -70,7 +70,7 @@ output "ssh_k6_runner_commands" {
 
 output "in_vpc_k6_quick_run" {
   description = "Command to run once connected inside the k6 runner EC2 instance"
-  value       = "./run-test.sh 1000 5 20 30"
+  value       = "./run-test.sh 1000 5 20 30 2400"
 }
 
 output "k6_load_test_command" {

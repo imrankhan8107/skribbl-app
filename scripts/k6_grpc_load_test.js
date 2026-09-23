@@ -268,8 +268,10 @@ const CONNECT_TIMEOUT_MS = parseInt(__ENV.CONNECT_TIMEOUT_MS || '30000');
 const DEFAULT_LOBBY_TIMEOUT_MS = Math.max(240000, (RAMP_SECONDS + 60) * 1000);
 const LOBBY_TIMEOUT_MS = parseInt(__ENV.LOBBY_TIMEOUT_MS || String(DEFAULT_LOBBY_TIMEOUT_MS));
 
-const HOLD_SECONDS =
-  NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + PER_TURN_SLACK) + HOLD_FIXED_BUFFER;
+const HOLD_SECONDS = parseInt(
+  __ENV.HOLD_SECONDS ||
+  String(NUM_ROUNDS * PLAYERS_PER_ROOM * (TURN_DURATION + PER_TURN_SLACK) + HOLD_FIXED_BUFFER)
+);
 
 // The scenario's overall maxDuration must also cover the arrival ramp: the last
 // VU starts RAMP_SECONDS in and still needs a full HOLD_SECONDS to play.
