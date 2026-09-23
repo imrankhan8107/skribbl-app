@@ -153,7 +153,7 @@
       "pluginVersion": "10.3.0",
       "targets": [
         {
-          "expr": "sum(increase(grpc_fanout_dropped_total{class=\"lossy\"}[1m])) or vector(0)",
+          "expr": "(sum(increase(grpc_fanout_dropped_total{class=\"lossy\"}[1m])) or vector(0)) + (sum(increase(grpc_send_dropped_total{type=\"stroke\"}[1m])) or vector(0))",
           "legendFormat": "Lossy Strokes Dropped/min",
           "refId": "A"
         }
