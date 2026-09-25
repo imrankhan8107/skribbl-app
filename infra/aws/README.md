@@ -46,7 +46,7 @@ This Terraform configuration provisions a production-grade, multi-host distribut
 In accordance with strict security standards, **zero ports are exposed to `0.0.0.0/0`**:
 
 1. **Internal Inter-Tier Communication**: All traffic between Nginx, Gateways, Workers, and Redis is locked strictly to `self = true` (only instances within the cluster security group can communicate across private IPs).
-2. **External Traffic (SSH, HTTP, Gateways, Coord)**: External ingress on ports 22, 80, 443, 9000, and 9100 is strictly locked down to `var.allowed_cidr` (your public IP/32).
+2. **External Traffic (SSH, HTTP, Gateways, Coord)**: External ingress on ports 22, 80, 443, 9000, and 9100 is strictly locked down to `var.allowed_cidrs` (your local public IP/32 and Cloud9 environment IP/32).
 
 ---
 
@@ -72,8 +72,11 @@ cp terraform.tfvars.example terraform.tfvars
 
 Edit `terraform.tfvars`:
 ```hcl
-aws_region   = "us-east-1"
-allowed_cidr = "YOUR_PUBLIC_IP/32"    # Output of: curl ifconfig.me
+aws_region    = "us-east-1"
+allowed_cidrs = [
+  "YOUR_LOCAL_IP/32",     # Your local machine (from curl ifconfig.me)
+  "YOUR_CLOUD9_IP/32"    # Cloud9 public IP or VPC CIDR
+]
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
 
 # Cluster sizing & multi-container tuning

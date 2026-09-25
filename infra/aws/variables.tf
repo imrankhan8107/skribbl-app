@@ -16,9 +16,20 @@ variable "vpc_cidr" {
   default     = "10.10.0.0/16"
 }
 
+variable "allowed_cidrs" {
+  description = "List of public IP/CIDR blocks allowed to access the cluster externally (e.g. ['203.0.113.50/32', '198.51.100.25/32'] for your local PC and Cloud9). STRICT: No 0.0.0.0/0 external ingress is permitted."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for c in var.allowed_cidrs : c != "0.0.0.0/0"])
+    error_message = "STRICT SECURITY: 0.0.0.0/0 is not allowed. Specify explicit /32 or subnet CIDRs."
+  }
+}
+
 variable "allowed_cidr" {
-  description = "Your public IP/CIDR allowed to access the cluster externally (e.g. '203.0.113.50/32'). STRICT: No 0.0.0.0/0 external ingress is permitted."
+  description = "Single public IP/CIDR allowed to access the cluster externally (e.g. '203.0.113.50/32'). Kept for backward compatibility; prefer allowed_cidrs."
   type        = string
+  default     = ""
 }
 
 variable "ssh_public_key" {
