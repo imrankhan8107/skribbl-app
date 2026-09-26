@@ -27,7 +27,7 @@ export function useGameAudio(gameState: GameState) {
       const newMessages = gameState.chatMessages.slice(prevMessagesCountRef.current);
       for (const msg of newMessages) {
         if (msg.type === "correct_guess") {
-          soundManager.playCorrectGuess();
+          soundManager.playCorrectGuess(msg.senderName);
         } else if (msg.type === "system" && msg.text.toLowerCase().includes("close")) {
           soundManager.playCloseGuess();
         }
@@ -43,11 +43,11 @@ export function useGameAudio(gameState: GameState) {
 
     if (prev !== current) {
       if (current === "playing") {
-        soundManager.playRoundStart();
+        soundManager.playRoundStart(gameState.currentRound);
       } else if (current === "game_over") {
         soundManager.playGameOver();
       }
       prevPhaseRef.current = current;
     }
-  }, [gameState.phase]);
+  }, [gameState.phase, gameState.currentRound]);
 }
