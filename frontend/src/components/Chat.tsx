@@ -60,22 +60,14 @@ export default function Chat() {
                 <span className="chat-text">{msg.text}</span>
               </>
             )}
-            {msg.type === "correct_guess" && (
-              <span className="chat-text">{msg.text}</span>
-            )}
-            {msg.type === "system" && (
-              <span className="chat-text">{msg.text}</span>
-            )}
+            {msg.type === "correct_guess" && <span className="chat-text">{msg.text}</span>}
+            {msg.type === "system" && <span className="chat-text">{msg.text}</span>}
           </div>
         ))}
         <div ref={messagesEndRef} />
       </div>
 
-      <form
-        className="chat-input-form"
-        onSubmit={handleSubmit}
-        data-testid="chat-form"
-      >
+      <form className="chat-input-form" onSubmit={handleSubmit} data-testid="chat-form">
         <input
           type="text"
           value={text}
@@ -93,11 +85,7 @@ export default function Chat() {
           data-testid="chat-input"
           aria-label="Chat input"
         />
-        <button
-          type="submit"
-          disabled={isInputDisabled}
-          data-testid="chat-submit"
-        >
+        <button type="submit" disabled={isInputDisabled} data-testid="chat-submit">
           Send
         </button>
       </form>

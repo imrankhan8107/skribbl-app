@@ -65,7 +65,11 @@ export default function Landing() {
           <button type="button" onClick={handleCreate} disabled={!playerName.trim()}>
             Create Room
           </button>
-          <button type="button" onClick={handleJoin} disabled={!playerName.trim() || !roomCode.trim()}>
+          <button
+            type="button"
+            onClick={handleJoin}
+            disabled={!playerName.trim() || !roomCode.trim()}
+          >
             Join Room
           </button>
         </div>

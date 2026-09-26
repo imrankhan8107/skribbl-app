@@ -42,7 +42,7 @@ redis_instance_type   = "c5a.large"
 
 # Git repository configuration
 git_repo_url = "https://github.com/imrankhan8107/skribbl-app.git"
-git_branch   = "hotfix/scale-and-fanout-remediation"
+git_branch   = "feature/go-gateway"
 
 # In-VPC k6 load generator instances
 # For <=50k: load_generator_count=1, load_generator_instance_type="c5a.8xlarge"

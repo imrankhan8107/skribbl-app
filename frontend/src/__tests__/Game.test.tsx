@@ -67,8 +67,24 @@ const defaultGameState: GameState = {
   isHost: false,
   isDrawer: false,
   players: [
-    { id: "player-1", name: "Alice", score: 100, isHost: true, hasGuessed: false, isConnected: true, isReady: false },
-    { id: "player-2", name: "Bob", score: 50, isHost: false, hasGuessed: true, isConnected: true, isReady: false },
+    {
+      id: "player-1",
+      name: "Alice",
+      score: 100,
+      isHost: true,
+      hasGuessed: false,
+      isConnected: true,
+      isReady: false,
+    },
+    {
+      id: "player-2",
+      name: "Bob",
+      score: 50,
+      isHost: false,
+      hasGuessed: true,
+      isConnected: true,
+      isReady: false,
+    },
   ],
   config: { numRounds: 3, turnDuration: 80, maxPlayers: 8 },
   hint: ["_", "e", "_", "_", "o"],
@@ -181,9 +197,7 @@ describe("Game Page", () => {
 
     it("does not navigate when phase is playing", () => {
       renderGame({ phase: "playing" });
-      expect(mockNavigate).not.toHaveBeenCalledWith(
-        expect.stringContaining("/gameover")
-      );
+      expect(mockNavigate).not.toHaveBeenCalledWith(expect.stringContaining("/gameover"));
     });
   });
 

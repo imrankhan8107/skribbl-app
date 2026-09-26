@@ -74,8 +74,24 @@ describe("gameReducer", () => {
   describe("PLAYER_LIST", () => {
     it("updates players array", () => {
       const players: PlayerInfo[] = [
-        { id: "p1", name: "Alice", score: 100, isHost: true, hasGuessed: false, isConnected: true, isReady: false },
-        { id: "p2", name: "Bob", score: 50, isHost: false, hasGuessed: true, isConnected: true, isReady: false },
+        {
+          id: "p1",
+          name: "Alice",
+          score: 100,
+          isHost: true,
+          hasGuessed: false,
+          isConnected: true,
+          isReady: false,
+        },
+        {
+          id: "p2",
+          name: "Bob",
+          score: 50,
+          isHost: false,
+          hasGuessed: true,
+          isConnected: true,
+          isReady: false,
+        },
       ];
       const action: Action = { type: "PLAYER_LIST", payload: { players } };
       const next = gameReducer(initialState, action);
@@ -156,8 +172,24 @@ describe("gameReducer", () => {
   describe("TURN_ENDED", () => {
     it("applies score deltas and resets isDrawer and hasGuessed", () => {
       const players: PlayerInfo[] = [
-        { id: "p1", name: "Alice", score: 100, isHost: true, hasGuessed: true, isConnected: true, isReady: false },
-        { id: "p2", name: "Bob", score: 50, isHost: false, hasGuessed: true, isConnected: true, isReady: false },
+        {
+          id: "p1",
+          name: "Alice",
+          score: 100,
+          isHost: true,
+          hasGuessed: true,
+          isConnected: true,
+          isReady: false,
+        },
+        {
+          id: "p2",
+          name: "Bob",
+          score: 50,
+          isHost: false,
+          hasGuessed: true,
+          isConnected: true,
+          isReady: false,
+        },
       ];
       const state: GameState = { ...initialState, players, isDrawer: true, hasGuessed: true };
       const action: Action = {
@@ -212,8 +244,24 @@ describe("gameReducer", () => {
   describe("GAME_OVER", () => {
     it("sets phase to game_over and updates players", () => {
       const players: PlayerInfo[] = [
-        { id: "p1", name: "Alice", score: 500, isHost: true, hasGuessed: false, isConnected: true, isReady: false },
-        { id: "p2", name: "Bob", score: 300, isHost: false, hasGuessed: false, isConnected: true, isReady: false },
+        {
+          id: "p1",
+          name: "Alice",
+          score: 500,
+          isHost: true,
+          hasGuessed: false,
+          isConnected: true,
+          isReady: false,
+        },
+        {
+          id: "p2",
+          name: "Bob",
+          score: 300,
+          isHost: false,
+          hasGuessed: false,
+          isConnected: true,
+          isReady: false,
+        },
       ];
       const state: GameState = { ...initialState, phase: "playing" };
       const action: Action = { type: "GAME_OVER", payload: { players } };
@@ -249,7 +297,15 @@ describe("gameReducer", () => {
         isHost: true,
         isDrawer: true,
         players: [
-          { id: "p1", name: "Alice", score: 500, isHost: true, hasGuessed: false, isConnected: true, isReady: false },
+          {
+            id: "p1",
+            name: "Alice",
+            score: 500,
+            isHost: true,
+            hasGuessed: false,
+            isConnected: true,
+            isReady: false,
+          },
         ],
         config: { numRounds: 10, turnDuration: 180, maxPlayers: 12 },
         hint: ["a", "p", "p", "l", "e"],

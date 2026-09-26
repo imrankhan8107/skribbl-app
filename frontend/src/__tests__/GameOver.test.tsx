@@ -12,9 +12,33 @@ import GameOver from "../pages/GameOver";
 // ---------------------------------------------------------------------------
 
 const players: PlayerInfo[] = [
-  { id: "p1", name: "Alice", score: 300, isHost: true, hasGuessed: false, isConnected: true, isReady: false },
-  { id: "p2", name: "Bob", score: 500, isHost: false, hasGuessed: false, isConnected: true, isReady: false },
-  { id: "p3", name: "Charlie", score: 150, isHost: false, hasGuessed: false, isConnected: true, isReady: false },
+  {
+    id: "p1",
+    name: "Alice",
+    score: 300,
+    isHost: true,
+    hasGuessed: false,
+    isConnected: true,
+    isReady: false,
+  },
+  {
+    id: "p2",
+    name: "Bob",
+    score: 500,
+    isHost: false,
+    hasGuessed: false,
+    isConnected: true,
+    isReady: false,
+  },
+  {
+    id: "p3",
+    name: "Charlie",
+    score: 150,
+    isHost: false,
+    hasGuessed: false,
+    isConnected: true,
+    isReady: false,
+  },
 ];
 
 const defaultGameState: GameState = {

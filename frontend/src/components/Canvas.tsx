@@ -133,6 +133,7 @@ export default function Canvas({
           display: "inline-block",
           width: "100%",
           maxWidth: 800,
+          touchAction: "none",
         }}
       >
         <canvas

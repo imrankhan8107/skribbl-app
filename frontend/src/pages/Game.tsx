@@ -6,6 +6,8 @@ import Canvas from "../components/Canvas";
 import Chat from "../components/Chat";
 import PlayerList from "../components/PlayerList";
 import TimerBar from "../components/TimerBar";
+import { SoundToggle } from "../components/SoundToggle";
+import { useGameAudio } from "../hooks/useGameAudio";
 
 /**
  * Game page — renders the active game view with canvas, chat, player list,
@@ -15,6 +17,7 @@ import TimerBar from "../components/TimerBar";
 export default function Game() {
   const navigate = useNavigate();
   const { gameState, send, dispatch } = useWebSocket();
+  useGameAudio(gameState);
   const [countdown, setCountdown] = useState(0);
   const [showRoundTransition, setShowRoundTransition] = useState(false);
   const prevRoundRef = useRef(0);
@@ -145,6 +148,7 @@ export default function Game() {
             Round {gameState.currentRound || 1} /{" "}
             {gameState.totalRounds || gameState.config?.numRounds || 3}
           </span>
+          <SoundToggle />
         </div>
         {gameState.isDrawer && gameState.wordChoices.length > 0 ? (
           <div className="word-selection" data-testid="word-selection">
@@ -189,6 +193,7 @@ export default function Game() {
           Round {gameState.currentRound} / {gameState.totalRounds}
         </span>
         <TimerBar seconds={gameState.timerSeconds} total={gameState.config?.turnDuration ?? 80} />
+        <SoundToggle />
       </div>
 
       {/* Hint display — drawer sees the actual word */}

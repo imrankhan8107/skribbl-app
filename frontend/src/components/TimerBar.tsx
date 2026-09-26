@@ -10,6 +10,7 @@ interface TimerBarProps {
  */
 export default function TimerBar({ seconds, total }: TimerBarProps) {
   const percentage = total > 0 ? (seconds / total) * 100 : 0;
+  const isUrgent = seconds > 0 && seconds <= 10;
 
   // Determine urgency color based on remaining time ratio
   const getBarColor = (): string => {
@@ -19,7 +20,11 @@ export default function TimerBar({ seconds, total }: TimerBarProps) {
   };
 
   return (
-    <div className="timer-bar" data-testid="timer-bar" aria-label="Turn timer">
+    <div
+      className={`timer-bar ${isUrgent ? "urgent" : ""}`}
+      data-testid="timer-bar"
+      aria-label="Turn timer"
+    >
       <div
         className="timer-bar-fill"
         data-testid="timer-bar-fill"

@@ -12,8 +12,24 @@ import Lobby from "../pages/Lobby";
 // ---------------------------------------------------------------------------
 
 const twoPlayers: PlayerInfo[] = [
-  { id: "p1", name: "Alice", score: 0, isHost: true, hasGuessed: false, isConnected: true, isReady: false },
-  { id: "p2", name: "Bob", score: 0, isHost: false, hasGuessed: false, isConnected: true, isReady: false },
+  {
+    id: "p1",
+    name: "Alice",
+    score: 0,
+    isHost: true,
+    hasGuessed: false,
+    isConnected: true,
+    isReady: false,
+  },
+  {
+    id: "p2",
+    name: "Bob",
+    score: 0,
+    isHost: false,
+    hasGuessed: false,
+    isConnected: true,
+    isReady: false,
+  },
 ];
 
 const defaultGameState: GameState = {

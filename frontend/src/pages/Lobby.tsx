@@ -14,7 +14,10 @@ export default function Lobby() {
 
   // Navigate to game when phase transitions to 'playing' or 'word_selection'
   useEffect(() => {
-    if ((gameState.phase === "playing" || gameState.phase === "word_selection") && gameState.roomCode) {
+    if (
+      (gameState.phase === "playing" || gameState.phase === "word_selection") &&
+      gameState.roomCode
+    ) {
       navigate(`/game/${gameState.roomCode}`);
     }
   }, [gameState.phase, gameState.roomCode, navigate]);
@@ -33,7 +36,7 @@ export default function Lobby() {
         <div className="lobby-page">
           <h1>Session Expired</h1>
           <p>{gameState.errorMessage}</p>
-          <button onClick={() => window.location.href = "/"}>Back to Home</button>
+          <button onClick={() => (window.location.href = "/")}>Back to Home</button>
         </div>
       );
     }
@@ -66,7 +69,7 @@ export default function Lobby() {
 
   const handleLeaveRoom = () => {
     send("leave_room");
-    sessionStorage.removeItem('skribbl_session');
+    sessionStorage.removeItem("skribbl_session");
     window.location.href = "/";
   };
 
@@ -78,9 +81,9 @@ export default function Lobby() {
     send("toggle_ready");
   };
 
-  const localPlayer = gameState.players.find(p => p.id === gameState.localPlayerId);
+  const localPlayer = gameState.players.find((p) => p.id === gameState.localPlayerId);
   const isReady = localPlayer?.isReady ?? false;
-  const readyCount = gameState.players.filter(p => p.isReady).length;
+  const readyCount = gameState.players.filter((p) => p.isReady).length;
   const totalCount = gameState.players.length;
   const canStart = gameState.isHost && gameState.players.length >= 2;
 
@@ -122,7 +125,9 @@ export default function Lobby() {
                 <label htmlFor="rounds">Rounds</label>
                 <select id="rounds" value={config.numRounds} onChange={handleRoundsChange}>
                   {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
-                    <option key={n} value={n}>{n}</option>
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -130,15 +135,23 @@ export default function Lobby() {
                 <label htmlFor="duration">Turn Duration (seconds)</label>
                 <select id="duration" value={config.turnDuration} onChange={handleDurationChange}>
                   {[30, 45, 60, 80, 100, 120, 150, 180].map((n) => (
-                    <option key={n} value={n}>{n}</option>
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
                   ))}
                 </select>
               </div>
               <div>
                 <label htmlFor="max-players">Max Players</label>
-                <select id="max-players" value={config.maxPlayers} onChange={handleMaxPlayersChange}>
+                <select
+                  id="max-players"
+                  value={config.maxPlayers}
+                  onChange={handleMaxPlayersChange}
+                >
                   {Array.from({ length: 11 }, (_, i) => i + 2).map((n) => (
-                    <option key={n} value={n}>{n}</option>
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
                   ))}
                 </select>
               </div>

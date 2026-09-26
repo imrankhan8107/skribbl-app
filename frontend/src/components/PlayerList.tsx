@@ -12,7 +12,12 @@ interface PlayerListProps {
  * scores, host badge, connection status, guessed indicators, and optional kick button.
  * Requirements: 12.2, 12.4, 12.8
  */
-export default function PlayerList({ players, isHost = false, localPlayerId = null, onKick }: PlayerListProps) {
+export default function PlayerList({
+  players,
+  isHost = false,
+  localPlayerId = null,
+  onKick,
+}: PlayerListProps) {
   if (!players || !Array.isArray(players)) {
     return <ul className="player-list" data-testid="player-list" />;
   }
@@ -36,11 +41,7 @@ export default function PlayerList({ players, isHost = false, localPlayerId = nu
             </span>
             <span className="player-status">
               {player.isReady && (
-                <span
-                  className="ready-badge"
-                  data-testid="ready-badge"
-                  aria-label="Ready"
-                >
+                <span className="ready-badge" data-testid="ready-badge" aria-label="Ready">
                   ✓ Ready
                 </span>
               )}
