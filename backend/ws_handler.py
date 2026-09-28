@@ -111,7 +111,7 @@ async def websocket_handler(websocket: WebSocket) -> None:
                             "update_settings", "start_game", "select_word",
                             "guess", "chat", "stroke", "fill", "clear_canvas",
                             "kick_player", "leave_room", "reaction", "typing",
-                            "toggle_ready", "rematch", "end_game_now",
+                            "toggle_ready", "rematch", "end_game_now", "update_profile",
                         }
                         if msg_type not in known_types:
                             await _send_error(websocket, "UNKNOWN_MESSAGE", f"Unknown message type: {msg_type}")
@@ -352,6 +352,13 @@ async def _handle_local_message(
 
     elif msg_type == "toggle_ready":
         result = await room_manager.toggle_ready(player_id)
+        if result.get("type") == "error":
+            await websocket.send_json(result)
+
+    elif msg_type == "update_profile":
+        name = payload.get("name") if isinstance(payload, dict) else None
+        avatar = payload.get("avatar") if isinstance(payload, dict) else None
+        result = await room_manager.update_profile(player_id, name=name, avatar=avatar)
         if result.get("type") == "error":
             await websocket.send_json(result)
 

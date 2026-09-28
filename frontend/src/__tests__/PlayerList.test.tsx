@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import PlayerList from "../components/PlayerList";
 import type { PlayerInfo } from "../types";
@@ -47,5 +47,15 @@ describe("PlayerList Badges & Indicators", () => {
     );
 
     expect(screen.getByTestId("player-typing")).toBeInTheDocument();
+  });
+
+  it("renders edit profile button for local player when onEditProfile is provided and fires onClick", () => {
+    const onEditProfile = vi.fn();
+    render(<PlayerList players={mockPlayers} localPlayerId="p1" onEditProfile={onEditProfile} />);
+
+    const editBtn = screen.getByTestId("player-edit-profile-btn");
+    expect(editBtn).toBeInTheDocument();
+    editBtn.click();
+    expect(onEditProfile).toHaveBeenCalledTimes(1);
   });
 });

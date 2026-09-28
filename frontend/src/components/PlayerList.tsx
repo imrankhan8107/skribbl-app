@@ -8,6 +8,7 @@ interface PlayerListProps {
   drawerId?: string | null;
   typingUsers?: Record<string, boolean>;
   onKick?: (playerId: string) => void;
+  onEditProfile?: () => void;
 }
 
 /**
@@ -22,6 +23,7 @@ export default function PlayerList({
   drawerId = null,
   typingUsers,
   onKick,
+  onEditProfile,
 }: PlayerListProps) {
   if (!players || !Array.isArray(players)) {
     return <ul className="player-list" data-testid="player-list" />;
@@ -90,6 +92,18 @@ export default function PlayerList({
                 </span>
               )}
             </span>
+            {isLocal && onEditProfile && (
+              <button
+                type="button"
+                className="player-edit-profile-btn"
+                onClick={onEditProfile}
+                title="Edit your avatar & name"
+                data-testid="player-edit-profile-btn"
+                aria-label="Edit your profile"
+              >
+                ✏️
+              </button>
+            )}
             <span className="player-status">
               {player.isReady && (
                 <span className="ready-badge" data-testid="ready-badge" aria-label="Ready">

@@ -655,3 +655,44 @@ class TestStartGame:
 
         result = await manager.start_game(player_id)
         assert result["payload"]["total_rounds"] == 7
+
+
+class TestUpdateProfile:
+    """Tests for update_profile in lobby."""
+
+    async def test_update_profile_name_and_avatar(self, manager):
+        ws = make_mock_ws()
+        res = await manager.create_room("Alice", ws, avatar="lion")
+        player_id = res["payload"]["player_id"]
+
+        update_res = await manager.update_profile(player_id, name="Alicia", avatar="cat")
+        assert update_res["type"] == "profile_updated"
+        assert update_res["payload"]["name"] == "Alicia"
+        assert update_res["payload"]["avatar"] == "cat"
+
+        room = manager._find_room_by_player(player_id)
+        player = room.get_player(player_id)
+        assert player.name == "Alicia"
+        assert player.avatar == "cat"
+
+    async def test_update_profile_duplicate_name_rejected(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        room_code = res1["payload"]["room_code"]
+        res2 = await manager.join_room("Bob", room_code, ws2)
+        p2_id = res2["payload"]["player_id"]
+
+        update_res = await manager.update_profile(p2_id, name="alice")
+        assert update_res["type"] == "error"
+        assert update_res["payload"]["code"] == "DUPLICATE_NAME"
+
+    async def test_update_profile_invalid_name_length(self, manager):
+        ws = make_mock_ws()
+        res = await manager.create_room("Alice", ws)
+        player_id = res["payload"]["player_id"]
+
+        update_res = await manager.update_profile(player_id, name="")
+        assert update_res["type"] == "error"
+        assert update_res["payload"]["code"] == "INVALID_NAME"
+

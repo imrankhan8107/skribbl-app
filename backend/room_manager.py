@@ -1132,6 +1132,11 @@ class RoomManager:
             elif msg_type == "toggle_ready":
                 await self.toggle_ready(player_id)
 
+            elif msg_type == "update_profile":
+                name = payload.get("name") if isinstance(payload, dict) else None
+                avatar = payload.get("avatar") if isinstance(payload, dict) else None
+                await self.update_profile(player_id, name=name, avatar=avatar)
+
             elif msg_type == "start_game":
                 result = await self.start_game(player_id)
                 if result.get("type") != "error":
@@ -1582,6 +1587,79 @@ class RoomManager:
         return {
             "type": "ready_toggled",
             "payload": {"is_ready": player.is_ready},
+        }
+
+    async def update_profile(
+        self, player_id: str, name: Optional[str] = None, avatar: Optional[str] = None
+    ) -> dict:
+        """Update a player's name and/or avatar while in the lobby.
+
+        Args:
+            player_id: The ID of the player updating their profile.
+            name: New display name (optional, 1-20 characters).
+            avatar: New avatar identifier (optional).
+
+        Returns:
+            A dict payload for success, or an error payload.
+        """
+        room = self._find_room_by_player(player_id)
+        if room is None:
+            return {
+                "type": "error",
+                "payload": {"code": "GAME_NOT_ACTIVE", "message": "Player is not in a room"},
+            }
+
+        # Only allow updating profile in lobby state
+        if room.state != RoomState.LOBBY:
+            return {
+                "type": "error",
+                "payload": {"code": "GAME_NOT_ACTIVE", "message": "Profile changes only allowed in lobby"},
+            }
+
+        player = room.get_player(player_id)
+        if player is None:
+            return {
+                "type": "error",
+                "payload": {"code": "PLAYER_NOT_FOUND", "message": "Player not found"},
+            }
+
+        if name is not None:
+            clean_name = name.strip()
+            if not (1 <= len(clean_name) <= 20):
+                return {
+                    "type": "error",
+                    "payload": {"code": "INVALID_NAME", "message": "Name must be between 1 and 20 characters"},
+                }
+            # Check for duplicate names in the room (case-insensitive) excluding self
+            for other in room.players:
+                if other.id != player_id and other.name.lower() == clean_name.lower():
+                    return {
+                        "type": "error",
+                        "payload": {"code": "DUPLICATE_NAME", "message": "Name already taken in this room"},
+                    }
+            player.name = clean_name
+
+        if avatar is not None:
+            player.avatar = avatar
+
+        # Broadcast updated player list
+        await self.broadcast(
+            room.code,
+            {
+                "type": "player_list",
+                "payload": {
+                    "players": [self._serialize_player(p) for p in room.players]
+                },
+            },
+        )
+
+        return {
+            "type": "profile_updated",
+            "payload": {
+                "player_id": player.id,
+                "name": player.name,
+                "avatar": player.avatar,
+            },
         }
 
     async def start_game(self, player_id: str) -> dict:

@@ -1451,6 +1451,114 @@ ol {
   border-color: #10b981;
 }
 
+/* ============================================================
+   In-Lobby Profile & Avatar Switcher
+   ============================================================ */
+.player-edit-profile-btn {
+  background: transparent;
+  border: none;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0.15rem 0.35rem;
+  border-radius: var(--radius-sm);
+  opacity: 0.75;
+  transition: all 0.15s ease;
+  margin-left: 0.25rem;
+}
+
+.player-edit-profile-btn:hover {
+  opacity: 1;
+  background: rgba(99, 102, 241, 0.15);
+  transform: scale(1.15);
+}
+
+.profile-modal-content {
+  max-width: 480px;
+}
+
+.profile-modal-body {
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.profile-name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.profile-field-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #334155;
+}
+
+.profile-name-input {
+  padding: 0.65rem 0.85rem;
+  font-size: 1rem;
+  border-radius: var(--radius-md);
+  border: 1.5px solid #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.profile-name-input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+.profile-error {
+  font-size: 0.82rem;
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.profile-modal-footer {
+  padding: 1rem 1.5rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.profile-btn {
+  padding: 0.6rem 1.25rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: none;
+}
+
+.profile-btn.cancel {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+
+.profile-btn.cancel:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.profile-btn.save {
+  background: #6366f1;
+  color: #ffffff;
+}
+
+.profile-btn.save:hover {
+  background: #4f46e5;
+  transform: translateY(-1px);
+}
+
 .lobby-content {
   display: flex;
   gap: 1.5rem;

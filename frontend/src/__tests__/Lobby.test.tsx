@@ -267,4 +267,38 @@ describe("Lobby", () => {
       })
     );
   });
+
+  it("opens profile modal on clicking edit button, updates name and avatar, and sends update_profile", async () => {
+    const user = userEvent.setup();
+    const { send } = renderLobby();
+
+    // Click edit profile button on local player item
+    const editBtn = screen.getByTestId("player-edit-profile-btn");
+    await user.click(editBtn);
+
+    // Profile modal should be open
+    const modal = screen.getByTestId("profile-modal");
+    expect(modal).toBeInTheDocument();
+    expect(screen.getByText("🎨 Edit Profile")).toBeInTheDocument();
+
+    // Change name
+    const nameInput = screen.getByTestId("profile-name-input");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Alicia");
+
+    // Select Cat avatar
+    const catBtn = screen.getByTitle("Cat");
+    await user.click(catBtn);
+
+    // Save
+    const saveBtn = screen.getByTestId("profile-save-btn");
+    await user.click(saveBtn);
+
+    expect(send).toHaveBeenCalledWith("update_profile", {
+      name: "Alicia",
+      avatar: "cat",
+    });
+    expect(localStorage.getItem("skribbl_player_name")).toBe("Alicia");
+    expect(localStorage.getItem("skribbl_player_avatar")).toBe("cat");
+  });
 });

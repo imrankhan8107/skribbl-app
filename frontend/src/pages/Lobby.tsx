@@ -5,7 +5,9 @@ import PlayerList from "../components/PlayerList";
 import Chat from "../components/Chat";
 import { HeaderBar } from "../components/HeaderBar";
 import QRCodeModal from "../components/QRCodeModal";
+import ProfileModal from "../components/ProfileModal";
 import { copyToClipboard } from "../utils/clipboard";
+import { getStoredAvatarId, getStoredPlayerName } from "../utils/avatars";
 
 export default function Lobby() {
   const { gameState, send } = useWebSocket();
@@ -14,6 +16,7 @@ export default function Lobby() {
   const [copied, setCopied] = useState(false);
   const [snackbarText, setSnackbarText] = useState("Room code copied to clipboard!");
   const [showQRModal, setShowQRModal] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
 
   // Fallback config in case state is not yet populated
   const config = gameState.config ?? { numRounds: 3, turnDuration: 80, maxPlayers: 8 };
@@ -136,6 +139,29 @@ export default function Lobby() {
     send("toggle_ready");
   };
 
+  const handleSaveProfile = (newName: string, newAvatarId: string) => {
+    localStorage.setItem("skribbl_player_name", newName);
+    localStorage.setItem("skribbl_player_avatar", newAvatarId);
+
+    const sessionStr = sessionStorage.getItem("skribbl_session");
+    if (sessionStr) {
+      try {
+        const session = JSON.parse(sessionStr);
+        sessionStorage.setItem(
+          "skribbl_session",
+          JSON.stringify({ ...session, playerName: newName })
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+
+    send("update_profile", { name: newName, avatar: newAvatarId });
+    setSnackbarText("Profile updated!");
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   const localPlayer = gameState.players.find((p) => p.id === gameState.localPlayerId);
   const isReady = localPlayer?.isReady ?? false;
   const readyCount = gameState.players.filter((p) => p.isReady).length;
@@ -194,6 +220,7 @@ export default function Lobby() {
               isHost={gameState.isHost}
               localPlayerId={gameState.localPlayerId}
               onKick={handleKickPlayer}
+              onEditProfile={() => setShowProfileModal(true)}
             />
 
             <div className="lobby-settings">
@@ -261,6 +288,14 @@ export default function Lobby() {
       </div>
       {showQRModal && gameState.roomCode && (
         <QRCodeModal roomCode={gameState.roomCode} onClose={() => setShowQRModal(false)} />
+      )}
+      {showProfileModal && (
+        <ProfileModal
+          currentName={localPlayer?.name || getStoredPlayerName()}
+          currentAvatarId={localPlayer?.avatar || getStoredAvatarId()}
+          onSave={handleSaveProfile}
+          onClose={() => setShowProfileModal(false)}
+        />
       )}
     </>
   );
