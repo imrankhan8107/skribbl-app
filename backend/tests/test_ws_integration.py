@@ -465,6 +465,80 @@ def test_clear_canvas_broadcast(client):
         assert clear_msg["type"] == "clear_canvas"
 
 
+def test_highlighter_broadcast(client):
+    """Highlighter messages from the drawer are broadcast to other players."""
+    with client.websocket_connect("/ws") as ws_host, \
+         client.websocket_connect("/ws") as ws_player:
+
+        created = create_room(ws_host, "Host")
+        room_code = created["payload"]["room_code"]
+        join_room(ws_player, "Player2", room_code)
+        recv_until_type(ws_host, "player_list")
+
+        # Start game
+        send_msg(ws_host, "start_game")
+        recv_until_type(ws_host, "game_started")
+        recv_until_type(ws_player, "game_started")
+
+        # Select a word
+        word_choices = recv_until_type(ws_host, "word_choices")
+        selected_word = word_choices["payload"]["choices"][0]
+        send_msg(ws_host, "select_word", {"word": selected_word})
+
+        recv_until_type(ws_host, "turn_started")
+        recv_until_type(ws_player, "turn_started")
+
+        # Send highlighter
+        highlighter_payload = {"points": [[10, 10], [50, 50]], "color": "#FFFF00", "size": 8}
+        send_msg(ws_host, "highlighter", highlighter_payload)
+
+        # Player should receive highlighter
+        highlighter_msg = recv_until_type(ws_player, "highlighter")
+        assert highlighter_msg["payload"]["color"] == "#FFFF00"
+        assert highlighter_msg["payload"]["points"] == [[10, 10], [50, 50]]
+
+
+def test_shape_broadcast(client):
+    """Shape messages from the drawer are broadcast to other players."""
+    with client.websocket_connect("/ws") as ws_host, \
+         client.websocket_connect("/ws") as ws_player:
+
+        created = create_room(ws_host, "Host")
+        room_code = created["payload"]["room_code"]
+        join_room(ws_player, "Player2", room_code)
+        recv_until_type(ws_host, "player_list")
+
+        # Start game
+        send_msg(ws_host, "start_game")
+        recv_until_type(ws_host, "game_started")
+        recv_until_type(ws_player, "game_started")
+
+        # Select a word
+        word_choices = recv_until_type(ws_host, "word_choices")
+        selected_word = word_choices["payload"]["choices"][0]
+        send_msg(ws_host, "select_word", {"word": selected_word})
+
+        recv_until_type(ws_host, "turn_started")
+        recv_until_type(ws_player, "turn_started")
+
+        # Send shape (rect)
+        shape_payload = {
+            "shapeType": "rect",
+            "start": [10, 20],
+            "end": [100, 200],
+            "color": "#0000FF",
+            "size": 4,
+        }
+        send_msg(ws_host, "shape", shape_payload)
+
+        # Player should receive shape
+        shape_msg = recv_until_type(ws_player, "shape")
+        assert shape_msg["payload"]["shapeType"] == "rect"
+        assert shape_msg["payload"]["color"] == "#0000FF"
+        assert shape_msg["payload"]["start"] == [10, 20]
+        assert shape_msg["payload"]["end"] == [100, 200]
+
+
 # --- Test 11: Disconnect handling ---
 
 def test_disconnect_handling(client):

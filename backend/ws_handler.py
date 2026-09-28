@@ -112,6 +112,7 @@ async def websocket_handler(websocket: WebSocket) -> None:
                             "guess", "chat", "stroke", "fill", "clear_canvas",
                             "kick_player", "leave_room", "reaction", "typing",
                             "toggle_ready", "rematch", "end_game_now", "update_profile",
+                            "undo", "shape", "highlighter",
                         }
                         if msg_type not in known_types:
                             await _send_error(websocket, "UNKNOWN_MESSAGE", f"Unknown message type: {msg_type}")
@@ -280,6 +281,22 @@ async def _handle_local_message(
             # Broadcast stroke data to all other players in the room
             await room_manager.broadcast(room.code, {
                 "type": "stroke",
+                "payload": payload,
+            })
+
+    elif msg_type == "highlighter":
+        room = room_manager._find_room_by_player(player_id)
+        if room is not None:
+            await room_manager.broadcast(room.code, {
+                "type": "highlighter",
+                "payload": payload,
+            })
+
+    elif msg_type == "shape":
+        room = room_manager._find_room_by_player(player_id)
+        if room is not None:
+            await room_manager.broadcast(room.code, {
+                "type": "shape",
                 "payload": payload,
             })
 

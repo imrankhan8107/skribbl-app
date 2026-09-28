@@ -78,6 +78,8 @@ export default function Canvas({
     canUndo,
     canRedo,
     renderRemoteStroke,
+    renderRemoteHighlighter,
+    renderRemoteShape,
     renderRemoteFill,
     renderRemoteUndo,
     getHistory,
@@ -122,6 +124,18 @@ export default function Canvas({
       if (type === "stroke" && payload) {
         const p = payload as { points: [number, number][]; color: string; size: number };
         renderRemoteStroke(p);
+      } else if (type === "highlighter" && payload) {
+        const p = payload as { points: [number, number][]; color: string; size: number };
+        renderRemoteHighlighter(p);
+      } else if (type === "shape" && payload) {
+        const p = payload as {
+          shapeType: "line" | "rect" | "circle";
+          start: [number, number];
+          end: [number, number];
+          color: string;
+          size: number;
+        };
+        renderRemoteShape(p);
       } else if (type === "fill" && payload) {
         const p = payload as { x: number; y: number; color: string };
         renderRemoteFill(p);
@@ -133,17 +147,34 @@ export default function Canvas({
       }
     });
     return unsubscribe;
-  }, [renderRemoteStroke, renderRemoteFill, clearCanvas, renderRemoteUndo]);
+  }, [
+    renderRemoteStroke,
+    renderRemoteHighlighter,
+    renderRemoteShape,
+    renderRemoteFill,
+    clearCanvas,
+    renderRemoteUndo,
+  ]);
 
   // Expose render methods on the canvas element for parent access
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     (canvas as unknown as Record<string, unknown>).__renderRemoteStroke = renderRemoteStroke;
+    (canvas as unknown as Record<string, unknown>).__renderRemoteHighlighter =
+      renderRemoteHighlighter;
+    (canvas as unknown as Record<string, unknown>).__renderRemoteShape = renderRemoteShape;
     (canvas as unknown as Record<string, unknown>).__renderRemoteFill = renderRemoteFill;
     (canvas as unknown as Record<string, unknown>).__renderRemoteUndo = renderRemoteUndo;
     (canvas as unknown as Record<string, unknown>).__clearCanvas = clearCanvas;
-  }, [renderRemoteStroke, renderRemoteFill, renderRemoteUndo, clearCanvas]);
+  }, [
+    renderRemoteStroke,
+    renderRemoteHighlighter,
+    renderRemoteShape,
+    renderRemoteFill,
+    renderRemoteUndo,
+    clearCanvas,
+  ]);
 
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number; scale: number } | null>(null);
   const [isHoveringCanvas, setIsHoveringCanvas] = useState(false);
@@ -205,14 +236,32 @@ export default function Canvas({
               position: "absolute",
               left: `${cursorPos.x}px`,
               top: `${cursorPos.y}px`,
-              width: `${Math.max(4, BRUSH_SIZES[brushSize] * cursorPos.scale)}px`,
-              height: `${Math.max(4, BRUSH_SIZES[brushSize] * cursorPos.scale)}px`,
+              width: `${Math.max(
+                4,
+                (tool === "highlighter" ? BRUSH_SIZES[brushSize] * 2.5 : BRUSH_SIZES[brushSize]) *
+                  cursorPos.scale
+              )}px`,
+              height: `${Math.max(
+                4,
+                (tool === "highlighter" ? BRUSH_SIZES[brushSize] * 2.5 : BRUSH_SIZES[brushSize]) *
+                  cursorPos.scale
+              )}px`,
               transform: "translate(-50%, -50%)",
-              borderRadius: "50%",
+              borderRadius: tool === "rect" ? "2px" : "50%",
               pointerEvents: "none",
-              border: tool === "eraser" ? "2px dashed #e11d48" : "1.5px solid rgba(0, 0, 0, 0.8)",
+              border:
+                tool === "eraser"
+                  ? "2px dashed #e11d48"
+                  : tool === "line" || tool === "rect" || tool === "circle"
+                    ? "1.5px dashed rgba(0, 0, 0, 0.9)"
+                    : "1.5px solid rgba(0, 0, 0, 0.8)",
               boxShadow: "0 0 0 1px rgba(255, 255, 255, 0.9)",
-              backgroundColor: tool === "eraser" ? "rgba(255, 255, 255, 0.6)" : `${color}40`,
+              backgroundColor:
+                tool === "eraser"
+                  ? "rgba(255, 255, 255, 0.6)"
+                  : tool === "highlighter"
+                    ? `${color}60`
+                    : `${color}40`,
               zIndex: 20,
             }}
           />
@@ -339,21 +388,52 @@ export default function Canvas({
           <div className="toolbar-section" data-testid="tool-buttons">
             <ToolButton
               label="Pen"
+              icon="✏️"
               testId="tool-pen"
               active={tool === "pen"}
               onClick={() => setTool("pen")}
             />
             <ToolButton
+              label="Highlighter"
+              icon="🖍️"
+              testId="tool-highlighter"
+              active={tool === "highlighter"}
+              onClick={() => setTool("highlighter")}
+            />
+            <ToolButton
               label="Eraser"
+              icon="🧹"
               testId="tool-eraser"
               active={tool === "eraser"}
               onClick={() => setTool("eraser")}
             />
             <ToolButton
               label="Fill"
+              icon="🪣"
               testId="tool-fill"
               active={tool === "fill"}
               onClick={() => setTool("fill")}
+            />
+            <ToolButton
+              label="Line"
+              icon="📏"
+              testId="tool-line"
+              active={tool === "line"}
+              onClick={() => setTool("line")}
+            />
+            <ToolButton
+              label="Rectangle"
+              icon="⬜"
+              testId="tool-rect"
+              active={tool === "rect"}
+              onClick={() => setTool("rect")}
+            />
+            <ToolButton
+              label="Circle"
+              icon="⭕"
+              testId="tool-circle"
+              active={tool === "circle"}
+              onClick={() => setTool("circle")}
             />
           </div>
 
@@ -416,11 +496,13 @@ function ToolButton({
   testId,
   active,
   onClick,
+  icon,
 }: {
   label: string;
   testId: string;
   active: boolean;
   onClick: () => void;
+  icon?: string;
 }) {
   return (
     <button
@@ -430,15 +512,19 @@ function ToolButton({
       data-testid={testId}
       onClick={onClick}
       style={{
-        padding: "4px 12px",
+        padding: "4px 10px",
         border: active ? "2px solid #333" : "1px solid #ccc",
         borderRadius: 4,
         cursor: "pointer",
         fontWeight: active ? "bold" : "normal",
         margin: 2,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "4px",
       }}
     >
-      {label}
+      {icon && <span style={{ fontSize: "13px" }}>{icon}</span>}
+      <span>{label}</span>
     </button>
   );
 }

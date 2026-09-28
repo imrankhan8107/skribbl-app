@@ -5,7 +5,7 @@ import { useWebSocket } from "./useWebSocket";
 // Types
 // ---------------------------------------------------------------------------
 
-export type DrawingTool = "pen" | "fill" | "eraser";
+export type DrawingTool = "pen" | "highlighter" | "eraser" | "fill" | "line" | "rect" | "circle";
 export type BrushSize = "xs" | "small" | "medium" | "large" | "xl";
 
 import type { DrawingAction } from "../types";
@@ -24,6 +24,18 @@ export interface UseCanvasReturn {
   canUndo: boolean;
   canRedo: boolean;
   renderRemoteStroke: (stroke: { points: [number, number][]; color: string; size: number }) => void;
+  renderRemoteHighlighter: (highlighter: {
+    points: [number, number][];
+    color: string;
+    size: number;
+  }) => void;
+  renderRemoteShape: (shape: {
+    shapeType: "line" | "rect" | "circle";
+    start: [number, number];
+    end: [number, number];
+    color: string;
+    size: number;
+  }) => void;
   renderRemoteFill: (fill: { x: number; y: number; color: string }) => void;
   renderRemoteUndo: (actions?: DrawingAction[]) => void;
   getHistory: () => DrawingAction[];
@@ -62,6 +74,10 @@ export function useCanvas(
   // Drawing state (mutable refs to avoid re-renders on each event)
   const isDrawingRef = useRef(false);
   const pointsRef = useRef<[number, number][]>([]);
+
+  // Shape dragging preview state
+  const shapeStartRef = useRef<[number, number] | null>(null);
+  const shapeSnapshotRef = useRef<ImageData | null>(null);
 
   // Action history for undo/redo
   const actionHistoryRef = useRef<DrawingAction[]>([]);
@@ -140,6 +156,110 @@ export function useCanvas(
         ctx.lineTo(points[0][0] + 0.1, points[0][1] + 0.1);
       }
       ctx.stroke();
+    },
+    [getCtx]
+  );
+
+  // ---------------------------------------------------------------------------
+  // Draw highlighter stroke (semi-transparent, wide)
+  // ---------------------------------------------------------------------------
+  const drawHighlighter = useCallback(
+    (points: [number, number][], strokeColor: string, size: number) => {
+      const ctx = getCtx();
+      if (!ctx || points.length === 0) return;
+
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = size * 2.5;
+
+      ctx.beginPath();
+      ctx.moveTo(points[0][0], points[0][1]);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i][0], points[i][1]);
+      }
+      if (points.length === 1) {
+        ctx.lineTo(points[0][0] + 0.1, points[0][1] + 0.1);
+      }
+      ctx.stroke();
+      ctx.restore();
+    },
+    [getCtx]
+  );
+
+  // ---------------------------------------------------------------------------
+  // Draw straight line
+  // ---------------------------------------------------------------------------
+  const drawLine = useCallback(
+    (start: [number, number], end: [number, number], strokeColor: string, size: number) => {
+      const ctx = getCtx();
+      if (!ctx) return;
+
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = size;
+
+      ctx.beginPath();
+      ctx.moveTo(start[0], start[1]);
+      ctx.lineTo(end[0], end[1]);
+      ctx.stroke();
+      ctx.restore();
+    },
+    [getCtx]
+  );
+
+  // ---------------------------------------------------------------------------
+  // Draw rectangle
+  // ---------------------------------------------------------------------------
+  const drawRect = useCallback(
+    (start: [number, number], end: [number, number], strokeColor: string, size: number) => {
+      const ctx = getCtx();
+      if (!ctx) return;
+
+      ctx.save();
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = size;
+      ctx.lineJoin = "miter";
+
+      const x = Math.min(start[0], end[0]);
+      const y = Math.min(start[1], end[1]);
+      const w = Math.abs(end[0] - start[0]);
+      const h = Math.abs(end[1] - start[1]);
+
+      ctx.strokeRect(x, y, w, h);
+      ctx.restore();
+    },
+    [getCtx]
+  );
+
+  // ---------------------------------------------------------------------------
+  // Draw circle / ellipse
+  // ---------------------------------------------------------------------------
+  const drawCircle = useCallback(
+    (start: [number, number], end: [number, number], strokeColor: string, size: number) => {
+      const ctx = getCtx();
+      if (!ctx) return;
+
+      ctx.save();
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = size;
+
+      const rx = Math.abs(end[0] - start[0]) / 2;
+      const ry = Math.abs(end[1] - start[1]) / 2;
+      const cx = Math.min(start[0], end[0]) + rx;
+      const cy = Math.min(start[1], end[1]) + ry;
+
+      ctx.beginPath();
+      if (typeof ctx.ellipse === "function") {
+        ctx.ellipse(cx, cy, Math.max(0.1, rx), Math.max(0.1, ry), 0, 0, Math.PI * 2);
+      } else {
+        ctx.arc(cx, cy, Math.max(rx, ry, 0.1), 0, Math.PI * 2);
+      }
+      ctx.stroke();
+      ctx.restore();
     },
     [getCtx]
   );
@@ -248,12 +368,20 @@ export function useCanvas(
       for (const action of actions) {
         if (action.type === "stroke") {
           drawStroke(action.points, action.color, action.size);
+        } else if (action.type === "highlighter") {
+          drawHighlighter(action.points, action.color, action.size);
+        } else if (action.type === "line") {
+          drawLine(action.start, action.end, action.color, action.size);
+        } else if (action.type === "rect") {
+          drawRect(action.start, action.end, action.color, action.size);
+        } else if (action.type === "circle") {
+          drawCircle(action.start, action.end, action.color, action.size);
         } else if (action.type === "fill") {
           floodFill(action.x, action.y, action.color);
         }
       }
     },
-    [canvasRef, getCtx, drawStroke, floodFill]
+    [canvasRef, getCtx, drawStroke, drawHighlighter, drawLine, drawRect, drawCircle, floodFill]
   );
 
   // ---------------------------------------------------------------------------
@@ -298,6 +426,26 @@ export function useCanvas(
         color: action.color,
         size: action.size,
       });
+    } else if (action.type === "highlighter") {
+      drawHighlighter(action.points, action.color, action.size);
+      send("highlighter", {
+        points: action.points,
+        color: action.color,
+        size: action.size,
+      });
+    } else if (action.type === "line" || action.type === "rect" || action.type === "circle") {
+      if (action.type === "line") drawLine(action.start, action.end, action.color, action.size);
+      else if (action.type === "rect")
+        drawRect(action.start, action.end, action.color, action.size);
+      else if (action.type === "circle")
+        drawCircle(action.start, action.end, action.color, action.size);
+      send("shape", {
+        shapeType: action.type,
+        start: action.start,
+        end: action.end,
+        color: action.color,
+        size: action.size,
+      });
     } else if (action.type === "fill") {
       floodFill(action.x, action.y, action.color);
       send("fill", {
@@ -308,7 +456,7 @@ export function useCanvas(
     }
     setCanUndo(actionHistoryRef.current.length > 0);
     setCanRedo(redoStackRef.current.length > 0);
-  }, [isDrawer, drawStroke, floodFill, send]);
+  }, [isDrawer, drawStroke, drawHighlighter, drawLine, drawRect, drawCircle, floodFill, send]);
 
   // ---------------------------------------------------------------------------
   // Render remote stroke
@@ -324,6 +472,51 @@ export function useCanvas(
       });
     },
     [drawStroke]
+  );
+
+  // ---------------------------------------------------------------------------
+  // Render remote highlighter
+  // ---------------------------------------------------------------------------
+  const renderRemoteHighlighter = useCallback(
+    (highlighter: { points: [number, number][]; color: string; size: number }) => {
+      drawHighlighter(highlighter.points, highlighter.color, highlighter.size);
+      actionHistoryRef.current.push({
+        type: "highlighter",
+        points: highlighter.points,
+        color: highlighter.color,
+        size: highlighter.size,
+      });
+    },
+    [drawHighlighter]
+  );
+
+  // ---------------------------------------------------------------------------
+  // Render remote shape
+  // ---------------------------------------------------------------------------
+  const renderRemoteShape = useCallback(
+    (shape: {
+      shapeType: "line" | "rect" | "circle";
+      start: [number, number];
+      end: [number, number];
+      color: string;
+      size: number;
+    }) => {
+      if (shape.shapeType === "line") {
+        drawLine(shape.start, shape.end, shape.color, shape.size);
+      } else if (shape.shapeType === "rect") {
+        drawRect(shape.start, shape.end, shape.color, shape.size);
+      } else if (shape.shapeType === "circle") {
+        drawCircle(shape.start, shape.end, shape.color, shape.size);
+      }
+      actionHistoryRef.current.push({
+        type: shape.shapeType,
+        start: shape.start,
+        end: shape.end,
+        color: shape.color,
+        size: shape.size,
+      });
+    },
+    [drawLine, drawRect, drawCircle]
   );
 
   // ---------------------------------------------------------------------------
@@ -387,10 +580,18 @@ export function useCanvas(
         const key = e.key.toLowerCase();
         if (key === "b" || key === "p") {
           setTool("pen");
+        } else if (key === "h") {
+          setTool("highlighter");
         } else if (key === "e") {
           setTool("eraser");
         } else if (key === "f") {
           setTool("fill");
+        } else if (key === "l") {
+          setTool("line");
+        } else if (key === "r") {
+          setTool("rect");
+        } else if (key === "o" || key === "u") {
+          setTool("circle");
         } else if (e.key === "[") {
           const SIZES: BrushSize[] = ["xs", "small", "medium", "large", "xl"];
           const idx = SIZES.indexOf(brushSizeRef.current);
@@ -435,38 +636,87 @@ export function useCanvas(
         return;
       }
 
+      if (currentTool === "line" || currentTool === "rect" || currentTool === "circle") {
+        isDrawingRef.current = true;
+        const [x, y] = getCanvasCoords(e);
+        shapeStartRef.current = [x, y];
+        const ctx = getCtx();
+        if (ctx && canvas) {
+          try {
+            shapeSnapshotRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          } catch {
+            shapeSnapshotRef.current = null;
+          }
+        }
+        return;
+      }
+
       isDrawingRef.current = true;
       const [x, y] = getCanvasCoords(e);
       pointsRef.current = [[x, y]];
 
-      // Send the starting point immediately
       const strokeColor = currentTool === "eraser" ? CANVAS_BG : colorRef.current;
       const size = BRUSH_SIZES[brushSizeRef.current];
-      send("stroke", { points: [[x, y]], color: strokeColor, size });
+
+      if (currentTool === "highlighter") {
+        drawHighlighter([[x, y]], strokeColor, size);
+        send("highlighter", { points: [[x, y]], color: strokeColor, size });
+      } else {
+        // Send the starting point immediately
+        send("stroke", { points: [[x, y]], color: strokeColor, size });
+      }
     };
 
     const handlePointerMove = (e: MouseEvent) => {
       if (!isDrawingRef.current) return;
       e.preventDefault();
-      const [x, y] = getCanvasCoords(e);
-      pointsRef.current.push([x, y]);
-
-      // Draw intermediate stroke for immediate visual feedback
       const currentTool = toolRef.current;
+      const [x, y] = getCanvasCoords(e);
+
+      if (currentTool === "line" || currentTool === "rect" || currentTool === "circle") {
+        if (!shapeStartRef.current) return;
+        const ctx = getCtx();
+        if (!ctx || !canvas) return;
+        if (shapeSnapshotRef.current) {
+          ctx.putImageData(shapeSnapshotRef.current, 0, 0);
+        }
+        const strokeColor = colorRef.current;
+        const size = BRUSH_SIZES[brushSizeRef.current];
+        if (currentTool === "line") {
+          drawLine(shapeStartRef.current, [x, y], strokeColor, size);
+        } else if (currentTool === "rect") {
+          drawRect(shapeStartRef.current, [x, y], strokeColor, size);
+        } else if (currentTool === "circle") {
+          drawCircle(shapeStartRef.current, [x, y], strokeColor, size);
+        }
+        return;
+      }
+
+      pointsRef.current.push([x, y]);
       const strokeColor = currentTool === "eraser" ? CANVAS_BG : colorRef.current;
       const size = BRUSH_SIZES[brushSizeRef.current];
       const points = pointsRef.current;
-      if (points.length >= 2) {
-        drawStroke([points[points.length - 2], points[points.length - 1]], strokeColor, size);
-      }
 
-      // Stream each segment to the server in real-time
-      if (points.length >= 2) {
-        send("stroke", {
-          points: [points[points.length - 2], points[points.length - 1]],
-          color: strokeColor,
-          size,
-        });
+      if (currentTool === "highlighter") {
+        if (points.length >= 2) {
+          const seg: [number, number][] = [points[points.length - 2], points[points.length - 1]];
+          drawHighlighter(seg, strokeColor, size);
+          send("highlighter", {
+            points: seg,
+            color: strokeColor,
+            size,
+          });
+        }
+      } else {
+        // Draw intermediate stroke for immediate visual feedback
+        if (points.length >= 2) {
+          drawStroke([points[points.length - 2], points[points.length - 1]], strokeColor, size);
+          send("stroke", {
+            points: [points[points.length - 2], points[points.length - 1]],
+            color: strokeColor,
+            size,
+          });
+        }
       }
     };
 
@@ -476,25 +726,84 @@ export function useCanvas(
       isDrawingRef.current = false;
 
       const currentTool = toolRef.current;
+      const [x, y] = getCanvasCoords(e);
+
+      if (currentTool === "line" || currentTool === "rect" || currentTool === "circle") {
+        if (shapeStartRef.current) {
+          const start = shapeStartRef.current;
+          const end: [number, number] = [x, y];
+          const strokeColor = colorRef.current;
+          const size = BRUSH_SIZES[brushSizeRef.current];
+          const ctx = getCtx();
+          if (ctx && shapeSnapshotRef.current) {
+            ctx.putImageData(shapeSnapshotRef.current, 0, 0);
+          }
+          if (currentTool === "line") {
+            drawLine(start, end, strokeColor, size);
+          } else if (currentTool === "rect") {
+            drawRect(start, end, strokeColor, size);
+          } else if (currentTool === "circle") {
+            drawCircle(start, end, strokeColor, size);
+          }
+
+          actionHistoryRef.current.push({
+            type: currentTool,
+            start,
+            end,
+            color: strokeColor,
+            size,
+          });
+          redoStackRef.current = [];
+          setCanUndo(true);
+          setCanRedo(false);
+          send("shape", {
+            shapeType: currentTool,
+            start,
+            end,
+            color: strokeColor,
+            size,
+          });
+        }
+        shapeStartRef.current = null;
+        shapeSnapshotRef.current = null;
+        return;
+      }
+
       const strokeColor = currentTool === "eraser" ? CANVAS_BG : colorRef.current;
       const size = BRUSH_SIZES[brushSizeRef.current];
       const points = pointsRef.current;
 
-      if (points.length === 1) {
-        // Single dot — already sent on pointerdown
-        drawStroke(points, strokeColor, size);
-      }
-
-      if (points.length > 0) {
-        actionHistoryRef.current.push({
-          type: "stroke",
-          points: [...points],
-          color: strokeColor,
-          size,
-        });
-        redoStackRef.current = [];
-        setCanUndo(true);
-        setCanRedo(false);
+      if (currentTool === "highlighter") {
+        if (points.length === 1) {
+          drawHighlighter(points, strokeColor, size);
+        }
+        if (points.length > 0) {
+          actionHistoryRef.current.push({
+            type: "highlighter",
+            points: [...points],
+            color: strokeColor,
+            size,
+          });
+          redoStackRef.current = [];
+          setCanUndo(true);
+          setCanRedo(false);
+        }
+      } else {
+        if (points.length === 1) {
+          // Single dot — already sent on pointerdown
+          drawStroke(points, strokeColor, size);
+        }
+        if (points.length > 0) {
+          actionHistoryRef.current.push({
+            type: "stroke",
+            points: [...points],
+            color: strokeColor,
+            size,
+          });
+          redoStackRef.current = [];
+          setCanUndo(true);
+          setCanRedo(false);
+        }
       }
 
       pointsRef.current = [];
@@ -551,7 +860,19 @@ export function useCanvas(
       canvas.removeEventListener("touchmove", handleTouchMove);
       canvas.removeEventListener("touchend", handleTouchEnd);
     };
-  }, [canvasRef, isDrawer, getCanvasCoords, floodFill, drawStroke, send]);
+  }, [
+    canvasRef,
+    isDrawer,
+    getCanvasCoords,
+    getCtx,
+    floodFill,
+    drawStroke,
+    drawHighlighter,
+    drawLine,
+    drawRect,
+    drawCircle,
+    send,
+  ]);
 
   return {
     color,
@@ -566,6 +887,8 @@ export function useCanvas(
     canUndo,
     canRedo,
     renderRemoteStroke,
+    renderRemoteHighlighter,
+    renderRemoteShape,
     renderRemoteFill,
     renderRemoteUndo,
     getHistory,

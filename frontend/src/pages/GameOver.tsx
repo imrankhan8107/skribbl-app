@@ -42,6 +42,93 @@ function drawReplayStroke(
   ctx.stroke();
 }
 
+function drawReplayHighlighter(
+  ctx: CanvasRenderingContext2D,
+  points: [number, number][],
+  strokeColor: string,
+  size: number
+) {
+  if (points.length === 0) return;
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = size * 2.5;
+
+  ctx.beginPath();
+  ctx.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i][0], points[i][1]);
+  }
+  if (points.length === 1) {
+    ctx.lineTo(points[0][0] + 0.1, points[0][1] + 0.1);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawReplayLine(
+  ctx: CanvasRenderingContext2D,
+  start: [number, number],
+  end: [number, number],
+  strokeColor: string,
+  size: number
+) {
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = size;
+  ctx.beginPath();
+  ctx.moveTo(start[0], start[1]);
+  ctx.lineTo(end[0], end[1]);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawReplayRect(
+  ctx: CanvasRenderingContext2D,
+  start: [number, number],
+  end: [number, number],
+  strokeColor: string,
+  size: number
+) {
+  ctx.save();
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = size;
+  ctx.lineJoin = "miter";
+  const x = Math.min(start[0], end[0]);
+  const y = Math.min(start[1], end[1]);
+  const w = Math.abs(end[0] - start[0]);
+  const h = Math.abs(end[1] - start[1]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.restore();
+}
+
+function drawReplayCircle(
+  ctx: CanvasRenderingContext2D,
+  start: [number, number],
+  end: [number, number],
+  strokeColor: string,
+  size: number
+) {
+  ctx.save();
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = size;
+  const rx = Math.abs(end[0] - start[0]) / 2;
+  const ry = Math.abs(end[1] - start[1]) / 2;
+  const cx = Math.min(start[0], end[0]) + rx;
+  const cy = Math.min(start[1], end[1]) + ry;
+  ctx.beginPath();
+  if (typeof ctx.ellipse === "function") {
+    ctx.ellipse(cx, cy, Math.max(0.1, rx), Math.max(0.1, ry), 0, 0, Math.PI * 2);
+  } else {
+    ctx.arc(cx, cy, Math.max(rx, ry, 0.1), 0, Math.PI * 2);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 /**
  * BFS Flood fill helper for replay canvas
  */
@@ -157,6 +244,14 @@ export function ReplayModal({ artwork, onClose }: { artwork: RoundArtwork; onClo
         const act = actions[i];
         if (act.type === "stroke") {
           drawReplayStroke(ctx, act.points, act.color, act.size);
+        } else if (act.type === "highlighter") {
+          drawReplayHighlighter(ctx, act.points, act.color, act.size);
+        } else if (act.type === "line") {
+          drawReplayLine(ctx, act.start, act.end, act.color, act.size);
+        } else if (act.type === "rect") {
+          drawReplayRect(ctx, act.start, act.end, act.color, act.size);
+        } else if (act.type === "circle") {
+          drawReplayCircle(ctx, act.start, act.end, act.color, act.size);
         } else if (act.type === "fill") {
           floodFillReplayCanvas(canvas, ctx, act.x, act.y, act.color);
         }
@@ -198,6 +293,14 @@ export function ReplayModal({ artwork, onClose }: { artwork: RoundArtwork; onClo
             const act = actions[curr + i];
             if (act.type === "stroke") {
               drawReplayStroke(ctx, act.points, act.color, act.size);
+            } else if (act.type === "highlighter") {
+              drawReplayHighlighter(ctx, act.points, act.color, act.size);
+            } else if (act.type === "line") {
+              drawReplayLine(ctx, act.start, act.end, act.color, act.size);
+            } else if (act.type === "rect") {
+              drawReplayRect(ctx, act.start, act.end, act.color, act.size);
+            } else if (act.type === "circle") {
+              drawReplayCircle(ctx, act.start, act.end, act.color, act.size);
             } else if (act.type === "fill") {
               floodFillReplayCanvas(canvas, ctx, act.x, act.y, act.color);
             }

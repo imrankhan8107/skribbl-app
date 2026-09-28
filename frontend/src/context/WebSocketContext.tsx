@@ -702,6 +702,8 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
         // (React batching), dropping intermediate strokes -> dashed drawings.
         if (
           msg.type === "stroke" ||
+          msg.type === "highlighter" ||
+          msg.type === "shape" ||
           msg.type === "fill" ||
           msg.type === "clear_canvas" ||
           msg.type === "undo"

@@ -17,7 +17,7 @@
 import type { DrawingAction } from "../types";
 
 export interface DrawingEvent {
-  type: "stroke" | "fill" | "clear_canvas" | "undo";
+  type: "stroke" | "highlighter" | "shape" | "fill" | "clear_canvas" | "undo";
   payload: unknown;
 }
 

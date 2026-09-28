@@ -5,6 +5,7 @@ import { WebSocketContext } from "../context/WebSocketContext";
 import type { WebSocketContextValue } from "../context/WebSocketContext";
 import type { GameState } from "../types";
 import Canvas from "../components/Canvas";
+import { publishDrawing } from "../context/drawingBus";
 
 // ---------------------------------------------------------------------------
 // Mock canvas context — jsdom doesn't support real Canvas API
@@ -17,12 +18,18 @@ function createMockCanvasContext() {
     lineWidth: 1,
     lineCap: "butt",
     lineJoin: "miter",
+    globalAlpha: 1,
     beginPath: vi.fn(),
     moveTo: vi.fn(),
     lineTo: vi.fn(),
     stroke: vi.fn(),
     fill: vi.fn(),
     fillRect: vi.fn(),
+    strokeRect: vi.fn(),
+    ellipse: vi.fn(),
+    arc: vi.fn(),
+    save: vi.fn(),
+    restore: vi.fn(),
     clearRect: vi.fn(),
     getImageData: vi.fn(() => ({
       data: new Uint8ClampedArray(800 * 600 * 4),
@@ -256,6 +263,157 @@ describe("Canvas", () => {
       // Clear canvas via 'c'
       fireEvent.keyDown(window, { key: "c" });
       expect(send).toHaveBeenCalledWith("clear_canvas");
+    });
+  });
+
+  describe("Shape tools & Highlighter", () => {
+    it("renders highlighter, line, rectangle, and circle tool buttons", () => {
+      renderCanvas(true);
+      expect(screen.getByTestId("tool-highlighter")).toBeInTheDocument();
+      expect(screen.getByTestId("tool-line")).toBeInTheDocument();
+      expect(screen.getByTestId("tool-rect")).toBeInTheDocument();
+      expect(screen.getByTestId("tool-circle")).toBeInTheDocument();
+    });
+
+    it("switches to highlighter and sends highlighter event on pointer drag", async () => {
+      const user = userEvent.setup();
+      const { send } = renderCanvas(true);
+      const canvas = screen.getByTestId("drawing-canvas");
+
+      await user.click(screen.getByTestId("tool-highlighter"));
+      expect(screen.getByTestId("tool-highlighter")).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.mouseDown(canvas, { clientX: 100, clientY: 100 });
+      fireEvent.mouseMove(canvas, { clientX: 110, clientY: 110 });
+      fireEvent.mouseUp(canvas, { clientX: 110, clientY: 110 });
+
+      expect(send).toHaveBeenCalledWith(
+        "highlighter",
+        expect.objectContaining({
+          points: expect.any(Array),
+          color: expect.any(String),
+          size: expect.any(Number),
+        })
+      );
+    });
+
+    it("draws a line shape on pointer drag and sends shape event on mouseup", async () => {
+      const user = userEvent.setup();
+      const { send } = renderCanvas(true);
+      const canvas = screen.getByTestId("drawing-canvas");
+
+      await user.click(screen.getByTestId("tool-line"));
+      expect(screen.getByTestId("tool-line")).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.mouseDown(canvas, { clientX: 50, clientY: 50 });
+      fireEvent.mouseMove(canvas, { clientX: 150, clientY: 150 });
+      fireEvent.mouseUp(canvas, { clientX: 150, clientY: 150 });
+
+      expect(send).toHaveBeenCalledWith(
+        "shape",
+        expect.objectContaining({
+          shapeType: "line",
+          start: expect.any(Array),
+          end: expect.any(Array),
+          color: expect.any(String),
+          size: expect.any(Number),
+        })
+      );
+    });
+
+    it("draws a rectangle shape on pointer drag and sends shape event on mouseup", async () => {
+      const user = userEvent.setup();
+      const { send } = renderCanvas(true);
+      const canvas = screen.getByTestId("drawing-canvas");
+
+      await user.click(screen.getByTestId("tool-rect"));
+      expect(screen.getByTestId("tool-rect")).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.mouseDown(canvas, { clientX: 40, clientY: 40 });
+      fireEvent.mouseMove(canvas, { clientX: 140, clientY: 140 });
+      fireEvent.mouseUp(canvas, { clientX: 140, clientY: 140 });
+
+      expect(send).toHaveBeenCalledWith(
+        "shape",
+        expect.objectContaining({
+          shapeType: "rect",
+          start: expect.any(Array),
+          end: expect.any(Array),
+          color: expect.any(String),
+          size: expect.any(Number),
+        })
+      );
+    });
+
+    it("draws a circle shape on pointer drag and sends shape event on mouseup", async () => {
+      const user = userEvent.setup();
+      const { send } = renderCanvas(true);
+      const canvas = screen.getByTestId("drawing-canvas");
+
+      await user.click(screen.getByTestId("tool-circle"));
+      expect(screen.getByTestId("tool-circle")).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.mouseDown(canvas, { clientX: 60, clientY: 60 });
+      fireEvent.mouseMove(canvas, { clientX: 160, clientY: 160 });
+      fireEvent.mouseUp(canvas, { clientX: 160, clientY: 160 });
+
+      expect(send).toHaveBeenCalledWith(
+        "shape",
+        expect.objectContaining({
+          shapeType: "circle",
+          start: expect.any(Array),
+          end: expect.any(Array),
+          color: expect.any(String),
+          size: expect.any(Number),
+        })
+      );
+    });
+
+    it("supports keyboard shortcuts for highlighter (h), line (l), rect (r), and circle (o)", () => {
+      renderCanvas(true);
+
+      fireEvent.keyDown(window, { key: "h" });
+      expect(screen.getByTestId("tool-highlighter")).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.keyDown(window, { key: "l" });
+      expect(screen.getByTestId("tool-line")).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.keyDown(window, { key: "r" });
+      expect(screen.getByTestId("tool-rect")).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.keyDown(window, { key: "o" });
+      expect(screen.getByTestId("tool-circle")).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("receives and renders remote shape and highlighter events without crashing", () => {
+      renderCanvas(false);
+
+      // Publish remote highlighter
+      publishDrawing({
+        type: "highlighter",
+        payload: {
+          points: [
+            [10, 10],
+            [50, 50],
+          ],
+          color: "#ff0000",
+          size: 8,
+        },
+      });
+      expect(mockCtx.stroke).toHaveBeenCalled();
+
+      // Publish remote shape
+      publishDrawing({
+        type: "shape",
+        payload: {
+          shapeType: "rect",
+          start: [10, 10],
+          end: [100, 100],
+          color: "#0000ff",
+          size: 4,
+        },
+      });
+      expect(mockCtx.strokeRect).toHaveBeenCalled();
     });
   });
 });

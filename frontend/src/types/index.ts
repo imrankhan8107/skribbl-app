@@ -38,7 +38,11 @@ export interface RoundTheme {
 
 export type DrawingAction =
   | { type: "stroke"; points: [number, number][]; color: string; size: number }
-  | { type: "fill"; x: number; y: number; color: string };
+  | { type: "highlighter"; points: [number, number][]; color: string; size: number }
+  | { type: "fill"; x: number; y: number; color: string }
+  | { type: "line"; start: [number, number]; end: [number, number]; color: string; size: number }
+  | { type: "rect"; start: [number, number]; end: [number, number]; color: string; size: number }
+  | { type: "circle"; start: [number, number]; end: [number, number]; color: string; size: number };
 
 export interface RoundArtwork {
   round: number;
