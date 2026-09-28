@@ -305,11 +305,11 @@ async def test_reconnect_no_matching_player(room_manager):
     assert result["payload"]["code"] == "RECONNECT_FAILED"
 
 
-# --- Test: Host disconnect in lobby reassigns host (Req 2.9) ---
+# --- Test: Host disconnect in lobby reassigns host after 3s grace window ---
 
 @pytest.mark.asyncio
 async def test_host_disconnect_in_lobby_reassigns_host(room_manager):
-    """When the host disconnects in the lobby, the host role is reassigned."""
+    """When the host disconnects, host role is retained for 3s grace window, then reassigned."""
     room = make_room_with_players(3, state=RoomState.LOBBY)
     room_manager.rooms["TESTAB"] = room
     room.host_id = "player_0"
@@ -317,11 +317,78 @@ async def test_host_disconnect_in_lobby_reassigns_host(room_manager):
     # Disconnect the host (player_0)
     await room_manager.handle_disconnect("player_0", game_engine=None)
 
-    # Host should be reassigned to next connected player
+    # Immediately after disconnect, host role is NOT yet reassigned (grace window active)
+    assert room.host_id == "player_0"
+    player_0 = next(p for p in room.players if p.id == "player_0")
+    assert player_0.host_reassign_task is not None
+    assert not player_0.host_reassign_task.done()
+
+    # Await the 3-second reassignment task
+    await player_0.host_reassign_task
+
+    # Host should now be reassigned to next connected player
     assert room.host_id == "player_1"
 
+    # Verify host_changed message was broadcast
+    p1_ws = next(p.websocket for p in room.players if p.id == "player_1")
+    host_changed_msgs = [m for m in p1_ws.sent_messages if m.get("type") == "host_changed"]
+    assert len(host_changed_msgs) == 1
+    assert host_changed_msgs[0]["payload"]["new_host_id"] == "player_1"
+
     # Cleanup
+    player_0.cleanup_task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_host_reconnect_within_3s_cancels_reassignment(room_manager):
+    """When the host reconnects within 3s, host reassignment is cancelled and host is retained."""
+    room = make_room_with_players(3, state=RoomState.LOBBY)
+    room_manager.rooms["TESTAB"] = room
+    room.host_id = "player_0"
+
+    # Disconnect the host (player_0)
+    await room_manager.handle_disconnect("player_0", game_engine=None)
     player_0 = next(p for p in room.players if p.id == "player_0")
+    assert player_0.host_reassign_task is not None
+    assert not player_0.host_reassign_task.done()
+
+    # Reconnect before 3s
+    new_ws = FakeWebSocket()
+    result = await room_manager.handle_reconnect(player_0.name, "TESTAB", new_ws)
+    assert result["type"] == "reconnected"
+    assert result["payload"]["host_id"] == "player_0"
+    assert result["payload"]["is_host"] is True
+
+    # Reassignment task should be cancelled
+    assert player_0.host_reassign_task is None
+    assert room.host_id == "player_0"
+
+    # Ensure no host_changed was broadcast
+    host_changed_msgs = [m for m in new_ws.sent_messages if m.get("type") == "host_changed"]
+    assert len(host_changed_msgs) == 0
+
+
+@pytest.mark.asyncio
+async def test_host_reassignment_prefers_active_over_spectator(room_manager):
+    """Host reassignment selects connected active players before spectators."""
+    room = make_room_with_players(3, state=RoomState.LOBBY)
+    room_manager.rooms["TESTAB"] = room
+    room.host_id = "player_0"
+
+    # Mark player_1 as spectator, player_2 as active
+    player_1 = next(p for p in room.players if p.id == "player_1")
+    player_1.is_spectator = True
+    player_2 = next(p for p in room.players if p.id == "player_2")
+    player_2.is_spectator = False
+
+    await room_manager.handle_disconnect("player_0", game_engine=None)
+    player_0 = next(p for p in room.players if p.id == "player_0")
+    await player_0.host_reassign_task
+
+    # Player 2 should become host since player 1 is a spectator
+    assert room.host_id == "player_2"
+
+    # Cleanup
     player_0.cleanup_task.cancel()
 
 

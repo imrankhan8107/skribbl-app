@@ -104,8 +104,16 @@ class RoomManager:
         }
         if is_host is not None:
             data["is_host"] = is_host
-        elif room is not None:
-            data["is_host"] = (player.id == room.host_id)
+        else:
+            target_room = room
+            if target_room is None:
+                rc = self._player_to_room.get(player.id)
+                if rc:
+                    target_room = self.rooms.get(rc)
+            if target_room is not None:
+                data["is_host"] = (player.id == target_room.host_id)
+            else:
+                data["is_host"] = False
         if player.avatar:
             data["avatar"] = player.avatar
         if getattr(player, "session_wins", 0) > 0:
@@ -615,7 +623,24 @@ class RoomManager:
 
         # If the removed player was the host, reassign host
         if room.host_id == player_id:
-            room.host_id = room.players[0].id
+            eligible = [p for p in room.players if p.is_connected and not getattr(p, "is_spectator", False)]
+            if not eligible:
+                eligible = [p for p in room.players if p.is_connected]
+            if not eligible and room.players:
+                eligible = [room.players[0]]
+            if eligible:
+                new_host = eligible[0]
+                room.host_id = new_host.id
+                await self.broadcast(
+                    room.code,
+                    {
+                        "type": "host_changed",
+                        "payload": {
+                            "new_host_id": new_host.id,
+                            "new_host_name": new_host.name,
+                        },
+                    },
+                )
 
         # Broadcast updated player list to remaining players
         await self.broadcast(
@@ -623,7 +648,7 @@ class RoomManager:
             {
                 "type": "player_list",
                 "payload": {
-                    "players": [self._serialize_player(p) for p in room.players]
+                    "players": [self._serialize_player(p, room=room) for p in room.players]
                 },
             },
         )
@@ -651,18 +676,27 @@ class RoomManager:
         player.disconnect_time = time.time()
         player.websocket = None
 
-        # Handle lobby state: reassign host if needed
-        if room.state == RoomState.LOBBY:
-            if room.host_id == player_id:
-                # Find next connected player to be host
-                connected_players = [p for p in room.players if p.is_connected]
-                if connected_players:
-                    room.host_id = connected_players[0].id
-                else:
-                    # No connected players remain — delete room
-                    # Cancel the cleanup task since we're removing everything
+        # If disconnecting player is the host, schedule host reassignment after 3s grace window
+        if room.host_id == player_id:
+            connected_players = [p for p in room.players if p.is_connected]
+            if not connected_players:
+                # No connected players remain — delete room if in lobby
+                if room.state == RoomState.LOBBY:
                     await self._delete_room(room.code)
                     return
+            else:
+                # Schedule host reassignment after 3 seconds if host does not reconnect
+                if getattr(player, "host_reassign_task", None) is not None and not player.host_reassign_task.done():
+                    player.host_reassign_task.cancel()
+
+                async def reassign_host_after_timeout():
+                    try:
+                        await asyncio.sleep(3.0)
+                        await self._reassign_host_if_disconnected(room.code, player_id)
+                    except asyncio.CancelledError:
+                        pass
+
+                player.host_reassign_task = asyncio.create_task(reassign_host_after_timeout())
 
         # Schedule cleanup task (120 seconds)
         async def cleanup_after_timeout():
@@ -677,7 +711,7 @@ class RoomManager:
             {
                 "type": "player_list",
                 "payload": {
-                    "players": [self._serialize_player(p) for p in room.players]
+                    "players": [self._serialize_player(p, room=room) for p in room.players]
                 },
             },
         )
@@ -707,6 +741,65 @@ class RoomManager:
                             if game_engine is not None:
                                 from backend.models import TurnEndReason
                                 await game_engine.end_turn(room, TurnEndReason.ALL_GUESSED, self)
+
+    async def _reassign_host_if_disconnected(self, room_code: str, old_host_id: str) -> None:
+        """Reassign host to another connected player if old host is still disconnected after grace period."""
+        room = self.rooms.get(room_code)
+        if room is None or room.host_id != old_host_id:
+            return
+        old_host = room.get_player(old_host_id)
+        if old_host is not None and old_host.is_connected:
+            return  # Reconnected within 3s
+
+        eligible = [p for p in room.players if p.is_connected and not getattr(p, "is_spectator", False)]
+        if not eligible:
+            eligible = [p for p in room.players if p.is_connected]
+        if not eligible:
+            if room.state == RoomState.LOBBY:
+                await self._delete_room(room.code)
+            return
+
+        new_host = eligible[0]
+        room.host_id = new_host.id
+
+        await self.broadcast(
+            room.code,
+            {
+                "type": "host_changed",
+                "payload": {
+                    "new_host_id": new_host.id,
+                    "new_host_name": new_host.name,
+                },
+            },
+        )
+        await self.broadcast(
+            room.code,
+            {
+                "type": "player_list",
+                "payload": {
+                    "players": [self._serialize_player(p, room=room) for p in room.players]
+                },
+            },
+        )
+        await self.broadcast(
+            room.code,
+            {
+                "type": "chat_message",
+                "payload": {
+                    "sender_id": "",
+                    "sender_name": "System",
+                    "text": f"👑 {new_host.name} is now the room host.",
+                    "type": "system",
+                },
+            },
+        )
+        if redis_pubsub.is_redis_enabled():
+            await redis_pubsub.set_room_info(room.code, {
+                "state": room.state.value,
+                "player_count": len(room.players),
+                "config": self._serialize_config(room.config),
+                "host_id": room.host_id,
+            })
 
     async def handle_reconnect(self, name: str, room_code: str, websocket, avatar: Optional[str] = None) -> dict:
         """Handle a player reconnecting within the 120-second grace window.
@@ -776,6 +869,11 @@ class RoomManager:
             player.cleanup_task.cancel()
             player.cleanup_task = None
 
+        # Cancel the host reassignment task if any
+        if getattr(player, "host_reassign_task", None) is not None and not player.host_reassign_task.done():
+            player.host_reassign_task.cancel()
+            player.host_reassign_task = None
+
         # Restore player connection
         player.is_connected = True
         player.disconnect_time = None
@@ -807,7 +905,7 @@ class RoomManager:
             {
                 "type": "player_list",
                 "payload": {
-                    "players": [self._serialize_player(p) for p in room.players]
+                    "players": [self._serialize_player(p, room=room) for p in room.players]
                 },
             },
         )
@@ -818,7 +916,8 @@ class RoomManager:
                 "room_code": room_code,
                 "player_id": player.id,
                 "score": player.score,
-                "players": [self._serialize_player(p) for p in room.players],
+                "is_host": (player.id == room.host_id),
+                "players": [self._serialize_player(p, room=room) for p in room.players],
                 "config": self._serialize_config(room.config),
                 "state": room.state.value,
                 "current_round": room.current_round,
@@ -852,11 +951,24 @@ class RoomManager:
 
         # If the removed player was the host, reassign host
         if room.host_id == player_id:
-            connected_players = [p for p in room.players if p.is_connected]
-            if connected_players:
-                room.host_id = connected_players[0].id
-            elif room.players:
-                room.host_id = room.players[0].id
+            eligible = [p for p in room.players if p.is_connected and not getattr(p, "is_spectator", False)]
+            if not eligible:
+                eligible = [p for p in room.players if p.is_connected]
+            if not eligible and room.players:
+                eligible = [room.players[0]]
+            if eligible:
+                new_host = eligible[0]
+                room.host_id = new_host.id
+                await self.broadcast(
+                    room.code,
+                    {
+                        "type": "host_changed",
+                        "payload": {
+                            "new_host_id": new_host.id,
+                            "new_host_name": new_host.name,
+                        },
+                    },
+                )
 
         # Broadcast updated player list
         await self.broadcast(
@@ -864,7 +976,7 @@ class RoomManager:
             {
                 "type": "player_list",
                 "payload": {
-                    "players": [self._serialize_player(p) for p in room.players]
+                    "players": [self._serialize_player(p, room=room) for p in room.players]
                 },
             },
         )
