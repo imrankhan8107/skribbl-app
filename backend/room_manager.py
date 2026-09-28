@@ -17,6 +17,7 @@ import random
 import string
 import time
 from collections import deque
+from typing import Optional
 from uuid import uuid4
 
 from backend.fast_json import json_dumps, json_loads
