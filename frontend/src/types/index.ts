@@ -154,5 +154,6 @@ export type Action =
   | { type: "REMATCH_STARTED"; payload: Record<string, unknown> }
   | { type: "SAVE_ARTWORK"; payload: RoundArtwork }
   | { type: "TYPING"; payload: { playerId: string; playerName: string; isTyping: boolean } }
+  | { type: "PROFILE_UPDATED"; payload: { playerId: string; name?: string; avatar?: string } }
   | { type: "TICK" }
   | { type: "RESET" };

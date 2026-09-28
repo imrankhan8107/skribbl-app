@@ -376,8 +376,7 @@ async def _handle_local_message(
         name = payload.get("name") if isinstance(payload, dict) else None
         avatar = payload.get("avatar") if isinstance(payload, dict) else None
         result = await room_manager.update_profile(player_id, name=name, avatar=avatar)
-        if result.get("type") == "error":
-            await websocket.send_json(result)
+        await websocket.send_json(result)
 
     elif msg_type == "rematch":
         result = await room_manager.handle_rematch(player_id)

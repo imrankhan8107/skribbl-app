@@ -144,6 +144,21 @@ export function gameReducer(state: GameState, action: Action): GameState {
       };
     }
 
+    case "PROFILE_UPDATED": {
+      const { playerId, name, avatar } = action.payload;
+      return {
+        ...state,
+        players: state.players.map((p) => {
+          if (p.id !== playerId) return p;
+          return {
+            ...p,
+            ...(name !== undefined ? { name } : {}),
+            ...(avatar !== undefined ? { avatar } : {}),
+          };
+        }),
+      };
+    }
+
     case "SETTINGS_UPDATED":
       return {
         ...state,
@@ -546,6 +561,7 @@ function mapServerTypeToActionType(serverType: string): Action["type"] | null {
     kicked: "KICKED",
     left_room: "LEFT_ROOM",
     typing: "TYPING",
+    profile_updated: "PROFILE_UPDATED",
     error: "ERROR",
   };
   return mapping[serverType] ?? null;
