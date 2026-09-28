@@ -83,7 +83,8 @@ async def websocket_handler(websocket: WebSocket) -> None:
                     name = payload.get("name", "")
                     rc = payload.get("room_code", "")
                     avatar = payload.get("avatar")
-                    result = await room_manager.join_room(name, rc, websocket, avatar=avatar)
+                    as_spectator = payload.get("as_spectator", False)
+                    result = await room_manager.join_room(name, rc, websocket, avatar=avatar, as_spectator=as_spectator)
                     if result.get("type") == "room_joined":
                         player_id = result["payload"]["player_id"]
                         room_code = result["payload"]["room_code"]
@@ -277,7 +278,7 @@ async def _handle_local_message(
 
     elif msg_type == "stroke":
         room = room_manager._find_room_by_player(player_id)
-        if room is not None:
+        if room is not None and room.turn and room.turn.drawer_id == player_id:
             # Broadcast stroke data to all other players in the room
             await room_manager.broadcast(room.code, {
                 "type": "stroke",
@@ -286,7 +287,7 @@ async def _handle_local_message(
 
     elif msg_type == "highlighter":
         room = room_manager._find_room_by_player(player_id)
-        if room is not None:
+        if room is not None and room.turn and room.turn.drawer_id == player_id:
             await room_manager.broadcast(room.code, {
                 "type": "highlighter",
                 "payload": payload,
@@ -294,7 +295,7 @@ async def _handle_local_message(
 
     elif msg_type == "shape":
         room = room_manager._find_room_by_player(player_id)
-        if room is not None:
+        if room is not None and room.turn and room.turn.drawer_id == player_id:
             await room_manager.broadcast(room.code, {
                 "type": "shape",
                 "payload": payload,
@@ -302,7 +303,7 @@ async def _handle_local_message(
 
     elif msg_type == "fill":
         room = room_manager._find_room_by_player(player_id)
-        if room is not None:
+        if room is not None and room.turn and room.turn.drawer_id == player_id:
             # Broadcast fill data to all other players in the room
             await room_manager.broadcast(room.code, {
                 "type": "fill",
@@ -311,7 +312,7 @@ async def _handle_local_message(
 
     elif msg_type == "clear_canvas":
         room = room_manager._find_room_by_player(player_id)
-        if room is not None:
+        if room is not None and room.turn and room.turn.drawer_id == player_id:
             # Broadcast clear_canvas to all players in the room
             await room_manager.broadcast(room.code, {
                 "type": "clear_canvas",

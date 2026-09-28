@@ -71,10 +71,8 @@ export default function Chat() {
       send("typing", { is_typing: false });
     }
 
-    if (gameState.phase === "lobby") {
-      // In lobby, all messages are just chat
-      send("chat", { text: trimmed });
-    } else if (gameState.isDrawer) {
+    if (gameState.phase === "lobby" || gameState.isDrawer || gameState.isSpectator) {
+      // In lobby, or if drawer or spectator, send as chat
       send("chat", { text: trimmed });
     } else {
       send("guess", { text: trimmed });
@@ -90,18 +88,22 @@ export default function Chat() {
   };
 
   const handleQuickChat = (phrase: string) => {
-    if (gameState.phase === "playing" && gameState.hasGuessed) {
+    if (gameState.phase === "playing" && gameState.hasGuessed && !gameState.isSpectator) {
       return;
     }
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = null;
     }
-    if (gameState.phase === "playing" && !gameState.isDrawer && !gameState.hasGuessed) {
+    if (
+      gameState.phase === "playing" &&
+      !gameState.isDrawer &&
+      !gameState.hasGuessed &&
+      !gameState.isSpectator
+    ) {
       send("typing", { is_typing: false });
     }
-
-    if (gameState.phase === "lobby" || gameState.isDrawer) {
+    if (gameState.phase === "lobby" || gameState.isDrawer || gameState.isSpectator) {
       send("chat", { text: phrase });
     } else {
       send("guess", { text: phrase });
@@ -199,13 +201,15 @@ export default function Chat() {
           onChange={handleInputChange}
           disabled={isInputDisabled}
           placeholder={
-            gameState.phase === "lobby"
-              ? "Chat with other players..."
-              : gameState.isDrawer
-                ? "Chat (word will be hidden)..."
-                : gameState.hasGuessed
-                  ? "You already guessed!"
-                  : "Type your guess..."
+            gameState.isSpectator
+              ? "Chat as spectator... (guesses won't reveal or score)"
+              : gameState.phase === "lobby"
+                ? "Chat with other players..."
+                : gameState.isDrawer
+                  ? "Chat (word will be hidden)..."
+                  : gameState.hasGuessed
+                    ? "You already guessed!"
+                    : "Type your guess..."
           }
           data-testid="chat-input"
           aria-label="Chat input"

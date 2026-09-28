@@ -806,3 +806,78 @@ class TestTransferHost:
         assert result["payload"]["code"] == "PLAYER_DISCONNECTED"
 
 
+class TestSpectatorMode:
+    async def test_join_as_spectator_in_lobby(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        room_code = res1["payload"]["room_code"]
+
+        res2 = await manager.join_room("Bob", room_code, ws2, as_spectator=True)
+        assert res2["type"] == "room_joined"
+        assert res2["payload"]["is_spectator"] is True
+
+        room = manager.get_room(room_code)
+        bob = room.get_player(res2["payload"]["player_id"])
+        assert bob.is_spectator is True
+
+    async def test_join_as_spectator_mid_game(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        ws3 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        room_code = res1["payload"]["room_code"]
+        await manager.join_room("Bob", room_code, ws2)
+
+        room = manager.get_room(room_code)
+        room.state = RoomState.PLAYING
+        room.current_round = 2
+
+        # Non-spectator rejected
+        res_fail = await manager.join_room("Charlie", room_code, ws3, as_spectator=False)
+        assert res_fail["type"] == "error"
+        assert res_fail["payload"]["code"] == "ROOM_IN_PROGRESS"
+
+        # Spectator accepted mid-game
+        res_spec = await manager.join_room("Charlie", room_code, ws3, as_spectator=True)
+        assert res_spec["type"] == "room_joined"
+        assert res_spec["payload"]["is_spectator"] is True
+        assert res_spec["payload"]["state"] == "playing"
+        assert res_spec["payload"]["current_round"] == 2
+
+    async def test_transfer_host_to_spectator_rejected(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        p1_id = res1["payload"]["player_id"]
+        room_code = res1["payload"]["room_code"]
+
+        res2 = await manager.join_room("Bob", room_code, ws2, as_spectator=True)
+        p2_id = res2["payload"]["player_id"]
+
+        result = await manager.transfer_host(p1_id, p2_id)
+        assert result["type"] == "error"
+        assert result["payload"]["code"] == "INVALID_TARGET"
+        assert "spectator" in result["payload"]["message"].lower()
+
+    async def test_start_game_requires_two_active_players(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        p1_id = res1["payload"]["player_id"]
+        room_code = res1["payload"]["room_code"]
+
+        # Only 1 host + 1 spectator = cannot start
+        await manager.join_room("Bob", room_code, ws2, as_spectator=True)
+        start_res = await manager.start_game(p1_id)
+        assert start_res["type"] == "error"
+        assert start_res["payload"]["code"] == "INSUFFICIENT_PLAYERS"
+
+        # Add 1 active player -> 2 active + 1 spectator = can start
+        ws3 = make_mock_ws()
+        await manager.join_room("Charlie", room_code, ws3, as_spectator=False)
+        start_res2 = await manager.start_game(p1_id)
+        assert start_res2["type"] == "game_started"
+
+
+

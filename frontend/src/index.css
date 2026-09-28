@@ -3352,3 +3352,89 @@ ol {
 .quick-chat-label {
   font-size: 0.74rem;
 }
+
+/* ============================================================
+   Spectator Mode Styles
+   ============================================================ */
+.spectator-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #6c5ce7;
+  background: rgba(108, 92, 231, 0.12);
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.player-item.player-spectator {
+  opacity: 0.85;
+  background: rgba(108, 92, 231, 0.04);
+}
+
+.spectator-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem 1.1rem;
+  background: linear-gradient(135deg, rgba(108, 92, 231, 0.12), rgba(162, 155, 254, 0.08));
+  border: 1px solid rgba(108, 92, 231, 0.3);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  box-shadow: 0 2px 8px rgba(108, 92, 231, 0.08);
+}
+
+.spectator-banner-icon {
+  font-size: 1.15rem;
+  animation: pulse 2s infinite ease-in-out;
+}
+
+.spectator-toggle-wrap {
+  display: flex;
+  align-items: center;
+  margin: 0.5rem 0 1rem 0;
+}
+
+.spectator-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.spectator-toggle-label input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--color-primary);
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.join-spectator-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--color-primary);
+  color: #ffffff;
+  border: none;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-top: 0.3rem;
+}
+
+.join-spectator-action-btn:hover {
+  background: #5644d6;
+  transform: translateY(-1px);
+}

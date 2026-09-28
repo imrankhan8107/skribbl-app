@@ -58,4 +58,36 @@ describe("PlayerList Badges & Indicators", () => {
     editBtn.click();
     expect(onEditProfile).toHaveBeenCalledTimes(1);
   });
+
+  it("renders spectator badge for spectator players and does not show transfer host crown button", () => {
+    const playersWithSpectator: PlayerInfo[] = [
+      ...mockPlayers,
+      {
+        id: "p3",
+        name: "Charlie",
+        score: 0,
+        isHost: false,
+        hasGuessed: false,
+        isConnected: true,
+        isReady: false,
+        isSpectator: true,
+      },
+    ];
+
+    const onTransferHost = vi.fn();
+    render(
+      <PlayerList
+        players={playersWithSpectator}
+        isHost={true}
+        localPlayerId="p1"
+        onTransferHost={onTransferHost}
+      />
+    );
+
+    expect(screen.getByTestId("spectator-badge")).toHaveTextContent("👀 Spectating");
+    // Bob (active player) has crown button
+    expect(screen.getByTestId("transfer-host-p2")).toBeInTheDocument();
+    // Charlie (spectator) does NOT have crown button
+    expect(screen.queryByTestId("transfer-host-p3")).not.toBeInTheDocument();
+  });
 });

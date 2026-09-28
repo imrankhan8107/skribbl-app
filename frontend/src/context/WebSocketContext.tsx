@@ -21,6 +21,7 @@ const initialGameState: GameState = {
   localPlayerId: null,
   isHost: false,
   isDrawer: false,
+  isSpectator: false,
   players: [],
   config: { numRounds: 3, turnDuration: 80, maxPlayers: 8 },
   hint: [],
@@ -85,6 +86,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
     case "ROOM_JOINED": {
       const p = action.payload as Record<string, unknown>;
       const incomingPlayers = (p.players ?? []) as unknown as Array<Record<string, unknown>>;
+      const isSpectator = Boolean(p.isSpectator ?? p.is_spectator);
       let players = state.players;
       if (incomingPlayers && incomingPlayers.length > 0) {
         players = incomingPlayers.map((pl) => {
@@ -98,17 +100,39 @@ export function gameReducer(state: GameState, action: Action): GameState {
             isConnected: (pl.isConnected as boolean) ?? true,
             isReady: (pl.isReady as boolean) ?? false,
             isHost: (pl.isHost as boolean) ?? pl.id === (p.hostId as string),
+            isSpectator: Boolean(pl.isSpectator ?? pl.is_spectator),
           };
           if (avatar) plObj.avatar = avatar;
           return plObj;
         });
       }
+
+      let phase: GameState["phase"] = "lobby";
+      const roomState = (p.state as string) ?? "lobby";
+      if (roomState === "playing") phase = "playing";
+      else if (roomState === "word_selection") phase = "word_selection";
+      else if (roomState === "game_over") phase = "game_over";
+
+      const currentRound =
+        (p.current_round as number) ?? (p.currentRound as number) ?? state.currentRound;
+      const drawerId = (p.drawer_id as string | null) ?? (p.drawerId as string | null) ?? null;
+      const hint = (p.hint as string[]) ?? state.hint;
+      const timerSeconds = (p.duration as number) ?? state.timerSeconds;
+      const currentTheme = (p.theme as GameState["currentTheme"]) ?? null;
+
       return {
         ...state,
-        phase: "lobby",
+        phase,
         roomCode: action.payload.roomCode,
         localPlayerId: action.payload.playerId,
         isHost: action.payload.isHost,
+        isSpectator,
+        drawerId,
+        isDrawer: !isSpectator && drawerId === action.payload.playerId,
+        currentRound,
+        hint,
+        timerSeconds,
+        currentTheme,
         players,
         artworkGallery: [],
       };
@@ -135,6 +159,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
           isConnected: (p.isConnected as boolean) ?? true,
           isReady: (p.isReady as boolean) ?? false,
           isHost: (p.isHost as boolean) ?? existing?.isHost ?? false,
+          isSpectator: Boolean(p.isSpectator ?? p.is_spectator ?? existing?.isSpectator),
         };
         if (resolvedAvatar) {
           playerObj.avatar = resolvedAvatar;
@@ -426,18 +451,26 @@ export function gameReducer(state: GameState, action: Action): GameState {
       else if (rState === "word_selection") phase = "word_selection";
       else if (rState === "game_over") phase = "game_over";
 
+      const isSpectator = Boolean(
+        rp.isSpectator ??
+        rp.is_spectator ??
+        rPlayers.find((pl) => pl.id === rPlayerId)?.isSpectator ??
+        state.isSpectator
+      );
+
       return {
         ...state,
         phase,
         roomCode: (rp.roomCode as string) ?? state.roomCode,
         localPlayerId: rPlayerId,
         isHost: rHostId === rPlayerId,
+        isSpectator,
         players: rPlayers,
         config: rConfig,
         currentRound: rCurrentRound,
         totalRounds: rConfig.numRounds ?? state.totalRounds,
         drawerId: rDrawerId,
-        isDrawer: rDrawerId === rPlayerId,
+        isDrawer: !isSpectator && rDrawerId === rPlayerId,
         hint: rHint,
         waitingForReconnect: false,
         reconnectCountdown: 0,

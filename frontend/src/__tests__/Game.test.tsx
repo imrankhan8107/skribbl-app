@@ -66,6 +66,7 @@ const defaultGameState: GameState = {
   localPlayerId: "player-1",
   isHost: false,
   isDrawer: false,
+  isSpectator: false,
   players: [
     {
       id: "player-1",

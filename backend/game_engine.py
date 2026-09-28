@@ -480,6 +480,20 @@ async def handle_guess(room: Room, player_id: str, text: str, room_manager) -> N
     if player.id == room.turn.drawer_id:
         return
 
+    # Spectators cannot guess or reveal the secret word
+    if getattr(player, "is_spectator", False):
+        word = room.turn.word
+        sanitized_text = re.sub(re.escape(word), "***", text, flags=re.IGNORECASE)
+        await room_manager.broadcast(room.code, {
+            "type": "chat_message",
+            "payload": {
+                "player_name": f"{player.name} (Spectator)",
+                "text": filter_profanity(sanitized_text),
+                "is_system": False,
+            },
+        })
+        return
+
     # Already guessed — silently ignore (Property 14)
     if player.has_guessed:
         return
@@ -513,7 +527,7 @@ async def handle_guess(room: Room, player_id: str, text: str, room_manager) -> N
         all_guessed = all(
             p.has_guessed
             for p in room.players
-            if p.id != room.turn.drawer_id and p.is_connected
+            if p.id != room.turn.drawer_id and p.is_connected and not getattr(p, "is_spectator", False)
         )
         if all_guessed:
             await end_turn(room, TurnEndReason.ALL_GUESSED, room_manager)
@@ -583,8 +597,9 @@ async def handle_chat(room: Room, player_id: str, text: str, room_manager) -> No
     if player is None:
         return
 
-    # Only the drawer can send chat messages (Requirement 6.8)
-    if player.id != room.turn.drawer_id:
+    # Only the drawer or spectators can send chat messages
+    is_spectator = getattr(player, "is_spectator", False)
+    if player.id != room.turn.drawer_id and not is_spectator:
         return
 
     # Strip the current word from the message (case-insensitive) to prevent reveals (Requirement 6.6)
@@ -592,11 +607,13 @@ async def handle_chat(room: Room, player_id: str, text: str, room_manager) -> No
     sanitized_text = re.sub(re.escape(word), "***", text, flags=re.IGNORECASE)
     sanitized_text = filter_profanity(sanitized_text)
 
+    display_name = f"{player.name} (Spectator)" if is_spectator else player.name
+
     # Broadcast chat_message
     await room_manager.broadcast(room.code, {
         "type": "chat_message",
         "payload": {
-            "player_name": player.name,
+            "player_name": display_name,
             "text": sanitized_text,
             "is_system": False,
         },
@@ -684,7 +701,8 @@ async def end_turn(room: Room, reason: TurnEndReason, room_manager) -> None:
 
 def build_game_over_payload(room: Room) -> dict:
     """Build final ranked scores, MVP awards, and persistent session stats."""
-    ranked_players = sorted(room.players, key=lambda p: p.score, reverse=True)
+    active_players = [p for p in room.players if not getattr(p, "is_spectator", False)]
+    ranked_players = sorted(active_players, key=lambda p: p.score, reverse=True)
     final_scores = [
         {"id": p.id, "name": p.name, "score": p.score}
         for p in ranked_players
@@ -697,8 +715,8 @@ def build_game_over_payload(room: Room) -> dict:
             if p.score == top_score:
                 p.session_wins = getattr(p, "session_wins", 0) + 1
 
-    # Update cumulative session scores and games
-    for p in room.players:
+    # Update cumulative session scores and games for active players
+    for p in active_players:
         p.session_score = getattr(p, "session_score", 0) + p.score
         p.session_games = getattr(p, "session_games", 0) + 1
 
@@ -706,7 +724,7 @@ def build_game_over_payload(room: Room) -> dict:
     mvp_awards = []
     # 1. Speed Demon (fastest guess)
     fastest_p = min(
-        (p for p in room.players if getattr(p, "fastest_guess_time", None) is not None),
+        (p for p in active_players if getattr(p, "fastest_guess_time", None) is not None),
         key=lambda p: p.fastest_guess_time,
         default=None,
     )
@@ -721,7 +739,7 @@ def build_game_over_payload(room: Room) -> dict:
 
     # 2. Master Artist (most drawing points)
     artist_p = max(
-        (p for p in room.players if getattr(p, "drawer_points_earned", 0) > 0),
+        (p for p in active_players if getattr(p, "drawer_points_earned", 0) > 0),
         key=lambda p: p.drawer_points_earned,
         default=None,
     )
@@ -736,7 +754,7 @@ def build_game_over_payload(room: Room) -> dict:
 
     # 3. Streak King (highest consecutive guesses)
     streak_p = max(
-        (p for p in room.players if getattr(p, "max_streak", 0) >= 2),
+        (p for p in active_players if getattr(p, "max_streak", 0) >= 2),
         key=lambda p: p.max_streak,
         default=None,
     )
@@ -751,7 +769,7 @@ def build_game_over_payload(room: Room) -> dict:
 
     # 4. Sharpshooter (most correct guesses)
     sharpshooter_p = max(
-        (p for p in room.players if getattr(p, "correct_guesses_count", 0) > 0),
+        (p for p in active_players if getattr(p, "correct_guesses_count", 0) > 0),
         key=lambda p: p.correct_guesses_count,
         default=None,
     )
@@ -774,7 +792,7 @@ def build_game_over_payload(room: Room) -> dict:
             "session_games": getattr(p, "session_games", 0),
         }
         for p in sorted(
-            room.players,
+            active_players,
             key=lambda x: (getattr(x, "session_wins", 0), getattr(x, "session_score", 0)),
             reverse=True,
         )
@@ -801,8 +819,8 @@ async def advance_turn_or_round(room: Room, room_manager) -> None:
         room: The Room instance.
         room_manager: The RoomManager for broadcasting messages.
     """
-    # Check if < 2 connected players remain — end game immediately
-    connected_count = sum(1 for p in room.players if p.is_connected)
+    # Check if < 2 connected active players remain — end game immediately
+    connected_count = sum(1 for p in room.players if p.is_connected and not getattr(p, "is_spectator", False))
     if connected_count < 2:
         await room_manager._end_game_insufficient_players(room)
         return
@@ -826,11 +844,11 @@ async def advance_turn_or_round(room: Room, room_manager) -> None:
         })
         return
 
-    # Skip disconnected players when advancing drawer
+    # Skip disconnected or spectator players when advancing drawer
     attempts = 0
     while attempts < len(room.players):
         current_drawer = room.players[room.drawer_index]
-        if current_drawer.is_connected:
+        if current_drawer.is_connected and not getattr(current_drawer, "is_spectator", False):
             break
         # Skip this player, advance to next
         room.drawer_index += 1
@@ -848,7 +866,7 @@ async def advance_turn_or_round(room: Room, room_manager) -> None:
                 return
         attempts += 1
     else:
-        # No connected players found — end game
+        # No connected active players found — end game
         room.state = RoomState.GAME_OVER
         payload = build_game_over_payload(room)
         logger.info("[game] game_over emitted room=%s reason=no_connected_players", room.code)

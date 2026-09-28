@@ -221,6 +221,13 @@ export default function Game() {
       <div className="game-page" data-testid="game-page">
         {reconnectBanner}
 
+        {gameState.isSpectator && (
+          <div className="spectator-banner" data-testid="spectator-banner">
+            <span className="spectator-banner-icon">👀</span>
+            <span>You are spectating this match live. Guesses will appear as spectator chat.</span>
+          </div>
+        )}
+
         {/* Round and turn indicators */}
         <div className="game-header" data-testid="game-header">
           <span className="round-indicator" data-testid="round-indicator">

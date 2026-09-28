@@ -366,7 +366,8 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             name = payload.get("name", "")
             rc = payload.get("room_code", room_code) or room_code
             avatar = payload.get("avatar")
-            result = await room_manager.join_room(name, rc, transport, avatar=avatar)
+            as_spectator = payload.get("as_spectator", False) if isinstance(payload, dict) else False
+            result = await room_manager.join_room(name, rc, transport, avatar=avatar, as_spectator=as_spectator)
             await transport.send_json(result)
             if _TRACE_ENABLED:
                 logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type") if isinstance(result, dict) else None)

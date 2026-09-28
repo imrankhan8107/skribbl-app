@@ -42,6 +42,7 @@ export default function PlayerList({
         const classes = [
           "player-item",
           player.isHost ? "player-host" : "",
+          player.isSpectator ? "player-spectator" : "",
           !player.isConnected ? "player-disconnected" : "",
           player.hasGuessed ? "player-guessed" : "",
         ]
@@ -61,6 +62,12 @@ export default function PlayerList({
             <span className="player-name">
               {player.name}
               {player.isHost && <span className="host-badge"> (Host)</span>}
+              {player.isSpectator && (
+                <span className="spectator-badge" data-testid="spectator-badge" title="Spectating">
+                  {" "}
+                  👀 Spectating
+                </span>
+              )}
               {isDrawing && (
                 <span className="player-drawing-icon" title="Drawing now">
                   ✏️
@@ -131,7 +138,7 @@ export default function PlayerList({
                 </span>
               )}
             </span>
-            {isHost && player.id !== localPlayerId && onTransferHost && (
+            {isHost && player.id !== localPlayerId && !player.isSpectator && onTransferHost && (
               <button
                 type="button"
                 className="transfer-host-btn"
@@ -153,7 +160,7 @@ export default function PlayerList({
               </button>
             )}
             <span className="player-score" data-testid="player-score">
-              {player.score}
+              {player.isSpectator ? "👀" : player.score}
             </span>
           </li>
         );

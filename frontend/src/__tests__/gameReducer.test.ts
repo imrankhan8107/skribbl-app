@@ -12,6 +12,7 @@ const initialState: GameState = {
   localPlayerId: null,
   isHost: false,
   isDrawer: false,
+  isSpectator: false,
   players: [],
   config: { numRounds: 3, turnDuration: 80, maxPlayers: 8 },
   hint: [],
@@ -75,6 +76,31 @@ describe("gameReducer", () => {
       const next = gameReducer(initialState, action);
       expect(next.isHost).toBe(true);
     });
+
+    it("sets isSpectator to true and preserves mid-game phase when joining in-progress match", () => {
+      const action = {
+        type: "ROOM_JOINED",
+        payload: {
+          roomCode: "XYZ789",
+          playerId: "player-spec",
+          isHost: false,
+          is_spectator: true,
+          state: "playing",
+          current_round: 2,
+          drawer_id: "player-1",
+          hint: ["c", "_", "t"],
+          duration: 45,
+        },
+      } as unknown as Action;
+      const next = gameReducer(initialState, action);
+      expect(next.isSpectator).toBe(true);
+      expect(next.phase).toBe("playing");
+      expect(next.isDrawer).toBe(false);
+      expect(next.currentRound).toBe(2);
+      expect(next.drawerId).toBe("player-1");
+      expect(next.hint).toEqual(["c", "_", "t"]);
+      expect(next.timerSeconds).toBe(45);
+    });
   });
 
   describe("PLAYER_LIST", () => {
@@ -88,6 +114,7 @@ describe("gameReducer", () => {
           hasGuessed: false,
           isConnected: true,
           isReady: false,
+          isSpectator: false,
         },
         {
           id: "p2",
@@ -97,6 +124,7 @@ describe("gameReducer", () => {
           hasGuessed: true,
           isConnected: true,
           isReady: false,
+          isSpectator: false,
         },
       ];
       const action: Action = { type: "PLAYER_LIST", payload: { players } };

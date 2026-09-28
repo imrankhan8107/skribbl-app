@@ -15,6 +15,7 @@ export interface PlayerInfo {
   isFirstGuesser?: boolean;
   sessionWins?: number;
   sessionScore?: number;
+  isSpectator?: boolean;
 }
 
 export interface MvpAward {
@@ -80,6 +81,7 @@ export interface GameState {
   localPlayerId: string | null;
   isHost: boolean;
   isDrawer: boolean;
+  isSpectator: boolean;
   players: PlayerInfo[];
   config: GameConfig;
   hint: string[]; // array of chars; '_' for hidden

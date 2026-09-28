@@ -38,6 +38,7 @@ class Player:
     correct_guesses_count: int = 0               # Total correct guesses in current game
     fastest_guess_time: Optional[float] = None   # Lowest elapsed seconds for a correct guess
     drawer_points_earned: int = 0                # Total points earned while drawing
+    is_spectator: bool = False                   # True if watching without playing
 
 
 @dataclass

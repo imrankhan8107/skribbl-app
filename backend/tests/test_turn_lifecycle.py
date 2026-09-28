@@ -517,4 +517,58 @@ class TestGameOverStatsAndMvp:
         assert payload["session_stats"][0]["id"] == p0.id
         assert payload["session_stats"][0]["session_wins"] == 1
 
+    def test_build_game_over_payload_excludes_spectators(self):
+        from backend.game_engine import build_game_over_payload
+        from backend.models import Player
+        room = _make_room(num_players=2)
+        spec = Player(id="spec-1", name="SpectatorSam", score=0, is_spectator=True)
+        room.add_player(spec)
+
+        room.players[0].score = 150
+        room.players[1].score = 80
+
+        payload = build_game_over_payload(room)
+        # Scores list only includes active players (length 2)
+        assert len(payload["scores"]) == 2
+        assert all(s["id"] != "spec-1" for s in payload["scores"])
+        assert all(s["id"] != "spec-1" for s in payload["session_stats"])
+
+
+class TestSpectatorInGame:
+    """Tests for spectator interactions during active turns."""
+
+    @pytest.mark.asyncio
+    async def test_spectator_guess_broadcasts_as_chat_and_does_not_score(self):
+        from backend.game_engine import handle_guess
+        from backend.models import Player, TurnState
+        room = _make_room(num_players=2)
+        spec = Player(id="spec-1", name="Sam", score=0, is_spectator=True)
+        room.add_player(spec)
+
+        room.state = RoomState.PLAYING
+        room.turn = TurnState(
+            drawer_id="player-0",
+            word="elephant",
+            hint=["_"] * 8,
+            start_time=time.time(),
+            word_choices=["elephant", "dog", "cat"],
+        )
+        room_manager = _make_room_manager()
+
+        # Spectator guesses the exact word
+        await handle_guess(room, "spec-1", "elephant", room_manager)
+
+        # Spectator didn't get has_guessed or score
+        assert spec.has_guessed is False
+        assert spec.score == 0
+        assert "spec-1" not in room.turn.guess_order
+
+        # Broadcast was chat_message with masked secret word
+        chat_calls = [c for c in room_manager.broadcast.call_args_list if c[0][1]["type"] == "chat_message"]
+        assert len(chat_calls) >= 1
+        chat_payload = chat_calls[-1][0][1]["payload"]
+        assert "Sam (Spectator)" in chat_payload["player_name"]
+        assert "***" in chat_payload["text"]
+
+
 

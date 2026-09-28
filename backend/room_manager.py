@@ -100,6 +100,7 @@ class RoomManager:
             "has_guessed": player.has_guessed,
             "is_connected": player.is_connected,
             "is_ready": player.is_ready,
+            "is_spectator": getattr(player, "is_spectator", False),
         }
         if is_host is not None:
             data["is_host"] = is_host
@@ -322,7 +323,14 @@ class RoomManager:
             },
         }
 
-    async def join_room(self, name: str, room_code: str, websocket, avatar: Optional[str] = None) -> dict:
+    async def join_room(
+        self,
+        name: str,
+        room_code: str,
+        websocket,
+        avatar: Optional[str] = None,
+        as_spectator: bool = False,
+    ) -> dict:
         """Join an existing room.
 
         If the room exists locally and is owned by this worker, joins directly.
@@ -336,6 +344,7 @@ class RoomManager:
             room_code: The room code to join.
             websocket: WebSocket connection for the player.
             avatar: Optional avatar identifier for the joining player.
+            as_spectator: True if joining as a spectator.
 
         Returns:
             A dict payload for the `room_joined` message, or an error payload.
@@ -352,7 +361,7 @@ class RoomManager:
         room = self.rooms.get(room_code)
         if room is not None and not room.is_proxy:
             # Room is truly owned by this worker — join directly
-            return await self._join_room_local(room, room_code, name, websocket, avatar=avatar)
+            return await self._join_room_local(room, room_code, name, websocket, avatar=avatar, as_spectator=as_spectator)
 
         # Room is either not local or is a proxy (owned by another worker).
         # In both cases, route via RPC to the owning worker.
@@ -366,7 +375,7 @@ class RoomManager:
                 await asyncio.sleep(0.3)
             if owner_worker is not None:
                 return await self._join_room_remote(
-                    room_code, name, websocket, owner_worker, avatar=avatar
+                    room_code, name, websocket, owner_worker, avatar=avatar, as_spectator=as_spectator
                 )
 
         # Check if a snapshot exists from a drained or restarted worker
@@ -381,17 +390,24 @@ class RoomManager:
                     redis_pubsub.subscribe_room(room_code),
                     return_exceptions=True,
                 )
-                return await self._join_room_local(room, room_code, name, websocket, avatar=avatar)
+                return await self._join_room_local(room, room_code, name, websocket, avatar=avatar, as_spectator=as_spectator)
 
         return {
             "type": "error",
             "payload": {"code": "ROOM_NOT_FOUND", "message": "Room not found"},
         }
 
-    async def _join_room_local(self, room, room_code: str, name: str, websocket, avatar: Optional[str] = None) -> dict:
+    async def _join_room_local(
+        self,
+        room,
+        room_code: str,
+        name: str,
+        websocket,
+        avatar: Optional[str] = None,
+        as_spectator: bool = False,
+    ) -> dict:
         """Join a room that exists on this worker."""
-        # Check room is in lobby state
-        if room.state != RoomState.LOBBY:
+        if room.state != RoomState.LOBBY and not as_spectator:
             return {
                 "type": "error",
                 "payload": {
@@ -400,17 +416,27 @@ class RoomManager:
                 },
             }
 
-        # Check capacity — use the lower of config max_players and hard cap
-        effective_max = min(room.config.max_players, MAX_PLAYERS_HARD_CAP)
-        if len(room.players) >= effective_max:
+        is_spectator = as_spectator
+
+        # Active player limit & spectator limit
+        active_count = sum(1 for p in room.players if not getattr(p, "is_spectator", False))
+        spectator_count = sum(1 for p in room.players if getattr(p, "is_spectator", False))
+
+        if not is_spectator and active_count >= min(room.config.max_players, MAX_PLAYERS_HARD_CAP):
             return {
                 "type": "error",
                 "payload": {"code": "ROOM_FULL", "message": "Room is full"},
             }
 
+        if is_spectator and spectator_count >= 50:
+            return {
+                "type": "error",
+                "payload": {"code": "ROOM_FULL", "message": "Spectator capacity reached"},
+            }
+
         # Create the new player
         player_id = str(uuid4())
-        player = Player(id=player_id, name=name, websocket=websocket, avatar=avatar)
+        player = Player(id=player_id, name=name, websocket=websocket, avatar=avatar, is_spectator=is_spectator)
         room.add_player(player)
         self._player_to_room[player_id] = room_code
 
@@ -434,17 +460,39 @@ class RoomManager:
             },
         )
 
+        resp_payload = {
+            "room_code": room_code,
+            "player_id": player_id,
+            "players": [self._serialize_player(p) for p in room.players],
+            "config": self._serialize_config(room.config),
+            "state": room.state.value,
+            "is_spectator": is_spectator,
+            "current_round": room.current_round,
+            "host_id": room.host_id,
+            "drawer_id": room.turn.drawer_id if room.turn else None,
+            "hint": room.turn.hint if room.turn else [],
+        }
+        if room.turn is not None and room.state == RoomState.PLAYING:
+            elapsed = time.time() - room.turn.start_time
+            remaining = max(0, int(room.config.turn_duration - elapsed))
+            resp_payload["duration"] = remaining
+            if getattr(room.turn, "theme", None):
+                resp_payload["theme"] = room.turn.theme
+
         return {
             "type": "room_joined",
-            "payload": {
-                "room_code": room_code,
-                "player_id": player_id,
-                "players": [self._serialize_player(p) for p in room.players],
-                "config": self._serialize_config(room.config),
-            },
+            "payload": resp_payload,
         }
 
-    async def _join_room_remote(self, room_code: str, name: str, websocket, owner_worker: str, avatar: Optional[str] = None) -> dict:
+    async def _join_room_remote(
+        self,
+        room_code: str,
+        name: str,
+        websocket,
+        owner_worker: str,
+        avatar: Optional[str] = None,
+        as_spectator: bool = False,
+    ) -> dict:
         """Join a room that exists on another worker via Redis RPC.
 
         The player's WebSocket lives on this worker. We register the player
@@ -469,6 +517,7 @@ class RoomManager:
             "player_id": player_id,
             "player_name": name,
             "avatar": avatar,
+            "as_spectator": as_spectator,
         })
 
         # Wait for response from the owning worker
@@ -598,17 +647,17 @@ class RoomManager:
                     from backend.models import TurnEndReason
                     await game_engine.end_turn(room, TurnEndReason.DRAWER_DISCONNECTED, self)
             else:
-                # Guesser disconnected — check if < 2 connected players remain
-                connected_count = sum(1 for p in room.players if p.is_connected)
-                if connected_count < 2:
+                # Guesser or spectator disconnected — check if < 2 connected active players remain
+                connected_active_count = sum(1 for p in room.players if p.is_connected and not getattr(p, "is_spectator", False))
+                if connected_active_count < 2:
                     await self._end_game_insufficient_players(room)
                 else:
-                    # Check if all remaining connected guessers have guessed
+                    # Check if all remaining connected active guessers have guessed
                     if room.turn is not None and room.state == RoomState.PLAYING:
                         all_guessed = all(
                             p.has_guessed
                             for p in room.players
-                            if p.id != room.turn.drawer_id and p.is_connected
+                            if p.id != room.turn.drawer_id and p.is_connected and not getattr(p, "is_spectator", False)
                         )
                         if all_guessed:
                             if game_engine is not None:
@@ -1014,6 +1063,7 @@ class RoomManager:
             room_code = rpc.get("room_code")
             player_id = rpc.get("player_id")
             player_name = rpc.get("player_name")
+            as_spectator = rpc.get("as_spectator", False)
 
             room = self.rooms.get(room_code)
             if room is None:
@@ -1021,50 +1071,73 @@ class RoomManager:
                     "type": "error",
                     "payload": {"code": "ROOM_NOT_FOUND", "message": "Room not found on owner"},
                 }
-            elif room.state != RoomState.LOBBY:
+            elif room.state != RoomState.LOBBY and not as_spectator:
                 response = {
                     "type": "error",
                     "payload": {"code": "ROOM_IN_PROGRESS", "message": "Room is not accepting new players"},
                 }
-            elif len(room.players) >= min(room.config.max_players, MAX_PLAYERS_HARD_CAP):
-                response = {
-                    "type": "error",
-                    "payload": {"code": "ROOM_FULL", "message": "Room is full"},
-                }
             else:
-                # Add the player to the room (no WebSocket — it's on the other worker)
-                avatar = rpc.get("avatar")
-                player = Player(id=player_id, name=player_name, websocket=None, avatar=avatar)
-                player.is_connected = True  # Logically connected (via remote worker)
-                room.add_player(player)
-                self._player_to_room[player_id] = room_code
+                is_spectator = as_spectator
+                active_count = sum(1 for p in room.players if not getattr(p, "is_spectator", False))
+                spectator_count = sum(1 for p in room.players if getattr(p, "is_spectator", False))
 
-                # Update room info in Redis
-                await redis_pubsub.set_room_info(room_code, {
-                    "state": room.state.value,
-                    "player_count": len(room.players),
-                    "config": self._serialize_config(room.config),
-                    "host_id": room.host_id,
-                })
+                if not is_spectator and active_count >= min(room.config.max_players, MAX_PLAYERS_HARD_CAP):
+                    response = {
+                        "type": "error",
+                        "payload": {"code": "ROOM_FULL", "message": "Room is full"},
+                    }
+                elif is_spectator and spectator_count >= 50:
+                    response = {
+                        "type": "error",
+                        "payload": {"code": "ROOM_FULL", "message": "Spectator capacity reached"},
+                    }
+                else:
+                    # Add the player to the room (no WebSocket — it's on the other worker)
+                    avatar = rpc.get("avatar")
+                    player = Player(id=player_id, name=player_name, websocket=None, avatar=avatar, is_spectator=is_spectator)
+                    player.is_connected = True  # Logically connected (via remote worker)
+                    room.add_player(player)
+                    self._player_to_room[player_id] = room_code
 
-                # Broadcast player_list to local players
-                await self.broadcast(room_code, {
-                    "type": "player_list",
-                    "payload": {
-                        "players": [self._serialize_player(p) for p in room.players]
-                    },
-                })
+                    # Update room info in Redis
+                    await redis_pubsub.set_room_info(room_code, {
+                        "state": room.state.value,
+                        "player_count": len(room.players),
+                        "config": self._serialize_config(room.config),
+                        "host_id": room.host_id,
+                    })
 
-                response = {
-                    "type": "room_joined",
-                    "payload": {
+                    # Broadcast player_list to local players
+                    await self.broadcast(room_code, {
+                        "type": "player_list",
+                        "payload": {
+                            "players": [self._serialize_player(p) for p in room.players]
+                        },
+                    })
+
+                    resp_payload = {
                         "room_code": room_code,
                         "player_id": player_id,
                         "players": [self._serialize_player(p) for p in room.players],
                         "config": self._serialize_config(room.config),
+                        "state": room.state.value,
+                        "is_spectator": is_spectator,
+                        "current_round": room.current_round,
                         "host_id": room.host_id,
-                    },
-                }
+                        "drawer_id": room.turn.drawer_id if room.turn else None,
+                        "hint": room.turn.hint if room.turn else [],
+                    }
+                    if room.turn is not None and room.state == RoomState.PLAYING:
+                        elapsed = time.time() - room.turn.start_time
+                        remaining = max(0, int(room.config.turn_duration - elapsed))
+                        resp_payload["duration"] = remaining
+                        if getattr(room.turn, "theme", None):
+                            resp_payload["theme"] = room.turn.theme
+
+                    response = {
+                        "type": "room_joined",
+                        "payload": resp_payload,
+                    }
 
             # Send response back via Redis
             if request_id:
@@ -1487,6 +1560,13 @@ class RoomManager:
                 "payload": {"code": "PLAYER_DISCONNECTED", "message": "Cannot transfer host to a disconnected player"},
             }
 
+        # Target cannot be a spectator
+        if getattr(target, "is_spectator", False):
+            return {
+                "type": "error",
+                "payload": {"code": "INVALID_TARGET", "message": "Cannot transfer host to a spectator"},
+            }
+
         # Update host
         old_host = room.get_player(host_player_id)
         old_host_name = old_host.name if old_host else "Host"
@@ -1824,11 +1904,12 @@ class RoomManager:
                 "payload": {"code": "GAME_NOT_ACTIVE", "message": "Game can only be started from the lobby"},
             }
 
-        # Check that there are at least 2 players
-        if len(room.players) < 2:
+        # Check that there are at least 2 active players
+        active_players = [p for p in room.players if not getattr(p, "is_spectator", False)]
+        if len(active_players) < 2:
             return {
                 "type": "error",
-                "payload": {"code": "INSUFFICIENT_PLAYERS", "message": "At least 2 players are required to start the game"},
+                "payload": {"code": "INSUFFICIENT_PLAYERS", "message": "At least 2 active players are required to start the game"},
             }
 
         # Reset all is_ready flags when game starts
@@ -1838,6 +1919,12 @@ class RoomManager:
         # Transition room state to WORD_SELECTION
         room.state = RoomState.WORD_SELECTION
         room.current_round = 1
+
+        # Set initial drawer_index to first connected active player
+        for idx, p in enumerate(room.players):
+            if p.is_connected and not getattr(p, "is_spectator", False):
+                room.drawer_index = idx
+                break
 
         # Build game_started payload
         payload = {

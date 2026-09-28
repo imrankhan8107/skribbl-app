@@ -60,6 +60,7 @@ const defaultGameState: GameState = {
   localPlayerId: "player-1",
   isHost: false,
   isDrawer: true,
+  isSpectator: false,
   players: [],
   config: { numRounds: 3, turnDuration: 80, maxPlayers: 8 },
   hint: [],

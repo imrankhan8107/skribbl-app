@@ -17,6 +17,7 @@ const defaultGameState: GameState = {
   localPlayerId: null,
   isHost: false,
   isDrawer: false,
+  isSpectator: false,
   players: [],
   config: { numRounds: 3, turnDuration: 80, maxPlayers: 8 },
   hint: [],
@@ -124,6 +125,31 @@ describe("Landing", () => {
       name: "Bob",
       room_code: "ABC123",
       avatar: expect.any(String),
+      as_spectator: false,
+    });
+  });
+
+  it("sends as_spectator: true when Join as Spectator is checked", async () => {
+    const user = userEvent.setup();
+    const { send } = renderLanding();
+
+    const nameInput = screen.getByLabelText(/player name/i);
+    await user.type(nameInput, "Bob");
+
+    const codeInput = screen.getByLabelText(/room code/i);
+    await user.type(codeInput, "ABC123");
+
+    const spectatorCheckbox = screen.getByLabelText(/join as spectator/i);
+    await user.click(spectatorCheckbox);
+
+    const joinBtn = screen.getByRole("button", { name: /join room/i });
+    await user.click(joinBtn);
+
+    expect(send).toHaveBeenCalledWith("join_room", {
+      name: "Bob",
+      room_code: "ABC123",
+      avatar: expect.any(String),
+      as_spectator: true,
     });
   });
 

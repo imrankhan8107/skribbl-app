@@ -241,9 +241,10 @@ export default function Lobby() {
 
   const localPlayer = gameState.players.find((p) => p.id === gameState.localPlayerId);
   const isReady = localPlayer?.isReady ?? false;
-  const readyCount = gameState.players.filter((p) => p.isReady).length;
-  const totalCount = gameState.players.length;
-  const canStart = gameState.isHost && gameState.players.length >= 2;
+  const activePlayers = gameState.players.filter((p) => !p.isSpectator);
+  const readyCount = activePlayers.filter((p) => p.isReady).length;
+  const totalCount = activePlayers.length;
+  const canStart = gameState.isHost && activePlayers.length >= 2;
 
   return (
     <>
@@ -411,14 +412,27 @@ export default function Lobby() {
               </fieldset>
             </div>
 
-            <div className="lobby-actions">
-              <button
-                className={`ready-btn ${isReady ? "ready-btn-active" : ""}`}
-                onClick={handleToggleReady}
-                data-testid="ready-btn"
+            {gameState.isSpectator && (
+              <div
+                className="spectator-banner"
+                data-testid="spectator-banner"
+                style={{ margin: "1rem 0" }}
               >
-                {isReady ? "Ready ✓" : "Not Ready"}
-              </button>
+                <span className="spectator-banner-icon">👀</span>
+                <span>You joined as a Spectator. You will watch once the game begins.</span>
+              </div>
+            )}
+
+            <div className="lobby-actions">
+              {!gameState.isSpectator && (
+                <button
+                  className={`ready-btn ${isReady ? "ready-btn-active" : ""}`}
+                  onClick={handleToggleReady}
+                  data-testid="ready-btn"
+                >
+                  {isReady ? "Ready ✓" : "Not Ready"}
+                </button>
+              )}
               <button className="start-game-btn" onClick={handleStartGame} disabled={!canStart}>
                 Start Game ({readyCount}/{totalCount} Ready)
               </button>
