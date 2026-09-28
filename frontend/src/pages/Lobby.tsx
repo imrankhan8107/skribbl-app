@@ -4,6 +4,7 @@ import { useWebSocket } from "../hooks/useWebSocket";
 import PlayerList from "../components/PlayerList";
 import Chat from "../components/Chat";
 import { HeaderBar } from "../components/HeaderBar";
+import QRCodeModal from "../components/QRCodeModal";
 import { copyToClipboard } from "../utils/clipboard";
 
 export default function Lobby() {
@@ -11,6 +12,8 @@ export default function Lobby() {
   const { roomCode: routeRoomCode } = useParams<{ roomCode: string }>();
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
+  const [snackbarText, setSnackbarText] = useState("Room code copied to clipboard!");
+  const [showQRModal, setShowQRModal] = useState(false);
 
   // Fallback config in case state is not yet populated
   const config = gameState.config ?? { numRounds: 3, turnDuration: 80, maxPlayers: 8 };
@@ -73,9 +76,33 @@ export default function Lobby() {
     if (gameState.roomCode) {
       const ok = await copyToClipboard(gameState.roomCode);
       if (ok) {
+        setSnackbarText("Room code copied to clipboard!");
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       }
+    }
+  };
+
+  const handleShare = async () => {
+    if (!gameState.roomCode) return;
+    const inviteUrl = `${window.location.origin}/?room=${gameState.roomCode}`;
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      try {
+        await navigator.share({
+          title: "Join my Skribbl game!",
+          text: `Join my Skribbl game! Room Code: ${gameState.roomCode}`,
+          url: inviteUrl,
+        });
+        return;
+      } catch (err: unknown) {
+        if ((err as Error)?.name === "AbortError") return;
+      }
+    }
+    const ok = await copyToClipboard(inviteUrl);
+    if (ok) {
+      setSnackbarText("Invite link copied to clipboard!");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -121,20 +148,41 @@ export default function Lobby() {
       <div className="lobby-page">
         <div className="lobby-header">
           <h1>Lobby</h1>
-          <button
-            className={`room-code-btn ${copied ? "copied" : ""}`}
-            onClick={handleCopyCode}
-            data-testid="room-code"
-            title="Click to copy room code"
-          >
-            {gameState.roomCode} {copied ? "✓ Copied!" : "📋"}
-          </button>
+          <div className="lobby-header-actions">
+            <button
+              className={`room-code-btn ${copied && snackbarText.includes("Room code") ? "copied" : ""}`}
+              onClick={handleCopyCode}
+              data-testid="room-code"
+              title="Click to copy room code"
+            >
+              {gameState.roomCode}{" "}
+              {copied && snackbarText.includes("Room code") ? "✓ Copied!" : "📋"}
+            </button>
+            <button
+              type="button"
+              className="lobby-qr-btn"
+              onClick={() => setShowQRModal(true)}
+              data-testid="lobby-qr-btn"
+              title="Show QR code for mobile scanning"
+            >
+              📱 QR Code
+            </button>
+            <button
+              type="button"
+              className="lobby-share-btn"
+              onClick={handleShare}
+              data-testid="lobby-share-btn"
+              title="Share invite link"
+            >
+              📤 Share
+            </button>
+          </div>
         </div>
 
         {/* Snackbar for copy feedback */}
         {copied && (
           <div className="snackbar" data-testid="snackbar">
-            Room code copied to clipboard!
+            {snackbarText}
           </div>
         )}
 
@@ -211,6 +259,9 @@ export default function Lobby() {
           </div>
         </div>
       </div>
+      {showQRModal && gameState.roomCode && (
+        <QRCodeModal roomCode={gameState.roomCode} onClose={() => setShowQRModal(false)} />
+      )}
     </>
   );
 }

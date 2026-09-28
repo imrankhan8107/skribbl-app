@@ -218,4 +218,53 @@ describe("Lobby", () => {
     expect(avatars[0]).toHaveTextContent("🦁");
     expect(avatars[1]).toHaveTextContent("🐼");
   });
+
+  it("renders QR Code and Share buttons in lobby header", () => {
+    renderLobby();
+    expect(screen.getByTestId("lobby-qr-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("lobby-share-btn")).toBeInTheDocument();
+  });
+
+  it("opens QR Code modal, renders SVG QR code and details, and closes on clicking close", async () => {
+    const user = userEvent.setup();
+    renderLobby();
+
+    const qrBtn = screen.getByTestId("lobby-qr-btn");
+    await user.click(qrBtn);
+
+    // Modal should be open
+    const modal = screen.getByTestId("qr-modal");
+    expect(modal).toBeInTheDocument();
+    expect(screen.getByTestId("qr-svg")).toBeInTheDocument();
+    expect(screen.getByTestId("qr-room-code")).toHaveTextContent("ABC123");
+    expect(screen.getByTestId("qr-copy-link-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("qr-copy-code-btn")).toBeInTheDocument();
+
+    // Close modal
+    const closeBtn = screen.getByTestId("qr-modal-close");
+    await user.click(closeBtn);
+    expect(screen.queryByTestId("qr-modal")).not.toBeInTheDocument();
+  });
+
+  it("calls navigator.share when available upon clicking Share button", async () => {
+    const user = userEvent.setup();
+    const shareMock = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "share", {
+      value: shareMock,
+      configurable: true,
+      writable: true,
+    });
+
+    renderLobby();
+    const shareBtn = screen.getByTestId("lobby-share-btn");
+    await user.click(shareBtn);
+
+    expect(shareMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Join my Skribbl game!",
+        text: expect.stringContaining("ABC123"),
+        url: expect.stringContaining("room=ABC123"),
+      })
+    );
+  });
 });
