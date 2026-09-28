@@ -511,6 +511,21 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                         },
                     })
 
+        elif message_type == "typing":
+            room = room_manager._find_room_by_player(player_id)
+            if room is not None:
+                player = room.get_player(player_id)
+                if player:
+                    is_typing = bool(payload.get("is_typing", False))
+                    await room_manager.broadcast(room.code, {
+                        "type": "typing",
+                        "payload": {
+                            "player_id": player_id,
+                            "player_name": player.name,
+                            "is_typing": is_typing,
+                        },
+                    })
+
         elif message_type == "toggle_ready":
             result = await room_manager.toggle_ready(player_id)
             if result.get("type") == "error":

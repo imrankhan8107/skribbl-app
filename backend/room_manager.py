@@ -1151,6 +1151,17 @@ class RoomManager:
                     },
                 })
 
+            elif msg_type == "typing":
+                is_typing = bool(payload.get("is_typing", False))
+                await self.broadcast(room.code, {
+                    "type": "typing",
+                    "payload": {
+                        "player_id": player_id,
+                        "player_name": player.name if player else "Unknown",
+                        "is_typing": is_typing,
+                    },
+                })
+
             elif msg_type == "leave_room":
                 await self.remove_player(player_id)
 

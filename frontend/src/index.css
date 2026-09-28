@@ -2454,3 +2454,75 @@ ol {
 .chat-correct-guess {
   animation: correctPulse 0.4s ease-out;
 }
+
+/* ============================================================
+   Streak Badges, First Guesser & Typing Indicators
+   ============================================================ */
+.player-streak-badge {
+  display: inline-flex;
+  align-items: center;
+  background: linear-gradient(135deg, #ff9f43, #ee5253);
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 0.72rem;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  margin-left: 6px;
+  box-shadow: 0 2px 6px rgba(238, 82, 83, 0.4);
+  animation: pulseFire 1.2s infinite alternate;
+  vertical-align: middle;
+}
+
+@keyframes pulseFire {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 2px 6px rgba(238, 82, 83, 0.4);
+  }
+  100% {
+    transform: scale(1.08);
+    box-shadow: 0 4px 12px rgba(238, 82, 83, 0.65);
+  }
+}
+
+.player-first-badge {
+  display: inline-flex;
+  align-items: center;
+  background: linear-gradient(135deg, #feca57, #ff9f43);
+  color: #1e293b;
+  font-weight: 800;
+  font-size: 0.72rem;
+  padding: 2px 6px;
+  border-radius: 9999px;
+  margin-left: 6px;
+  box-shadow: 0 2px 6px rgba(254, 202, 87, 0.45);
+  vertical-align: middle;
+}
+
+.player-typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #64748b;
+  margin-left: 6px;
+  animation: bouncePencil 1.2s infinite ease-in-out;
+  vertical-align: middle;
+}
+
+.chat-typing-status {
+  padding: 5px 12px;
+  font-size: 0.8rem;
+  color: #64748b;
+  font-style: italic;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.typing-dot-pulse {
+  animation: bouncePencil 1.2s infinite ease-in-out;
+  display: inline-block;
+}

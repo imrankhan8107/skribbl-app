@@ -34,11 +34,31 @@ export default function Chat() {
   }, [gameState.chatMessages]);
 
   const isInputDisabled = gameState.hasGuessed;
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setText(e.target.value);
+    if (gameState.phase === "playing" && !gameState.isDrawer && !gameState.hasGuessed) {
+      send("typing", { is_typing: true });
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = setTimeout(() => {
+        send("typing", { is_typing: false });
+      }, 1500);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = text.trim();
     if (!trimmed) return;
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    if (gameState.phase === "playing" && !gameState.isDrawer && !gameState.hasGuessed) {
+      send("typing", { is_typing: false });
+    }
 
     if (gameState.phase === "lobby") {
       // In lobby, all messages are just chat
@@ -102,11 +122,28 @@ export default function Chat() {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Typing indicator */}
+      {(() => {
+        const typingList = Object.entries(gameState.typingUsers || {})
+          .filter(([id, isTyping]) => isTyping && id !== gameState.localPlayerId)
+          .map(([id]) => gameState.players.find((p) => p.id === id)?.name || "Someone");
+        if (typingList.length === 0) return null;
+        const statusText =
+          typingList.length === 1
+            ? `${typingList[0]} is guessing...`
+            : `${typingList.slice(0, 2).join(", ")} are guessing...`;
+        return (
+          <div className="chat-typing-status" data-testid="chat-typing-status">
+            <span className="typing-dot-pulse">✏️</span> {statusText}
+          </div>
+        );
+      })()}
+
       <form className="chat-input-form" onSubmit={handleSubmit} data-testid="chat-form">
         <input
           type="text"
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={handleInputChange}
           disabled={isInputDisabled}
           placeholder={
             gameState.phase === "lobby"

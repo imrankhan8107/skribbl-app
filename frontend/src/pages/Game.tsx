@@ -257,7 +257,11 @@ export default function Game() {
         <div className="game-content" data-testid="game-content">
           <div className="game-left">
             {/* Player list with live scores and avatar */}
-            <PlayerList players={gameState.players} drawerId={gameState.drawerId} />
+            <PlayerList
+              players={gameState.players}
+              drawerId={gameState.drawerId}
+              typingUsers={gameState.typingUsers}
+            />
           </div>
           <div className="game-center">
             <Canvas

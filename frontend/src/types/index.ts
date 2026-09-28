@@ -11,6 +11,8 @@ export interface PlayerInfo {
   isConnected: boolean;
   isReady: boolean;
   avatar?: string;
+  streak?: number;
+  isFirstGuesser?: boolean;
 }
 
 export interface GameConfig {
@@ -68,6 +70,7 @@ export interface GameState {
   waitingForReconnect: boolean;
   reconnectCountdown: number;
   artworkGallery?: RoundArtwork[];
+  typingUsers?: Record<string, boolean>;
 }
 
 export interface ChatMessage {
@@ -140,5 +143,6 @@ export type Action =
   | { type: "LEFT_ROOM"; payload: Record<string, never> }
   | { type: "REMATCH_STARTED"; payload: Record<string, unknown> }
   | { type: "SAVE_ARTWORK"; payload: RoundArtwork }
+  | { type: "TYPING"; payload: { playerId: string; playerName: string; isTyping: boolean } }
   | { type: "TICK" }
   | { type: "RESET" };

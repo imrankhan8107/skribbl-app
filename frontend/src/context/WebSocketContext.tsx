@@ -31,6 +31,7 @@ const initialGameState: GameState = {
   waitingForReconnect: false,
   reconnectCountdown: 0,
   artworkGallery: [],
+  typingUsers: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -113,9 +114,15 @@ export function gameReducer(state: GameState, action: Action): GameState {
 
     case "TURN_STARTED": {
       const p = action.payload as Record<string, unknown>;
+      const freshPlayers = state.players.map((pl) => ({
+        ...pl,
+        hasGuessed: false,
+        isFirstGuesser: false,
+      }));
       return {
         ...state,
         phase: "playing",
+        players: freshPlayers,
         hint: action.payload.hint,
         timerSeconds: action.payload.duration,
         currentRound: action.payload.round,
@@ -125,6 +132,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
         wordChoices: [],
         wordPacks: undefined,
         currentTheme: (p.theme as GameState["currentTheme"]) ?? null,
+        typingUsers: {},
         // Drawer keeps their currentWord, guessers clear it
         currentWord: action.payload.drawerId === state.localPlayerId ? state.currentWord : null,
       };
@@ -137,18 +145,22 @@ export function gameReducer(state: GameState, action: Action): GameState {
       };
 
     case "TURN_ENDED": {
-      // Apply score deltas from the turn to players
+      // Apply score deltas from the turn to players, and reset streak for anyone who didn't guess
       const scores = (action.payload as Record<string, unknown>).scores as
         Record<string, number> | undefined;
-      let updatedPlayers = state.players;
-      if (scores && typeof scores === "object") {
-        updatedPlayers = state.players.map((p) => {
-          const delta = scores[p.id];
-          return delta
-            ? { ...p, score: p.score + delta, hasGuessed: false }
-            : { ...p, hasGuessed: false };
-        });
-      }
+      const updatedPlayers = state.players.map((p) => {
+        const delta = scores && typeof scores === "object" ? scores[p.id] : undefined;
+        // Keep streak if they guessed, otherwise reset to 0 (unless they were the drawer)
+        const wasDrawer = p.id === state.drawerId;
+        const newStreak = p.hasGuessed || wasDrawer ? p.streak : 0;
+        return {
+          ...p,
+          score: delta ? p.score + delta : p.score,
+          hasGuessed: false,
+          isFirstGuesser: false,
+          streak: newStreak,
+        };
+      });
       return {
         ...state,
         players: updatedPlayers,
@@ -157,14 +169,39 @@ export function gameReducer(state: GameState, action: Action): GameState {
         currentWord: null,
         drawerId: null, // Reset — new drawer will be set by WORD_CHOICES or TURN_STARTED
         currentTheme: null,
+        typingUsers: {},
         // Transition back to word_selection for the next turn
         phase: "word_selection",
       };
     }
 
     case "GUESS_CORRECT": {
-      const playerName =
-        ((action.payload as Record<string, unknown>).playerName as string) ?? "Someone";
+      const p = action.payload as Record<string, unknown>;
+      const playerName = (p.playerName as string) ?? "Someone";
+      const playerId = p.playerId as string | undefined;
+
+      // Check if this is the first correct guess of this turn
+      const isFirst = !state.players.some((pl) => pl.hasGuessed);
+
+      const updatedPlayers = state.players.map((pl) => {
+        const matches = (playerId && pl.id === playerId) || pl.name === playerName;
+        if (matches) {
+          return {
+            ...pl,
+            hasGuessed: true,
+            isFirstGuesser: isFirst,
+            streak: (pl.streak || 0) + 1,
+          };
+        }
+        return pl;
+      });
+
+      // If local player guessed, mark local hasGuessed
+      const localMatches =
+        (playerId && state.localPlayerId === playerId) ||
+        (!playerId &&
+          state.players.find((pl) => pl.id === state.localPlayerId)?.name === playerName);
+
       // Add a correct guess notification to chat
       const guessMsg: ChatMessage = {
         id: String(Date.now()) + Math.random(),
@@ -175,6 +212,8 @@ export function gameReducer(state: GameState, action: Action): GameState {
       };
       return {
         ...state,
+        players: updatedPlayers,
+        hasGuessed: localMatches ? true : state.hasGuessed,
         chatMessages: [...state.chatMessages, guessMsg],
       };
     }
@@ -292,6 +331,15 @@ export function gameReducer(state: GameState, action: Action): GameState {
         artworkGallery: [...(state.artworkGallery ?? []), action.payload],
       };
 
+    case "TYPING":
+      return {
+        ...state,
+        typingUsers: {
+          ...(state.typingUsers || {}),
+          [action.payload.playerId]: action.payload.isTyping,
+        },
+      };
+
     case "TICK":
       return {
         ...state,
@@ -400,6 +448,7 @@ function mapServerTypeToActionType(serverType: string): Action["type"] | null {
     reconnected: "RECONNECTED",
     kicked: "KICKED",
     left_room: "LEFT_ROOM",
+    typing: "TYPING",
     error: "ERROR",
   };
   return mapping[serverType] ?? null;
@@ -583,6 +632,19 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
             type: "system",
           };
           dispatch({ type: "CHAT_MESSAGE", payload: reactionMsg } as unknown as Action);
+          return;
+        }
+
+        // Handle typing indicator messages
+        if (msg.type === "typing") {
+          dispatch({
+            type: "TYPING",
+            payload: {
+              playerId: msg.payload?.player_id,
+              playerName: msg.payload?.player_name,
+              isTyping: Boolean(msg.payload?.is_typing),
+            },
+          });
           return;
         }
 

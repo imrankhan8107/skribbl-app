@@ -110,7 +110,7 @@ async def websocket_handler(websocket: WebSocket) -> None:
                         known_types = {
                             "update_settings", "start_game", "select_word",
                             "guess", "chat", "stroke", "fill", "clear_canvas",
-                            "kick_player", "leave_room", "reaction",
+                            "kick_player", "leave_room", "reaction", "typing",
                             "toggle_ready", "rematch", "end_game_now",
                         }
                         if msg_type not in known_types:
@@ -332,6 +332,21 @@ async def _handle_local_message(
                     "payload": {
                         "player_name": player.name,
                         "emoji": emoji,
+                    },
+                })
+
+    elif msg_type == "typing":
+        room = room_manager._find_room_by_player(player_id)
+        if room is not None:
+            player = room.get_player(player_id)
+            if player:
+                is_typing = bool(payload.get("is_typing", False))
+                await room_manager.broadcast(room.code, {
+                    "type": "typing",
+                    "payload": {
+                        "player_id": player_id,
+                        "player_name": player.name,
+                        "is_typing": is_typing,
                     },
                 })
 

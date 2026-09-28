@@ -30,6 +30,7 @@ const initialState: GameState = {
   waitingForReconnect: false,
   reconnectCountdown: 0,
   artworkGallery: [],
+  typingUsers: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -430,6 +431,91 @@ describe("gameReducer", () => {
         payload: { roomCode: "JOIN456", playerId: "p2", isHost: false },
       });
       expect(joined.artworkGallery).toEqual([]);
+    });
+  });
+
+  describe("Streak, First Guesser & TYPING", () => {
+    it("sets isFirstGuesser and increments streak on GUESS_CORRECT", () => {
+      const stateWithPlayers: GameState = {
+        ...initialState,
+        players: [
+          {
+            id: "p1",
+            name: "Alice",
+            score: 0,
+            isHost: true,
+            hasGuessed: false,
+            isConnected: true,
+            isReady: true,
+          },
+          {
+            id: "p2",
+            name: "Bob",
+            score: 0,
+            isHost: false,
+            hasGuessed: false,
+            isConnected: true,
+            isReady: true,
+          },
+        ],
+      };
+
+      // First guesser (Alice)
+      const afterAlice = gameReducer(stateWithPlayers, {
+        type: "GUESS_CORRECT",
+        payload: { playerName: "Alice", playerId: "p1", score: 100 },
+      });
+      expect(afterAlice.players[0].isFirstGuesser).toBe(true);
+      expect(afterAlice.players[0].streak).toBe(1);
+
+      // Second guesser (Bob) - should NOT be first guesser
+      const afterBob = gameReducer(afterAlice, {
+        type: "GUESS_CORRECT",
+        payload: { playerName: "Bob", playerId: "p2", score: 80 },
+      });
+      expect(afterBob.players[1].isFirstGuesser).toBe(false);
+      expect(afterBob.players[1].streak).toBe(1);
+    });
+
+    it("resets streak on TURN_ENDED if player did not guess", () => {
+      const state: GameState = {
+        ...initialState,
+        drawerId: "p_drawer",
+        players: [
+          {
+            id: "p1",
+            name: "Alice",
+            score: 100,
+            isHost: true,
+            hasGuessed: false, // didn't guess this turn!
+            isConnected: true,
+            isReady: true,
+            streak: 3,
+          },
+        ],
+      };
+
+      const ended = gameReducer(state, {
+        type: "TURN_ENDED",
+        payload: { scores: {}, word: "apple" },
+      });
+      expect(ended.players[0].streak).toBe(0);
+    });
+
+    it("updates typingUsers map on TYPING action", () => {
+      const typingAction: Action = {
+        type: "TYPING",
+        payload: { playerId: "p2", playerName: "Bob", isTyping: true },
+      };
+      const afterTyping = gameReducer(initialState, typingAction);
+      expect(afterTyping.typingUsers?.["p2"]).toBe(true);
+
+      const stoppedTypingAction: Action = {
+        type: "TYPING",
+        payload: { playerId: "p2", playerName: "Bob", isTyping: false },
+      };
+      const afterStopped = gameReducer(afterTyping, stoppedTypingAction);
+      expect(afterStopped.typingUsers?.["p2"]).toBe(false);
     });
   });
 });

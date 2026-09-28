@@ -6,6 +6,7 @@ interface PlayerListProps {
   isHost?: boolean;
   localPlayerId?: string | null;
   drawerId?: string | null;
+  typingUsers?: Record<string, boolean>;
   onKick?: (playerId: string) => void;
 }
 
@@ -19,6 +20,7 @@ export default function PlayerList({
   isHost = false,
   localPlayerId = null,
   drawerId = null,
+  typingUsers,
   onKick,
 }: PlayerListProps) {
   if (!players || !Array.isArray(players)) {
@@ -58,6 +60,33 @@ export default function PlayerList({
               {isDrawing && (
                 <span className="player-drawing-icon" title="Drawing now">
                   ✏️
+                </span>
+              )}
+              {player.isFirstGuesser && (
+                <span
+                  className="player-first-badge"
+                  data-testid="player-first-badge"
+                  title="First to guess correctly!"
+                >
+                  ⚡1st
+                </span>
+              )}
+              {(player.streak ?? 0) >= 2 && (
+                <span
+                  className="player-streak-badge"
+                  data-testid="player-streak-badge"
+                  title={`${player.streak} correct guesses in a row!`}
+                >
+                  🔥{player.streak}
+                </span>
+              )}
+              {typingUsers?.[player.id] && !player.hasGuessed && !isDrawing && (
+                <span
+                  className="player-typing-indicator"
+                  data-testid="player-typing"
+                  title="Guessing now..."
+                >
+                  💬...
                 </span>
               )}
             </span>
