@@ -8,6 +8,8 @@ import PlayerList from "../components/PlayerList";
 import TimerBar from "../components/TimerBar";
 import { SoundToggle } from "../components/SoundToggle";
 import { useGameAudio } from "../hooks/useGameAudio";
+import { HeaderBar } from "../components/HeaderBar";
+import { Confetti } from "../components/Confetti";
 
 /**
  * Game page — renders the active game view with canvas, chat, player list,
@@ -141,98 +143,106 @@ export default function Game() {
 
   if (gameState.phase === "word_selection") {
     return (
-      <div className="game-page" data-testid="game-page">
-        {reconnectBanner}
-        <div className="game-header" data-testid="game-header">
-          <span className="round-indicator" data-testid="round-indicator">
-            Round {gameState.currentRound || 1} /{" "}
-            {gameState.totalRounds || gameState.config?.numRounds || 3}
-          </span>
-          <SoundToggle />
-        </div>
-        {gameState.isDrawer && gameState.wordChoices.length > 0 ? (
-          <div className="word-selection" data-testid="word-selection">
-            <h2>Choose a word to draw:</h2>
-            <div className="word-choices">
-              {gameState.wordChoices.map((word) => (
-                <button
-                  key={word}
-                  className="word-choice-btn"
-                  onClick={() => {
-                    send("select_word", { word });
-                    dispatch({ type: "WORD_SELECTED", payload: { word } } as unknown as Action);
-                  }}
-                >
-                  {word}
-                </button>
-              ))}
+      <>
+        <Confetti />
+        <HeaderBar roomCode={gameState.roomCode} phase={gameState.phase} />
+        <div className="game-page" data-testid="game-page">
+          {reconnectBanner}
+          <div className="game-header" data-testid="game-header">
+            <span className="round-indicator" data-testid="round-indicator">
+              Round {gameState.currentRound || 1} /{" "}
+              {gameState.totalRounds || gameState.config?.numRounds || 3}
+            </span>
+            <SoundToggle />
+          </div>
+          {gameState.isDrawer && gameState.wordChoices.length > 0 ? (
+            <div className="word-selection" data-testid="word-selection">
+              <h2>Choose a word to draw:</h2>
+              <div className="word-choices">
+                {gameState.wordChoices.map((word) => (
+                  <button
+                    key={word}
+                    className="word-choice-btn"
+                    onClick={() => {
+                      send("select_word", { word });
+                      dispatch({ type: "WORD_SELECTED", payload: { word } } as unknown as Action);
+                    }}
+                  >
+                    {word}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="word-selection-waiting" data-testid="word-selection-waiting">
+              <h2>{drawerName} is choosing a word...</h2>
+            </div>
+          )}
+          <div className="game-content" data-testid="game-content">
+            <div className="game-left">
+              <PlayerList players={gameState.players} drawerId={gameState.drawerId} />
             </div>
           </div>
-        ) : (
-          <div className="word-selection-waiting" data-testid="word-selection-waiting">
-            <h2>{drawerName} is choosing a word...</h2>
-          </div>
-        )}
-        <div className="game-content" data-testid="game-content">
-          <div className="game-left">
-            <PlayerList players={gameState.players} />
-          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   // Playing phase — full game UI
   return (
-    <div className="game-page" data-testid="game-page">
-      {reconnectBanner}
+    <>
+      <Confetti />
+      <HeaderBar roomCode={gameState.roomCode} phase={gameState.phase} />
+      <div className="game-page" data-testid="game-page">
+        {reconnectBanner}
 
-      {/* Round and turn indicators */}
-      <div className="game-header" data-testid="game-header">
-        <span className="round-indicator" data-testid="round-indicator">
-          Round {gameState.currentRound} / {gameState.totalRounds}
-        </span>
-        <TimerBar seconds={gameState.timerSeconds} total={gameState.config?.turnDuration ?? 80} />
-        <SoundToggle />
-      </div>
-
-      {/* Hint display — drawer sees the actual word */}
-      <div className="hint-display" data-testid="hint-display">
-        {gameState.isDrawer && gameState.currentWord ? (
-          <span className="hint-char hint-word" data-testid="hint-word">
-            {gameState.currentWord}
+        {/* Round and turn indicators */}
+        <div className="game-header" data-testid="game-header">
+          <span className="round-indicator" data-testid="round-indicator">
+            Round {gameState.currentRound} / {gameState.totalRounds}
           </span>
-        ) : (
-          gameState.hint.map((char, idx) => (
-            <span
-              key={idx}
-              className={`hint-char${char === "_" ? " hint-hidden" : ""}`}
-              data-testid="hint-char"
-            >
-              {char === "_" ? "_" : char}
-            </span>
-          ))
-        )}
-      </div>
+          <TimerBar seconds={gameState.timerSeconds} total={gameState.config?.turnDuration ?? 80} />
+          <SoundToggle />
+        </div>
 
-      {/* Main game area: canvas + chat */}
-      <div className="game-content" data-testid="game-content">
-        <div className="game-left">
-          {/* Player list with live scores */}
-          <PlayerList players={gameState.players} />
+        {/* Hint display — drawer sees the actual word */}
+        <div className="hint-display" data-testid="hint-display">
+          {gameState.isDrawer && gameState.currentWord ? (
+            <span className="hint-char hint-word" data-testid="hint-word">
+              {gameState.currentWord}
+            </span>
+          ) : (
+            gameState.hint.map((char, idx) => (
+              <span
+                key={idx}
+                className={`hint-char${char === "_" ? " hint-hidden" : ""}`}
+                data-testid="hint-char"
+              >
+                {char === "_" ? "_" : char}
+              </span>
+            ))
+          )}
         </div>
-        <div className="game-center">
-          <Canvas
-            isDrawer={gameState.isDrawer}
-            showRoundTransition={showRoundTransition}
-            roundInfo={{ round: gameState.currentRound, totalRounds: gameState.totalRounds }}
-            onTransitionComplete={handleTransitionComplete}
-          />
-        </div>
-        <div className="game-right">
-          <Chat />
+
+        {/* Main game area: canvas + chat */}
+        <div className="game-content" data-testid="game-content">
+          <div className="game-left">
+            {/* Player list with live scores and avatar */}
+            <PlayerList players={gameState.players} drawerId={gameState.drawerId} />
+          </div>
+          <div className="game-center">
+            <Canvas
+              isDrawer={gameState.isDrawer}
+              showRoundTransition={showRoundTransition}
+              roundInfo={{ round: gameState.currentRound, totalRounds: gameState.totalRounds }}
+              onTransitionComplete={handleTransitionComplete}
+            />
+          </div>
+          <div className="game-right">
+            <Chat />
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

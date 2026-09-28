@@ -3,11 +3,22 @@ import { useNavigate } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket";
 import PlayerList from "../components/PlayerList";
 import Chat from "../components/Chat";
+import { HeaderBar } from "../components/HeaderBar";
+import {
+  PRESET_WORD_PACKS,
+  getStoredPackId,
+  storePackId,
+  getStoredCustomWords,
+  storeCustomWords,
+  parseCustomWords,
+} from "../utils/wordPacks";
 
 export default function Lobby() {
   const { gameState, send } = useWebSocket();
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
+  const [selectedPackId, setSelectedPackId] = useState(getStoredPackId);
+  const [customWordsText, setCustomWordsText] = useState(getStoredCustomWords);
 
   // Fallback config in case state is not yet populated
   const config = gameState.config ?? { numRounds: 3, turnDuration: 80, maxPlayers: 8 };
@@ -63,6 +74,17 @@ export default function Lobby() {
     send("update_settings", { max_players: Number(e.target.value) });
   };
 
+  const handlePackSelect = (packId: string) => {
+    setSelectedPackId(packId);
+    storePackId(packId);
+  };
+
+  const handleCustomWordsChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setCustomWordsText(val);
+    storeCustomWords(val);
+  };
+
   const handleStartGame = () => {
     send("start_game");
   };
@@ -86,100 +108,169 @@ export default function Lobby() {
   const readyCount = gameState.players.filter((p) => p.isReady).length;
   const totalCount = gameState.players.length;
   const canStart = gameState.isHost && gameState.players.length >= 2;
+  const activePack = PRESET_WORD_PACKS.find((p) => p.id === selectedPackId);
+  const parsedCustom = parseCustomWords(customWordsText);
 
   return (
-    <div className="lobby-page">
-      <div className="lobby-header">
-        <h1>Lobby</h1>
-        <button
-          className="room-code-btn"
-          onClick={handleCopyCode}
-          data-testid="room-code"
-          title="Click to copy room code"
-        >
-          {gameState.roomCode} 📋
-        </button>
-      </div>
-
-      {/* Snackbar for copy feedback */}
-      {copied && (
-        <div className="snackbar" data-testid="snackbar">
-          Room code copied to clipboard!
+    <>
+      <HeaderBar roomCode={gameState.roomCode} phase={gameState.phase} />
+      <div className="lobby-page">
+        <div className="lobby-header">
+          <div className="lobby-title-wrap">
+            <h1>Lobby</h1>
+            {activePack && (
+              <span className="active-pack-badge" title={activePack.description}>
+                {activePack.emoji} {activePack.name}
+              </span>
+            )}
+            {selectedPackId === "custom" && (
+              <span className="active-pack-badge">✏️ Custom ({parsedCustom.length} words)</span>
+            )}
+          </div>
+          <button
+            className="room-code-btn"
+            onClick={handleCopyCode}
+            data-testid="room-code"
+            title="Click to copy room code"
+          >
+            {gameState.roomCode} 📋
+          </button>
         </div>
-      )}
 
-      <div className="lobby-content">
-        {/* Left side: Players + Settings */}
-        <div className="lobby-left">
-          <PlayerList
-            players={gameState.players}
-            isHost={gameState.isHost}
-            localPlayerId={gameState.localPlayerId}
-            onKick={handleKickPlayer}
-          />
+        {/* Snackbar for copy feedback */}
+        {copied && (
+          <div className="snackbar" data-testid="snackbar">
+            Room code copied to clipboard!
+          </div>
+        )}
 
-          <div className="lobby-settings">
-            <h2>Game Settings</h2>
-            <fieldset disabled={!gameState.isHost}>
-              <div>
-                <label htmlFor="rounds">Rounds</label>
-                <select id="rounds" value={config.numRounds} onChange={handleRoundsChange}>
-                  {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="duration">Turn Duration (seconds)</label>
-                <select id="duration" value={config.turnDuration} onChange={handleDurationChange}>
-                  {[30, 45, 60, 80, 100, 120, 150, 180].map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="max-players">Max Players</label>
-                <select
-                  id="max-players"
-                  value={config.maxPlayers}
-                  onChange={handleMaxPlayersChange}
-                >
-                  {Array.from({ length: 11 }, (_, i) => i + 2).map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </fieldset>
+        <div className="lobby-content">
+          {/* Left side: Players + Settings */}
+          <div className="lobby-left">
+            <PlayerList
+              players={gameState.players}
+              isHost={gameState.isHost}
+              localPlayerId={gameState.localPlayerId}
+              onKick={handleKickPlayer}
+            />
+
+            <div className="lobby-settings">
+              <h2>Game Settings</h2>
+              <fieldset disabled={!gameState.isHost}>
+                <div>
+                  <label htmlFor="rounds">Rounds</label>
+                  <select id="rounds" value={config.numRounds} onChange={handleRoundsChange}>
+                    {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="duration">Turn Duration (seconds)</label>
+                  <select id="duration" value={config.turnDuration} onChange={handleDurationChange}>
+                    {[30, 45, 60, 80, 100, 120, 150, 180].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="max-players">Max Players</label>
+                  <select
+                    id="max-players"
+                    value={config.maxPlayers}
+                    onChange={handleMaxPlayersChange}
+                  >
+                    {Array.from({ length: 11 }, (_, i) => i + 2).map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Word Pack / Theme Configuration */}
+                <div className="word-pack-container">
+                  <div className="word-pack-header">
+                    <span className="word-pack-label">Word Pack Theme</span>
+                    {!gameState.isHost && (
+                      <span className="custom-words-hint">(Host controls pack)</span>
+                    )}
+                  </div>
+                  <div className="word-pack-grid">
+                    {PRESET_WORD_PACKS.map((pack) => {
+                      const isSelected = selectedPackId === pack.id;
+                      return (
+                        <button
+                          key={pack.id}
+                          type="button"
+                          className={`word-pack-card ${isSelected ? "selected" : ""}`}
+                          onClick={() => handlePackSelect(pack.id)}
+                          disabled={!gameState.isHost}
+                        >
+                          <span className="word-pack-card-name">
+                            {pack.emoji} {pack.name}
+                          </span>
+                          <span className="word-pack-card-desc">{pack.description}</span>
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      className={`word-pack-card ${selectedPackId === "custom" ? "selected" : ""}`}
+                      onClick={() => handlePackSelect("custom")}
+                      disabled={!gameState.isHost}
+                    >
+                      <span className="word-pack-card-name">✏️ Custom Words</span>
+                      <span className="word-pack-card-desc">Enter your own word list</span>
+                    </button>
+                  </div>
+
+                  {selectedPackId === "custom" && (
+                    <>
+                      <textarea
+                        className="custom-words-textarea"
+                        rows={2}
+                        placeholder="pizza, telescope, astronaut, superhero (comma separated)"
+                        value={customWordsText}
+                        onChange={handleCustomWordsChange}
+                        disabled={!gameState.isHost}
+                      />
+                      <div className="custom-words-hint">
+                        {parsedCustom.length} valid words loaded
+                      </div>
+                    </>
+                  )}
+                </div>
+              </fieldset>
+            </div>
+
+            <div className="lobby-actions">
+              <button
+                className={`ready-btn ${isReady ? "ready-btn-active" : ""}`}
+                onClick={handleToggleReady}
+                data-testid="ready-btn"
+              >
+                {isReady ? "Ready ✓" : "Not Ready"}
+              </button>
+              <button className="start-game-btn" onClick={handleStartGame} disabled={!canStart}>
+                Start Game ({readyCount}/{totalCount} Ready)
+              </button>
+              <button className="leave-room-btn" onClick={handleLeaveRoom}>
+                Leave Room
+              </button>
+            </div>
           </div>
 
-          <div className="lobby-actions">
-            <button
-              className={`ready-btn ${isReady ? "ready-btn-active" : ""}`}
-              onClick={handleToggleReady}
-              data-testid="ready-btn"
-            >
-              {isReady ? "Ready ✓" : "Not Ready"}
-            </button>
-            <button className="start-game-btn" onClick={handleStartGame} disabled={!canStart}>
-              Start Game ({readyCount}/{totalCount} Ready)
-            </button>
-            <button className="leave-room-btn" onClick={handleLeaveRoom}>
-              Leave Room
-            </button>
+          {/* Right side: Chat */}
+          <div className="lobby-right">
+            <Chat />
           </div>
         </div>
-
-        {/* Right side: Chat */}
-        <div className="lobby-right">
-          <Chat />
-        </div>
       </div>
-    </div>
+    </>
   );
 }

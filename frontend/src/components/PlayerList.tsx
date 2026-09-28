@@ -1,9 +1,11 @@
 import type { PlayerInfo } from "../types";
+import { getAvatarForPlayer } from "../utils/avatars";
 
 interface PlayerListProps {
   players: PlayerInfo[];
   isHost?: boolean;
   localPlayerId?: string | null;
+  drawerId?: string | null;
   onKick?: (playerId: string) => void;
 }
 
@@ -16,6 +18,7 @@ export default function PlayerList({
   players,
   isHost = false,
   localPlayerId = null,
+  drawerId = null,
   onKick,
 }: PlayerListProps) {
   if (!players || !Array.isArray(players)) {
@@ -24,6 +27,8 @@ export default function PlayerList({
   return (
     <ul className="player-list" data-testid="player-list">
       {players.map((player) => {
+        const avatar = getAvatarForPlayer(player.name || player.id);
+        const isDrawing = drawerId ? player.id === drawerId : false;
         const classes = [
           "player-item",
           player.isHost ? "player-host" : "",
@@ -35,9 +40,22 @@ export default function PlayerList({
 
         return (
           <li key={player.id} className={classes} data-testid="player-item">
+            <span
+              className="player-avatar-badge"
+              style={{ backgroundColor: avatar.bgColor }}
+              title={avatar.label}
+              data-testid="player-avatar"
+            >
+              {avatar.emoji}
+            </span>
             <span className="player-name">
               {player.name}
               {player.isHost && <span className="host-badge"> (Host)</span>}
+              {isDrawing && (
+                <span className="player-drawing-icon" title="Drawing now">
+                  ✏️
+                </span>
+              )}
             </span>
             <span className="player-status">
               {player.isReady && (

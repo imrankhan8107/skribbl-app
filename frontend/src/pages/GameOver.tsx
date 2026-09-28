@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket";
+import { HeaderBar } from "../components/HeaderBar";
+import { getAvatarForPlayer } from "../utils/avatars";
 
 /**
  * Canvas-based confetti/party popper animation.
@@ -183,59 +185,94 @@ export default function GameOver() {
   const rankedPlayers = [...(gameState.players || [])].sort((a, b) => b.score - a.score);
   const winner = rankedPlayers[0];
 
+  const winnerAvatar = winner ? getAvatarForPlayer(winner.name || winner.id) : null;
+
   return (
-    <div className="game-over-page">
-      <ConfettiCanvas />
-      <h1>Game Over</h1>
+    <>
+      <HeaderBar roomCode={gameState.roomCode} phase={gameState.phase} />
+      <div className="game-over-page">
+        <ConfettiCanvas />
+        <h1>Game Over</h1>
 
-      {winner ? (
-        <>
-          {/* Winner Card — decorative highlight */}
-          <div className="winner-card" data-testid="winner-card">
-            <div className="winner-trophy">🏆</div>
-            <div className="winner-label">Winner</div>
-            <div className="winner-name">{winner.name}</div>
-            <div className="winner-score">{winner.score} pts</div>
-          </div>
+        {winner ? (
+          <>
+            {/* Winner Card — decorative highlight with avatar */}
+            <div className="winner-card" data-testid="winner-card">
+              <div className="winner-trophy">🏆</div>
+              {winnerAvatar && (
+                <div
+                  className="winner-avatar-badge"
+                  style={{
+                    backgroundColor: winnerAvatar.bgColor,
+                    fontSize: "2.2rem",
+                    width: "56px",
+                    height: "56px",
+                    borderRadius: "50%",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    margin: "0.25rem auto 0.5rem",
+                    boxShadow: "var(--shadow-sm)",
+                  }}
+                  title={winnerAvatar.label}
+                >
+                  {winnerAvatar.emoji}
+                </div>
+              )}
+              <div className="winner-label">Winner</div>
+              <div className="winner-name">{winner.name}</div>
+              <div className="winner-score">{winner.score} pts</div>
+            </div>
 
-          {/* Full Leaderboard */}
-          <ol data-testid="leaderboard" className="leaderboard">
-            {rankedPlayers.map((player, index) => (
-              <li key={player.id} className={`leaderboard-entry leaderboard-rank-${index + 1}`}>
-                <span className="leaderboard-rank">
-                  {index === 0 ? "1" : index === 1 ? "2" : index === 2 ? "3" : `${index + 1}`}
-                </span>
-                <span className="leaderboard-medal">
-                  {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : ""}
-                </span>
-                <span className="leaderboard-name">{player.name}</span>
-                <span className="leaderboard-score">{player.score} pts</span>
-              </li>
-            ))}
-          </ol>
-        </>
-      ) : (
-        <p>No scores available</p>
-      )}
+            {/* Full Leaderboard */}
+            <ol data-testid="leaderboard" className="leaderboard">
+              {rankedPlayers.map((player, index) => {
+                const avatar = getAvatarForPlayer(player.name || player.id);
+                return (
+                  <li key={player.id} className={`leaderboard-entry leaderboard-rank-${index + 1}`}>
+                    <span className="leaderboard-rank">
+                      {index === 0 ? "1" : index === 1 ? "2" : index === 2 ? "3" : `${index + 1}`}
+                    </span>
+                    <span className="leaderboard-medal">
+                      {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : ""}
+                    </span>
+                    <span
+                      className="player-avatar-badge"
+                      style={{ backgroundColor: avatar.bgColor, margin: "0 0.4rem" }}
+                      title={avatar.label}
+                    >
+                      {avatar.emoji}
+                    </span>
+                    <span className="leaderboard-name">{player.name}</span>
+                    <span className="leaderboard-score">{player.score} pts</span>
+                  </li>
+                );
+              })}
+            </ol>
+          </>
+        ) : (
+          <p>No scores available</p>
+        )}
 
-      <div className="game-over-actions">
-        <button
-          className="rematch-button"
-          onClick={() => send("rematch")}
-          disabled={!gameState.isHost}
-        >
-          Rematch
-        </button>
-        <button
-          className="dashboard-button"
-          onClick={() => {
-            sessionStorage.removeItem("skribbl_session");
-            window.location.href = "/";
-          }}
-        >
-          Back to Home
-        </button>
+        <div className="game-over-actions">
+          <button
+            className="rematch-button"
+            onClick={() => send("rematch")}
+            disabled={!gameState.isHost}
+          >
+            Rematch
+          </button>
+          <button
+            className="dashboard-button"
+            onClick={() => {
+              sessionStorage.removeItem("skribbl_session");
+              window.location.href = "/";
+            }}
+          >
+            Back to Home
+          </button>
+        </div>
       </div>
-    </div>
+    </>
   );
 }

@@ -1,6 +1,8 @@
 import { useRef, useEffect, useState } from "react";
 import { useWebSocket } from "../hooks/useWebSocket";
 import type { ChatMessage } from "../types";
+import { getAvatarForPlayer } from "../utils/avatars";
+import { triggerGlobalConfetti } from "./Confetti";
 
 /**
  * Chat component — scrollable message feed + guess/chat input.
@@ -12,12 +14,23 @@ export default function Chat() {
   const { gameState, send } = useWebSocket();
   const [text, setText] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const prevMessagesCountRef = useRef(gameState.chatMessages.length);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom when new messages arrive and trigger confetti on correct guess
   useEffect(() => {
     if (messagesEndRef.current && messagesEndRef.current.scrollIntoView) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
+
+    if (gameState.chatMessages.length > prevMessagesCountRef.current) {
+      const newMessages = gameState.chatMessages.slice(prevMessagesCountRef.current);
+      for (const msg of newMessages) {
+        if (msg.type === "correct_guess") {
+          triggerGlobalConfetti();
+        }
+      }
+    }
+    prevMessagesCountRef.current = gameState.chatMessages.length;
   }, [gameState.chatMessages]);
 
   const isInputDisabled = gameState.hasGuessed;
@@ -48,22 +61,37 @@ export default function Chat() {
   return (
     <div className="chat-container" data-testid="chat-container">
       <div className="chat-messages" data-testid="chat-messages">
-        {gameState.chatMessages.map((msg) => (
-          <div
-            key={msg.id}
-            className={getMessageClassName(msg)}
-            data-testid={`chat-msg-${msg.type}`}
-          >
-            {msg.type === "chat" && (
-              <>
-                <span className="chat-sender">{msg.senderName}:</span>{" "}
-                <span className="chat-text">{msg.text}</span>
-              </>
-            )}
-            {msg.type === "correct_guess" && <span className="chat-text">{msg.text}</span>}
-            {msg.type === "system" && <span className="chat-text">{msg.text}</span>}
-          </div>
-        ))}
+        {gameState.chatMessages.map((msg) => {
+          const avatar = getAvatarForPlayer(msg.senderName || msg.senderId);
+          return (
+            <div
+              key={msg.id}
+              className={getMessageClassName(msg)}
+              data-testid={`chat-msg-${msg.type}`}
+            >
+              {msg.type === "chat" && (
+                <>
+                  <span
+                    className="chat-avatar-badge"
+                    style={{ backgroundColor: avatar.bgColor }}
+                    title={avatar.label}
+                  >
+                    {avatar.emoji}
+                  </span>
+                  <span className="chat-sender">{msg.senderName}:</span>{" "}
+                  <span className="chat-text">{msg.text}</span>
+                </>
+              )}
+              {msg.type === "correct_guess" && (
+                <>
+                  <span className="chat-star-icon">🌟</span>{" "}
+                  <span className="chat-text">{msg.text}</span>
+                </>
+              )}
+              {msg.type === "system" && <span className="chat-text">{msg.text}</span>}
+            </div>
+          );
+        })}
         <div ref={messagesEndRef} />
       </div>
 
