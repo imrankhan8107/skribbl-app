@@ -547,4 +547,49 @@ describe("gameReducer", () => {
       expect(afterStopped.typingUsers?.["p2"]).toBe(false);
     });
   });
+
+  describe("HOST_CHANGED", () => {
+    it("updates isHost flag on players and gameState", () => {
+      const state: GameState = {
+        ...initialState,
+        localPlayerId: "p2",
+        isHost: false,
+        players: [
+          {
+            id: "p1",
+            name: "Alice",
+            score: 0,
+            isHost: true,
+            hasGuessed: false,
+            isConnected: true,
+            isReady: true,
+          },
+          {
+            id: "p2",
+            name: "Bob",
+            score: 0,
+            isHost: false,
+            hasGuessed: false,
+            isConnected: true,
+            isReady: true,
+          },
+        ],
+      };
+
+      const action: Action = {
+        type: "HOST_CHANGED",
+        payload: {
+          newHostId: "p2",
+          newHostName: "Bob",
+          oldHostId: "p1",
+          oldHostName: "Alice",
+        },
+      };
+
+      const next = gameReducer(state, action);
+      expect(next.isHost).toBe(true);
+      expect(next.players.find((p) => p.id === "p1")?.isHost).toBe(false);
+      expect(next.players.find((p) => p.id === "p2")?.isHost).toBe(true);
+    });
+  });
 });

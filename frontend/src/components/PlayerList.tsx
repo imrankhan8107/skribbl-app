@@ -8,6 +8,7 @@ interface PlayerListProps {
   drawerId?: string | null;
   typingUsers?: Record<string, boolean>;
   onKick?: (playerId: string) => void;
+  onTransferHost?: (playerId: string) => void;
   onEditProfile?: () => void;
 }
 
@@ -23,6 +24,7 @@ export default function PlayerList({
   drawerId = null,
   typingUsers,
   onKick,
+  onTransferHost,
   onEditProfile,
 }: PlayerListProps) {
   if (!players || !Array.isArray(players)) {
@@ -129,6 +131,18 @@ export default function PlayerList({
                 </span>
               )}
             </span>
+            {isHost && player.id !== localPlayerId && onTransferHost && (
+              <button
+                type="button"
+                className="transfer-host-btn"
+                onClick={() => onTransferHost(player.id)}
+                title={`Make ${player.name} host`}
+                aria-label={`Make ${player.name} host`}
+                data-testid={`transfer-host-${player.id}`}
+              >
+                👑
+              </button>
+            )}
             {isHost && player.id !== localPlayerId && onKick && (
               <button
                 className="kick-btn"

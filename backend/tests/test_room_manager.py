@@ -724,3 +724,85 @@ class TestUpdateProfile:
         assert update_res["type"] == "error"
         assert update_res["payload"]["code"] == "INVALID_NAME"
 
+
+class TestTransferHost:
+    """Tests for transfer_host."""
+
+    async def test_transfer_host_success(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        p1_id = res1["payload"]["player_id"]
+        room_code = res1["payload"]["room_code"]
+
+        res2 = await manager.join_room("Bob", room_code, ws2)
+        p2_id = res2["payload"]["player_id"]
+
+        room = manager._find_room_by_player(p1_id)
+        assert room.host_id == p1_id
+
+        result = await manager.transfer_host(p1_id, p2_id)
+        assert result["type"] == "host_transferred"
+        assert result["payload"]["new_host_id"] == p2_id
+        assert room.host_id == p2_id
+
+        # Verify broadcast
+        ws1.send_text.assert_called()
+        import json
+        broadcasts = [json.loads(c[0][0]) for c in ws1.send_text.call_args_list]
+        host_changed = [b for b in broadcasts if b.get("type") == "host_changed"]
+        assert len(host_changed) >= 1
+        assert host_changed[-1]["payload"]["new_host_id"] == p2_id
+
+    async def test_transfer_host_non_host_rejected(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        p1_id = res1["payload"]["player_id"]
+        room_code = res1["payload"]["room_code"]
+
+        res2 = await manager.join_room("Bob", room_code, ws2)
+        p2_id = res2["payload"]["player_id"]
+
+        # Bob tries to transfer host to himself
+        result = await manager.transfer_host(p2_id, p2_id)
+        assert result["type"] == "error"
+        assert result["payload"]["code"] == "PERMISSION_DENIED"
+
+    async def test_transfer_host_to_self_rejected(self, manager):
+        ws1 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        p1_id = res1["payload"]["player_id"]
+
+        result = await manager.transfer_host(p1_id, p1_id)
+        assert result["type"] == "error"
+        assert result["payload"]["code"] == "INVALID_ACTION"
+
+    async def test_transfer_host_player_not_found(self, manager):
+        ws1 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        p1_id = res1["payload"]["player_id"]
+
+        result = await manager.transfer_host(p1_id, "non-existent-id")
+        assert result["type"] == "error"
+        assert result["payload"]["code"] == "PLAYER_NOT_FOUND"
+
+    async def test_transfer_host_disconnected_player_rejected(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        p1_id = res1["payload"]["player_id"]
+        room_code = res1["payload"]["room_code"]
+
+        res2 = await manager.join_room("Bob", room_code, ws2)
+        p2_id = res2["payload"]["player_id"]
+
+        room = manager._find_room_by_player(p1_id)
+        bob = room.get_player(p2_id)
+        bob.is_connected = False
+
+        result = await manager.transfer_host(p1_id, p2_id)
+        assert result["type"] == "error"
+        assert result["payload"]["code"] == "PLAYER_DISCONNECTED"
+
+

@@ -332,6 +332,11 @@ async def _handle_local_message(
         if result.get("type") == "error":
             await websocket.send_json(result)
 
+    elif msg_type == "transfer_host":
+        target_id = (payload.get("target_player_id") or payload.get("target_id", "")) if isinstance(payload, dict) else ""
+        result = await room_manager.transfer_host(player_id, target_id)
+        await websocket.send_json(result)
+
     elif msg_type == "leave_room":
         result = await room_manager.leave_room(player_id)
         await websocket.send_json(result)
@@ -376,7 +381,8 @@ async def _handle_local_message(
         name = payload.get("name") if isinstance(payload, dict) else None
         avatar = payload.get("avatar") if isinstance(payload, dict) else None
         result = await room_manager.update_profile(player_id, name=name, avatar=avatar)
-        await websocket.send_json(result)
+        if result.get("type") == "error":
+            await websocket.send_json(result)
 
     elif msg_type == "rematch":
         result = await room_manager.handle_rematch(player_id)

@@ -86,7 +86,12 @@ class RoomManager:
             return f"Display name must be between {MIN_NAME_LENGTH} and {MAX_NAME_LENGTH} characters"
         return None
 
-    def _serialize_player(self, player: Player) -> dict:
+    def _serialize_player(
+        self,
+        player: Player,
+        room: Optional[Room] = None,
+        is_host: Optional[bool] = None,
+    ) -> dict:
         """Serialize a Player to a JSON-safe dict (excludes websocket)."""
         data = {
             "id": player.id,
@@ -96,6 +101,10 @@ class RoomManager:
             "is_connected": player.is_connected,
             "is_ready": player.is_ready,
         }
+        if is_host is not None:
+            data["is_host"] = is_host
+        elif room is not None:
+            data["is_host"] = (player.id == room.host_id)
         if player.avatar:
             data["avatar"] = player.avatar
         return data
@@ -1421,6 +1430,99 @@ class RoomManager:
         return {
             "type": "rematch_started",
             "payload": payload,
+        }
+
+    async def transfer_host(self, host_player_id: str, target_player_id: str) -> dict:
+        """Transfer room host role to another player. Only the current host can do this.
+
+        Args:
+            host_player_id: The ID of the host player transferring the role.
+            target_player_id: The ID of the player receiving the host role.
+
+        Returns:
+            A dict payload for success, or an error payload.
+        """
+        room = self._find_room_by_player(host_player_id)
+        if room is None:
+            return {
+                "type": "error",
+                "payload": {"code": "GAME_NOT_ACTIVE", "message": "Player is not in a room"},
+            }
+
+        # Check caller is the host
+        if room.host_id != host_player_id:
+            return {
+                "type": "error",
+                "payload": {"code": "PERMISSION_DENIED", "message": "Only the host can transfer host role"},
+            }
+
+        # Cannot transfer to self
+        if target_player_id == host_player_id:
+            return {
+                "type": "error",
+                "payload": {"code": "INVALID_ACTION", "message": "Cannot transfer host to yourself"},
+            }
+
+        # Check target is in the room
+        target = room.get_player(target_player_id)
+        if target is None:
+            return {
+                "type": "error",
+                "payload": {"code": "PLAYER_NOT_FOUND", "message": "Target player not found in room"},
+            }
+
+        # Target must be connected
+        if not target.is_connected:
+            return {
+                "type": "error",
+                "payload": {"code": "PLAYER_DISCONNECTED", "message": "Cannot transfer host to a disconnected player"},
+            }
+
+        # Update host
+        old_host = room.get_player(host_player_id)
+        old_host_name = old_host.name if old_host else "Host"
+        room.host_id = target_player_id
+
+        # Update room info in Redis if enabled
+        if redis_pubsub.is_redis_enabled():
+            await redis_pubsub.set_room_info(room.code, {
+                "state": room.state.value,
+                "player_count": len(room.players),
+                "config": self._serialize_config(room.config),
+                "host_id": room.host_id,
+            })
+
+        # Broadcast host_changed event
+        await self.broadcast(
+            room.code,
+            {
+                "type": "host_changed",
+                "payload": {
+                    "new_host_id": target_player_id,
+                    "new_host_name": target.name,
+                    "old_host_id": host_player_id,
+                    "old_host_name": old_host_name,
+                },
+            },
+        )
+
+        # Broadcast updated player list with is_host flags
+        await self.broadcast(
+            room.code,
+            {
+                "type": "player_list",
+                "payload": {
+                    "players": [self._serialize_player(p, room=room) for p in room.players]
+                },
+            },
+        )
+
+        return {
+            "type": "host_transferred",
+            "payload": {
+                "new_host_id": target_player_id,
+                "new_host_name": target.name,
+            },
         }
 
     async def kick_player(self, host_player_id: str, target_player_id: str) -> dict:

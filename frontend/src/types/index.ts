@@ -155,5 +155,21 @@ export type Action =
   | { type: "SAVE_ARTWORK"; payload: RoundArtwork }
   | { type: "TYPING"; payload: { playerId: string; playerName: string; isTyping: boolean } }
   | { type: "PROFILE_UPDATED"; payload: { playerId: string; name?: string; avatar?: string } }
+  | {
+      type: "HOST_CHANGED";
+      payload: {
+        newHostId: string;
+        newHostName: string;
+        oldHostId: string;
+        oldHostName: string;
+      };
+    }
+  | {
+      type: "HOST_TRANSFERRED";
+      payload: {
+        newHostId: string;
+        newHostName: string;
+      };
+    }
   | { type: "TICK" }
   | { type: "RESET" };

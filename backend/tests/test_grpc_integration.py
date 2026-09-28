@@ -550,3 +550,55 @@ class TestGRPCGatewayMessageFormat:
 
         await host_stream.done_writing()
         await p2_stream.done_writing()
+
+    @pytest.mark.asyncio
+    async def test_grpc_transfer_host(self, stub):
+        """Verify that transfer_host works via gRPC stream."""
+        host_stream = stub.RoomStream()
+        p2_stream = stub.RoomStream()
+
+        # Host creates room
+        host_create_msg = _make_gateway_message(
+            player_id="temp_host",
+            room_code="",
+            message_type="create_room",
+            payload={"name": "HostPlayer"},
+        )
+        await host_stream.write(host_create_msg)
+
+        msg = await _read_until_type(host_stream, "room_created", timeout=5.0)
+        payload = _decode_payload(msg)
+        room_code = payload["payload"]["room_code"]
+        actual_host_id = payload["payload"]["player_id"]
+
+        # Player 2 joins room
+        p2_join_msg = _make_gateway_message(
+            player_id="temp_p2",
+            room_code=room_code,
+            message_type="join_room",
+            payload={"name": "TargetPlayer", "room_code": room_code},
+        )
+        await p2_stream.write(p2_join_msg)
+
+        msg = await _read_until_type(p2_stream, "room_joined", timeout=5.0)
+        actual_p2_id = _decode_payload(msg)["payload"]["player_id"]
+
+        # Drain join player_lists
+        await _read_until_type(host_stream, "player_list", timeout=5.0)
+
+        # Host transfers host role to Player 2
+        transfer_msg = _make_gateway_message(
+            actual_host_id, room_code, "transfer_host", {"target_player_id": actual_p2_id}
+        )
+        await host_stream.write(transfer_msg)
+
+        # Host receives host_transferred confirmation
+        msg = await _read_until_type(host_stream, "host_transferred", timeout=5.0)
+        assert _decode_payload(msg)["payload"]["new_host_id"] == actual_p2_id
+
+        # Player 2 receives host_changed event
+        msg = await _read_until_type(p2_stream, "host_changed", timeout=5.0)
+        assert _decode_payload(msg)["payload"]["new_host_id"] == actual_p2_id
+
+        await host_stream.done_writing()
+        await p2_stream.done_writing()

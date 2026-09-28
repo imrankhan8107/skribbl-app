@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { WebSocketContext } from "../context/WebSocketContext";
@@ -348,5 +348,29 @@ describe("Lobby", () => {
     expect(textarea).toBeDisabled();
     expect(screen.queryByTestId("preset-pack-fantasy")).not.toBeInTheDocument();
     expect(screen.getByTestId("custom-words-count")).toHaveTextContent("✨ 2 words");
+  });
+
+  it("renders transfer host crown button for host and sends transfer_host on click with confirmation", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { send } = renderLobby();
+
+    const crownBtn = screen.getByTestId("transfer-host-p2");
+    expect(crownBtn).toBeInTheDocument();
+
+    fireEvent.click(crownBtn);
+    expect(window.confirm).toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith("transfer_host", { target_player_id: "p2" });
+  });
+
+  it("does not render transfer host crown button for non-host players", () => {
+    const gameState: GameState = {
+      ...defaultGameState,
+      isHost: false,
+      localPlayerId: "p2",
+    };
+    renderLobby({ gameState });
+
+    expect(screen.queryByTestId("transfer-host-p1")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("transfer-host-p2")).not.toBeInTheDocument();
   });
 });

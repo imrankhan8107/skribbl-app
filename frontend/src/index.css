@@ -502,6 +502,31 @@ ol {
   transform: scale(1.1);
 }
 
+/* ---- Transfer Host Button ---- */
+.transfer-host-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 50%;
+  background: rgba(245, 158, 11, 0.15);
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color 0.2s,
+    transform 0.15s;
+  flex-shrink: 0;
+}
+
+.transfer-host-btn:hover {
+  background: rgba(245, 158, 11, 0.35);
+  transform: scale(1.15);
+}
+
 /* ============================================================
    Player List
    ============================================================ */

@@ -202,6 +202,16 @@ export default function Lobby() {
     send("kick_player", { target_player_id: targetPlayerId });
   };
 
+  const handleTransferHost = (targetPlayerId: string) => {
+    const target = gameState.players.find((p) => p.id === targetPlayerId);
+    const confirmed = window.confirm(
+      `Are you sure you want to transfer room host to ${target?.name || "this player"}?`
+    );
+    if (confirmed) {
+      send("transfer_host", { target_player_id: targetPlayerId });
+    }
+  };
+
   const handleToggleReady = () => {
     send("toggle_ready");
   };
@@ -287,6 +297,7 @@ export default function Lobby() {
               isHost={gameState.isHost}
               localPlayerId={gameState.localPlayerId}
               onKick={handleKickPlayer}
+              onTransferHost={handleTransferHost}
               onEditProfile={() => setShowProfileModal(true)}
             />
 

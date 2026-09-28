@@ -482,6 +482,13 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                 if _TRACE_ENABLED:
                     logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type"))
 
+        elif message_type == "transfer_host":
+            target_id = (payload.get("target_player_id") or payload.get("target_id", "")) if isinstance(payload, dict) else ""
+            result = await room_manager.transfer_host(player_id, target_id)
+            await transport.send_json(result)
+            if _TRACE_ENABLED:
+                logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type"))
+
         elif message_type == "leave_room":
             if isinstance(payload, dict) and payload.get("reason") == "disconnect":
                 # Disconnection from gateway (e.g. browser refresh / tab close)
@@ -555,29 +562,6 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                 })
                 if _TRACE_ENABLED:
                     logger.info("[grpc:out] player=%s type=error", player_id)
-
-
-        elif message_type == "update_profile":
-            name = payload.get("name") if isinstance(payload, dict) else None
-            avatar = payload.get("avatar") if isinstance(payload, dict) else None
-            result = await room_manager.update_profile(player_id, name=name, avatar=avatar)
-            await transport.send_json(result)
-            if _TRACE_ENABLED:
-                logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type"))
-
-        elif message_type == "shape":
-            room = room_manager._find_room_by_player(player_id)
-            if room and room.current_drawer_id == player_id:
-                data = dict(payload) if isinstance(payload, dict) else {}
-                data["player_id"] = player_id
-                await room_manager.broadcast(room.code, {"type": "shape", "payload": data})
-
-        elif message_type == "highlighter":
-            room = room_manager._find_room_by_player(player_id)
-            if room and room.current_drawer_id == player_id:
-                data = dict(payload) if isinstance(payload, dict) else {}
-                data["player_id"] = player_id
-                await room_manager.broadcast(room.code, {"type": "highlighter", "payload": data})
 
         else:
             await transport.send_json({

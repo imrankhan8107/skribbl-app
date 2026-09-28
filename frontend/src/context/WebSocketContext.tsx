@@ -138,9 +138,12 @@ export function gameReducer(state: GameState, action: Action): GameState {
         }
         return playerObj;
       });
+      const localPlayer = updatedPlayers.find((p) => p.id === state.localPlayerId);
+      const isHost = localPlayer ? localPlayer.isHost : state.isHost;
       return {
         ...state,
         players: updatedPlayers,
+        isHost,
       };
     }
 
@@ -156,6 +159,19 @@ export function gameReducer(state: GameState, action: Action): GameState {
             ...(avatar !== undefined ? { avatar } : {}),
           };
         }),
+      };
+    }
+
+    case "HOST_CHANGED": {
+      const { newHostId } = action.payload;
+      const isLocalHost = Boolean(state.localPlayerId && state.localPlayerId === newHostId);
+      return {
+        ...state,
+        isHost: isLocalHost,
+        players: state.players.map((p) => ({
+          ...p,
+          isHost: p.id === newHostId,
+        })),
       };
     }
 
@@ -562,6 +578,8 @@ function mapServerTypeToActionType(serverType: string): Action["type"] | null {
     left_room: "LEFT_ROOM",
     typing: "TYPING",
     profile_updated: "PROFILE_UPDATED",
+    host_changed: "HOST_CHANGED",
+    host_transferred: "HOST_TRANSFERRED",
     error: "ERROR",
   };
   return mapping[serverType] ?? null;
