@@ -644,12 +644,26 @@ async def end_turn(room: Room, reason: TurnEndReason, room_manager) -> None:
             player.score += score
             scores_payload[player.id] = score
 
+            # Track stats for MVP awards
+            player.correct_guesses_count = getattr(player, 'correct_guesses_count', 0) + 1
+            if getattr(player, 'fastest_guess_time', None) is None or elapsed < player.fastest_guess_time:
+                player.fastest_guess_time = elapsed
+            cur_streak = getattr(player, 'streak', 0) + 1
+            player.streak = cur_streak
+            player.max_streak = max(getattr(player, 'max_streak', 0), cur_streak)
+
+        # Reset streaks for players who did not guess (excluding drawer)
+        for p in room.players:
+            if p.id != turn_state.drawer_id and p.id not in turn_state.guess_order:
+                p.streak = 0
+
         # Compute drawer bonus
         drawer_bonus = compute_drawer_bonus(guesser_scores)
         drawer = room.get_player(turn_state.drawer_id)
         if drawer is not None:
             drawer.score += drawer_bonus
             scores_payload[drawer.id] = drawer_bonus
+            drawer.drawer_points_earned = getattr(drawer, 'drawer_points_earned', 0) + drawer_bonus
 
     # Broadcast turn_ended with word, scores, and reason
     await room_manager.broadcast(room.code, {
@@ -666,6 +680,111 @@ async def end_turn(room: Room, reason: TurnEndReason, room_manager) -> None:
 
     # Advance to next turn or round
     await advance_turn_or_round(room, room_manager)
+
+
+def build_game_over_payload(room: Room) -> dict:
+    """Build final ranked scores, MVP awards, and persistent session stats."""
+    ranked_players = sorted(room.players, key=lambda p: p.score, reverse=True)
+    final_scores = [
+        {"id": p.id, "name": p.name, "score": p.score}
+        for p in ranked_players
+    ]
+
+    # Award session win to top scorer(s) if scores > 0
+    if ranked_players and ranked_players[0].score > 0:
+        top_score = ranked_players[0].score
+        for p in ranked_players:
+            if p.score == top_score:
+                p.session_wins = getattr(p, "session_wins", 0) + 1
+
+    # Update cumulative session scores and games
+    for p in room.players:
+        p.session_score = getattr(p, "session_score", 0) + p.score
+        p.session_games = getattr(p, "session_games", 0) + 1
+
+    # Calculate MVP awards
+    mvp_awards = []
+    # 1. Speed Demon (fastest guess)
+    fastest_p = min(
+        (p for p in room.players if getattr(p, "fastest_guess_time", None) is not None),
+        key=lambda p: p.fastest_guess_time,
+        default=None,
+    )
+    if fastest_p and fastest_p.fastest_guess_time is not None:
+        mvp_awards.append({
+            "badge": "⚡ Speed Demon",
+            "title": "Fastest Guesser",
+            "player_id": fastest_p.id,
+            "player_name": fastest_p.name,
+            "detail": f"{fastest_p.fastest_guess_time:.1f}s record guess",
+        })
+
+    # 2. Master Artist (most drawing points)
+    artist_p = max(
+        (p for p in room.players if getattr(p, "drawer_points_earned", 0) > 0),
+        key=lambda p: p.drawer_points_earned,
+        default=None,
+    )
+    if artist_p:
+        mvp_awards.append({
+            "badge": "🎨 Master Artist",
+            "title": "Top Drawer",
+            "player_id": artist_p.id,
+            "player_name": artist_p.name,
+            "detail": f"{artist_p.drawer_points_earned} drawing pts",
+        })
+
+    # 3. Streak King (highest consecutive guesses)
+    streak_p = max(
+        (p for p in room.players if getattr(p, "max_streak", 0) >= 2),
+        key=lambda p: p.max_streak,
+        default=None,
+    )
+    if streak_p:
+        mvp_awards.append({
+            "badge": "🔥 Streak King",
+            "title": "Longest Streak",
+            "player_id": streak_p.id,
+            "player_name": streak_p.name,
+            "detail": f"{streak_p.max_streak} in a row",
+        })
+
+    # 4. Sharpshooter (most correct guesses)
+    sharpshooter_p = max(
+        (p for p in room.players if getattr(p, "correct_guesses_count", 0) > 0),
+        key=lambda p: p.correct_guesses_count,
+        default=None,
+    )
+    if sharpshooter_p:
+        mvp_awards.append({
+            "badge": "🎯 Sharpshooter",
+            "title": "Most Guesses",
+            "player_id": sharpshooter_p.id,
+            "player_name": sharpshooter_p.name,
+            "detail": f"{sharpshooter_p.correct_guesses_count} correct",
+        })
+
+    # Session leaderboard
+    session_stats = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "session_score": getattr(p, "session_score", 0),
+            "session_wins": getattr(p, "session_wins", 0),
+            "session_games": getattr(p, "session_games", 0),
+        }
+        for p in sorted(
+            room.players,
+            key=lambda x: (getattr(x, "session_wins", 0), getattr(x, "session_score", 0)),
+            reverse=True,
+        )
+    ]
+
+    return {
+        "scores": final_scores,
+        "mvp_awards": mvp_awards,
+        "session_stats": session_stats,
+    }
 
 
 async def advance_turn_or_round(room: Room, room_manager) -> None:
@@ -699,23 +818,11 @@ async def advance_turn_or_round(room: Room, room_manager) -> None:
     # Check if the game is over (all rounds complete)
     if room.current_round > room.config.num_rounds:
         room.state = RoomState.GAME_OVER
-
-        # Build final ranked scores
-        ranked_players = sorted(room.players, key=lambda p: p.score, reverse=True)
-        final_scores = [
-            {"id": p.id, "name": p.name, "score": p.score}
-            for p in ranked_players
-        ]
-
-        # Disambiguator: this log confirms game_over was GENERATED. If load
-        # tests show low completion but this fires for every room, the loss is
-        # downstream (dropped at the gateway queue), not the game engine failing
-        # to advance. If it does NOT fire, the event loop is starved and timers
-        # never ran — a different problem that priority lanes wouldn't fix.
+        payload = build_game_over_payload(room)
         logger.info("[game] game_over emitted room=%s reason=rounds_complete", room.code)
         await room_manager.broadcast(room.code, {
             "type": "game_over",
-            "payload": {"scores": final_scores},
+            "payload": payload,
         })
         return
 
@@ -732,30 +839,22 @@ async def advance_turn_or_round(room: Room, room_manager) -> None:
             room.current_round += 1
             if room.current_round > room.config.num_rounds:
                 room.state = RoomState.GAME_OVER
-                ranked_players = sorted(room.players, key=lambda p: p.score, reverse=True)
-                final_scores = [
-                    {"id": p.id, "name": p.name, "score": p.score}
-                    for p in ranked_players
-                ]
+                payload = build_game_over_payload(room)
                 logger.info("[game] game_over emitted room=%s reason=rounds_complete_skip", room.code)
                 await room_manager.broadcast(room.code, {
                     "type": "game_over",
-                    "payload": {"scores": final_scores},
+                    "payload": payload,
                 })
                 return
         attempts += 1
     else:
         # No connected players found — end game
         room.state = RoomState.GAME_OVER
-        ranked_players = sorted(room.players, key=lambda p: p.score, reverse=True)
-        final_scores = [
-            {"id": p.id, "name": p.name, "score": p.score}
-            for p in ranked_players
-        ]
+        payload = build_game_over_payload(room)
         logger.info("[game] game_over emitted room=%s reason=no_connected_players", room.code)
         await room_manager.broadcast(room.code, {
             "type": "game_over",
-            "payload": {"scores": final_scores},
+            "payload": payload,
         })
         return
 

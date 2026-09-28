@@ -13,6 +13,24 @@ export interface PlayerInfo {
   avatar?: string;
   streak?: number;
   isFirstGuesser?: boolean;
+  sessionWins?: number;
+  sessionScore?: number;
+}
+
+export interface MvpAward {
+  badge: string;
+  title: string;
+  playerId: string;
+  playerName: string;
+  detail: string;
+}
+
+export interface SessionPlayerStat {
+  id: string;
+  name: string;
+  sessionScore: number;
+  sessionWins: number;
+  sessionGames: number;
 }
 
 export interface GameConfig {
@@ -81,6 +99,8 @@ export interface GameState {
   reconnectCountdown: number;
   artworkGallery?: RoundArtwork[];
   typingUsers?: Record<string, boolean>;
+  mvpAwards?: MvpAward[];
+  sessionStats?: SessionPlayerStat[];
 }
 
 export interface ChatMessage {
@@ -129,7 +149,15 @@ export type Action =
     }
   | { type: "GUESS_CORRECT"; payload: { playerId: string; playerName: string; score: number } }
   | { type: "CHAT_MESSAGE"; payload: ChatMessage }
-  | { type: "GAME_OVER"; payload: { players: PlayerInfo[] } }
+  | {
+      type: "GAME_OVER";
+      payload: {
+        players?: PlayerInfo[];
+        scores?: Array<{ id: string; name: string; score: number }>;
+        mvpAwards?: MvpAward[];
+        sessionStats?: SessionPlayerStat[];
+      };
+    }
   | { type: "PLAYER_RECONNECTED"; payload: { player: PlayerInfo } }
   | { type: "WAITING_FOR_RECONNECT"; payload: { seconds: number } }
   | { type: "RECONNECT_RESUMED"; payload: Record<string, never> }

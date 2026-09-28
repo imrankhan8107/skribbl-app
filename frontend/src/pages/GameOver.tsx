@@ -655,6 +655,7 @@ export default function GameOver() {
   const navigate = useNavigate();
   const [selectedArtwork, setSelectedArtwork] = useState<RoundArtwork | null>(null);
   const [replayArtwork, setReplayArtwork] = useState<RoundArtwork | null>(null);
+  const [viewMode, setViewMode] = useState<"game" | "session">("game");
 
   // Navigate back to lobby when rematch transitions state to 'lobby'
   useEffect(() => {
@@ -674,6 +675,12 @@ export default function GameOver() {
   const winnerAvatar = winner
     ? getAvatarForPlayer(winner.name || winner.id, winnerExplicitAvatar)
     : null;
+
+  const hasSessionStats = Boolean(
+    gameState.sessionStats &&
+    gameState.sessionStats.length > 0 &&
+    gameState.sessionStats.some((s) => s.sessionWins > 0 || s.sessionGames > 1)
+  );
 
   return (
     <>
@@ -712,35 +719,133 @@ export default function GameOver() {
               <div className="winner-score">{winner.score} pts</div>
             </div>
 
+            {/* Leaderboard View Mode Toggle (if session stats exist) */}
+            {hasSessionStats && (
+              <div className="leaderboard-view-toggle" data-testid="leaderboard-view-toggle">
+                <button
+                  type="button"
+                  className={`view-toggle-btn ${viewMode === "game" ? "active" : ""}`}
+                  onClick={() => setViewMode("game")}
+                  data-testid="toggle-view-game"
+                >
+                  🎮 This Game
+                </button>
+                <button
+                  type="button"
+                  className={`view-toggle-btn ${viewMode === "session" ? "active" : ""}`}
+                  onClick={() => setViewMode("session")}
+                  data-testid="toggle-view-session"
+                >
+                  🏆 Session Standings
+                </button>
+              </div>
+            )}
+
             {/* Full Leaderboard */}
-            <ol data-testid="leaderboard" className="leaderboard">
-              {rankedPlayers.map((player, index) => {
-                const isLocal =
-                  (gameState.localPlayerId && player.id === gameState.localPlayerId) ||
-                  player.name === getStoredPlayerName();
-                const explicitAvatar = player.avatar || (isLocal ? getStoredAvatarId() : undefined);
-                const avatar = getAvatarForPlayer(player.name || player.id, explicitAvatar);
-                return (
-                  <li key={player.id} className={`leaderboard-entry leaderboard-rank-${index + 1}`}>
-                    <span className="leaderboard-rank">
-                      {index === 0 ? "1" : index === 1 ? "2" : index === 2 ? "3" : `${index + 1}`}
-                    </span>
-                    <span className="leaderboard-medal">
-                      {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : ""}
-                    </span>
-                    <span
-                      className="player-avatar-badge"
-                      style={{ backgroundColor: avatar.bgColor, margin: "0 0.4rem" }}
-                      title={avatar.label}
+            {viewMode === "game" ? (
+              <ol data-testid="leaderboard" className="leaderboard">
+                {rankedPlayers.map((player, index) => {
+                  const isLocal =
+                    (gameState.localPlayerId && player.id === gameState.localPlayerId) ||
+                    player.name === getStoredPlayerName();
+                  const explicitAvatar =
+                    player.avatar || (isLocal ? getStoredAvatarId() : undefined);
+                  const avatar = getAvatarForPlayer(player.name || player.id, explicitAvatar);
+                  return (
+                    <li
+                      key={player.id}
+                      className={`leaderboard-entry leaderboard-rank-${index + 1}`}
                     >
-                      {avatar.emoji}
-                    </span>
-                    <span className="leaderboard-name">{player.name}</span>
-                    <span className="leaderboard-score">{player.score} pts</span>
-                  </li>
-                );
-              })}
-            </ol>
+                      <span className="leaderboard-rank">
+                        {index === 0 ? "1" : index === 1 ? "2" : index === 2 ? "3" : `${index + 1}`}
+                      </span>
+                      <span className="leaderboard-medal">
+                        {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : ""}
+                      </span>
+                      <span
+                        className="player-avatar-badge"
+                        style={{ backgroundColor: avatar.bgColor, margin: "0 0.4rem" }}
+                        title={avatar.label}
+                      >
+                        {avatar.emoji}
+                      </span>
+                      <span className="leaderboard-name">{player.name}</span>
+                      <span className="leaderboard-score">{player.score} pts</span>
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : (
+              <ol data-testid="session-leaderboard" className="leaderboard session-leaderboard">
+                {gameState.sessionStats?.map((stat, index) => {
+                  const isLocal =
+                    (gameState.localPlayerId && stat.id === gameState.localPlayerId) ||
+                    stat.name === getStoredPlayerName();
+                  const explicitAvatar =
+                    gameState.players.find((p) => p.id === stat.id)?.avatar ||
+                    (isLocal ? getStoredAvatarId() : undefined);
+                  const avatar = getAvatarForPlayer(stat.name || stat.id, explicitAvatar);
+                  return (
+                    <li key={stat.id} className={`leaderboard-entry leaderboard-rank-${index + 1}`}>
+                      <span className="leaderboard-rank">
+                        {index === 0 ? "1" : index === 1 ? "2" : index === 2 ? "3" : `${index + 1}`}
+                      </span>
+                      <span className="leaderboard-medal">
+                        {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : ""}
+                      </span>
+                      <span
+                        className="player-avatar-badge"
+                        style={{ backgroundColor: avatar.bgColor, margin: "0 0.4rem" }}
+                        title={avatar.label}
+                      >
+                        {avatar.emoji}
+                      </span>
+                      <span className="leaderboard-name">{stat.name}</span>
+                      <span className="leaderboard-session-wins" title="Games Won">
+                        🏆 {stat.sessionWins} {stat.sessionWins === 1 ? "win" : "wins"}
+                      </span>
+                      <span className="leaderboard-score">{stat.sessionScore} pts</span>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+
+            {/* Game MVPs & Highlights Section */}
+            {gameState.mvpAwards && gameState.mvpAwards.length > 0 && (
+              <div className="mvp-awards-section" data-testid="mvp-awards-section">
+                <div className="mvp-section-header">
+                  <h2>🎖️ Match Highlights & MVPs</h2>
+                </div>
+                <div className="mvp-awards-grid">
+                  {gameState.mvpAwards.map((mvp, i) => {
+                    const p = gameState.players.find((pl) => pl.id === mvp.playerId);
+                    const isLocal = gameState.localPlayerId === mvp.playerId;
+                    const explicitAvatar = p?.avatar || (isLocal ? getStoredAvatarId() : undefined);
+                    const avatar = getAvatarForPlayer(
+                      mvp.playerName || mvp.playerId,
+                      explicitAvatar
+                    );
+                    return (
+                      <div key={i} className="mvp-card" data-testid={`mvp-card-${i}`}>
+                        <div className="mvp-badge-tag">{mvp.badge}</div>
+                        <div className="mvp-player-row">
+                          <span
+                            className="player-avatar-badge"
+                            style={{ backgroundColor: avatar.bgColor }}
+                            title={avatar.label}
+                          >
+                            {avatar.emoji}
+                          </span>
+                          <span className="mvp-player-name">{mvp.playerName}</span>
+                        </div>
+                        <div className="mvp-detail">{mvp.detail}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <p>No scores available</p>

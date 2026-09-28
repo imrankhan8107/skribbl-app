@@ -1,5 +1,12 @@
 import React, { createContext, useReducer, useRef, useCallback, useEffect, useState } from "react";
-import type { GameState, Action, ChatMessage, PlayerInfo } from "../types";
+import type {
+  GameState,
+  Action,
+  ChatMessage,
+  PlayerInfo,
+  MvpAward,
+  SessionPlayerStat,
+} from "../types";
 import { publishDrawing, getCanvasSnapshot, getCanvasHistory } from "./drawingBus";
 import { publishReaction } from "./reactionBus";
 import { getStoredAvatarId, getStoredPlayerName, getAvatarForPlayer } from "../utils/avatars";
@@ -33,6 +40,8 @@ const initialGameState: GameState = {
   reconnectCountdown: 0,
   artworkGallery: [],
   typingUsers: {},
+  mvpAwards: [],
+  sessionStats: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -325,9 +334,11 @@ export function gameReducer(state: GameState, action: Action): GameState {
     }
 
     case "GAME_OVER": {
-      // Server sends { scores: [{ id, name, score }, ...] } — map to players format
+      // Server sends { scores: [{ id, name, score }, ...], mvp_awards, session_stats }
       const p = action.payload as Record<string, unknown>;
       const scores = p.scores as Array<{ id: string; name: string; score: number }> | undefined;
+      const mvpAwards = (p.mvpAwards ?? p.mvp_awards) as MvpAward[] | undefined;
+      const sessionStats = (p.sessionStats ?? p.session_stats) as SessionPlayerStat[] | undefined;
       const finalPlayers = scores
         ? scores.map((s) => {
             const existing = state.players.find((pl) => pl.id === s.id);
@@ -349,6 +360,14 @@ export function gameReducer(state: GameState, action: Action): GameState {
             };
             if (avatar) plObj.avatar = avatar;
             if (existing?.streak !== undefined) plObj.streak = existing.streak;
+            const stat = sessionStats?.find((st) => st.id === s.id);
+            if (stat) {
+              plObj.sessionWins = stat.sessionWins;
+              plObj.sessionScore = stat.sessionScore;
+            } else if (existing?.sessionWins !== undefined) {
+              plObj.sessionWins = existing.sessionWins;
+              plObj.sessionScore = existing.sessionScore;
+            }
             return plObj;
           })
         : ((p.players as typeof state.players) ?? state.players);
@@ -356,6 +375,8 @@ export function gameReducer(state: GameState, action: Action): GameState {
         ...state,
         phase: "game_over",
         players: finalPlayers,
+        mvpAwards: mvpAwards ?? state.mvpAwards,
+        sessionStats: sessionStats ?? state.sessionStats,
       };
     }
 

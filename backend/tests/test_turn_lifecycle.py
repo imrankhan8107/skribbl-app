@@ -472,3 +472,49 @@ class TestCustomWords:
             if task and not task.done():
                 task.cancel()
 
+
+class TestGameOverStatsAndMvp:
+    """Tests for build_game_over_payload, session statistics, and MVP awards."""
+
+    def test_build_game_over_payload_awards_mvps_and_session_stats(self):
+        from backend.game_engine import build_game_over_payload
+        room = _make_room(num_players=3)
+        p0 = room.players[0]
+        p1 = room.players[1]
+        p2 = room.players[2]
+
+        p0.score = 250
+        p0.drawer_points_earned = 120
+        p0.max_streak = 3
+
+        p1.score = 180
+        p1.fastest_guess_time = 4.2
+        p1.correct_guesses_count = 5
+
+        p2.score = 90
+
+        payload = build_game_over_payload(room)
+
+        # Top scorer gets session win
+        assert p0.session_wins == 1
+        assert p1.session_wins == 0
+        assert p0.session_score == 250
+        assert p1.session_score == 180
+
+        # Scores list in payload
+        assert len(payload["scores"]) == 3
+        assert payload["scores"][0]["id"] == p0.id
+
+        # MVP awards list
+        mvp_badges = [m["badge"] for m in payload["mvp_awards"]]
+        assert any("Speed Demon" in b for b in mvp_badges)
+        assert any("Master Artist" in b for b in mvp_badges)
+        assert any("Streak King" in b for b in mvp_badges)
+        assert any("Sharpshooter" in b for b in mvp_badges)
+
+        # Session stats list
+        assert len(payload["session_stats"]) == 3
+        assert payload["session_stats"][0]["id"] == p0.id
+        assert payload["session_stats"][0]["session_wins"] == 1
+
+

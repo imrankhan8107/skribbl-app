@@ -326,4 +326,64 @@ describe("GameOver", () => {
     expect(screen.getByTestId("replay-modal")).toBeInTheDocument();
     expect(screen.getByText(/🎬 Replay: Giraffe/)).toBeInTheDocument();
   });
+
+  it("renders MVP awards section when mvpAwards are present", () => {
+    const gameState: GameState = {
+      ...defaultGameState,
+      mvpAwards: [
+        {
+          badge: "⚡ Speed Demon",
+          title: "Fastest Guesser",
+          playerId: "p2",
+          playerName: "Bob",
+          detail: "3.2s record guess",
+        },
+        {
+          badge: "🎨 Master Artist",
+          title: "Top Drawer",
+          playerId: "p1",
+          playerName: "Alice",
+          detail: "150 drawing pts",
+        },
+      ],
+    };
+
+    renderGameOver({ gameState });
+
+    expect(screen.getByTestId("mvp-awards-section")).toBeInTheDocument();
+    expect(screen.getByText("⚡ Speed Demon")).toBeInTheDocument();
+    expect(screen.getByText("3.2s record guess")).toBeInTheDocument();
+    expect(screen.getByText("🎨 Master Artist")).toBeInTheDocument();
+    expect(screen.getByText("150 drawing pts")).toBeInTheDocument();
+  });
+
+  it("renders session standings toggle and switches between This Game and Session Standings", async () => {
+    const user = userEvent.setup();
+    const gameState: GameState = {
+      ...defaultGameState,
+      sessionStats: [
+        { id: "p1", name: "Alice", sessionScore: 450, sessionWins: 2, sessionGames: 2 },
+        { id: "p2", name: "Bob", sessionScore: 300, sessionWins: 0, sessionGames: 2 },
+      ],
+    };
+
+    renderGameOver({ gameState });
+
+    expect(screen.getByTestId("leaderboard-view-toggle")).toBeInTheDocument();
+    expect(screen.getByTestId("leaderboard")).toBeInTheDocument();
+
+    // Click Session Standings tab
+    const sessionToggle = screen.getByTestId("toggle-view-session");
+    await user.click(sessionToggle);
+
+    // Session leaderboard should now be shown
+    expect(screen.getByTestId("session-leaderboard")).toBeInTheDocument();
+    expect(screen.getByText("🏆 2 wins")).toBeInTheDocument();
+    expect(screen.getByText("450 pts")).toBeInTheDocument();
+
+    // Click back to This Game
+    const gameToggle = screen.getByTestId("toggle-view-game");
+    await user.click(gameToggle);
+    expect(screen.getByTestId("leaderboard")).toBeInTheDocument();
+  });
 });

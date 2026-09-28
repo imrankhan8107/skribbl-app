@@ -30,6 +30,14 @@ class Player:
     websocket: object = None                     # WebSocket instance (not serialized)
     disconnect_time: Optional[float] = None      # epoch seconds
     cleanup_task: Optional[asyncio.Task] = None  # asyncio task that fires after 120s to permanently remove the player
+    session_score: int = 0                       # Cumulative score across rematches in this room
+    session_wins: int = 0                        # Total game wins in this room session
+    session_games: int = 0                       # Total games played in this room session
+    streak: int = 0                              # Current consecutive correct guess streak
+    max_streak: int = 0                          # Peak guess streak in current game
+    correct_guesses_count: int = 0               # Total correct guesses in current game
+    fastest_guess_time: Optional[float] = None   # Lowest elapsed seconds for a correct guess
+    drawer_points_earned: int = 0                # Total points earned while drawing
 
 
 @dataclass

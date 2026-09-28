@@ -31,6 +31,8 @@ const initialState: GameState = {
   reconnectCountdown: 0,
   artworkGallery: [],
   typingUsers: {},
+  mvpAwards: [],
+  sessionStats: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -341,6 +343,41 @@ describe("gameReducer", () => {
       const next = gameReducer(state, action);
       expect(next.phase).toBe("game_over");
       expect(next.players).toEqual(players);
+    });
+
+    it("stores mvpAwards and sessionStats when present in GAME_OVER", () => {
+      const state: GameState = { ...initialState, phase: "playing" };
+      const action: Action = {
+        type: "GAME_OVER",
+        payload: {
+          scores: [{ id: "p1", name: "Alice", score: 500 }],
+          mvpAwards: [
+            {
+              badge: "⚡ Speed Demon",
+              title: "Fastest Guesser",
+              playerId: "p1",
+              playerName: "Alice",
+              detail: "2.1s",
+            },
+          ],
+          sessionStats: [
+            {
+              id: "p1",
+              name: "Alice",
+              sessionScore: 500,
+              sessionWins: 1,
+              sessionGames: 1,
+            },
+          ],
+        },
+      };
+      const next = gameReducer(state, action);
+      expect(next.phase).toBe("game_over");
+      expect(next.mvpAwards).toHaveLength(1);
+      expect(next.mvpAwards?.[0].badge).toBe("⚡ Speed Demon");
+      expect(next.sessionStats).toHaveLength(1);
+      expect(next.sessionStats?.[0].sessionWins).toBe(1);
+      expect(next.players[0].sessionWins).toBe(1);
     });
   });
 

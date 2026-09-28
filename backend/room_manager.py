@@ -107,6 +107,10 @@ class RoomManager:
             data["is_host"] = (player.id == room.host_id)
         if player.avatar:
             data["avatar"] = player.avatar
+        if getattr(player, "session_wins", 0) > 0:
+            data["session_wins"] = player.session_wins
+        if getattr(player, "session_score", 0) > 0:
+            data["session_score"] = player.session_score
         return data
 
     def _serialize_config(self, config: GameConfig) -> dict:
@@ -1396,10 +1400,15 @@ class RoomManager:
                 "payload": {"code": "GAME_NOT_ACTIVE", "message": "Rematch can only be initiated from game over state"},
             }
 
-        # Reset all player scores to 0 and has_guessed to False
+        # Reset all player per-game stats to initial state (session stats persist)
         for player in room.players:
             player.score = 0
             player.has_guessed = False
+            player.streak = 0
+            player.max_streak = 0
+            player.correct_guesses_count = 0
+            player.fastest_guess_time = None
+            player.drawer_points_earned = 0
 
         # Reset round counter and drawer index
         room.current_round = 0

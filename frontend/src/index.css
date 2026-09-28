@@ -1094,6 +1094,114 @@ ol {
   color: var(--color-primary);
 }
 
+/* ---- View Toggle (Game vs Session) ---- */
+.leaderboard-view-toggle {
+  display: flex;
+  background: rgba(148, 163, 184, 0.15);
+  padding: 0.25rem;
+  border-radius: 9999px;
+  gap: 0.25rem;
+  margin-bottom: 1.25rem;
+  z-index: 1;
+}
+
+.view-toggle-btn {
+  padding: 0.4rem 1rem;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-radius: 9999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.view-toggle-btn.active {
+  background: var(--color-primary);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.35);
+}
+
+.leaderboard-session-wins {
+  font-size: 0.825rem;
+  font-weight: 700;
+  color: #d97706;
+  background: rgba(245, 158, 11, 0.12);
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+
+/* ---- Game MVPs & Highlights Section ---- */
+.mvp-awards-section {
+  width: 100%;
+  max-width: 480px;
+  margin-top: 1.5rem;
+  z-index: 1;
+}
+
+.mvp-section-header h2 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 0.75rem;
+  text-align: center;
+}
+
+.mvp-awards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.75rem;
+}
+
+.mvp-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  box-shadow: var(--shadow-sm);
+  transition:
+    transform 0.2s,
+    box-shadow 0.2s;
+}
+
+.mvp-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: rgba(99, 102, 241, 0.4);
+}
+
+.mvp-badge-tag {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.mvp-player-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mvp-player-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mvp-detail {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
 .rematch-button {
   margin-top: 2rem;
   padding: 0.875rem 2.5rem;
