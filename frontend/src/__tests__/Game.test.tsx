@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { WebSocketContext } from "../context/WebSocketContext";
 import type { WebSocketContextValue } from "../context/WebSocketContext";
@@ -206,6 +206,84 @@ describe("Game Page", () => {
       renderGame();
       const roundIndicator = screen.getByTestId("round-indicator");
       expect(roundIndicator).toHaveTextContent("Round 2 / 3");
+    });
+
+    it("displays round theme badge when currentTheme is present", () => {
+      renderGame({
+        phase: "playing",
+        currentTheme: { id: "animals", name: "Animals & Wildlife", emoji: "🐾" },
+      });
+      const themeBadge = screen.getByTestId("round-theme-badge");
+      expect(themeBadge).toHaveTextContent("🐾 Animals & Wildlife");
+    });
+  });
+
+  describe("Word pack theme selection for drawer", () => {
+    const samplePacks = [
+      {
+        id: "animals",
+        name: "Animals & Wildlife",
+        emoji: "🐾",
+        words: ["dolphin", "kangaroo", "turtle"],
+      },
+      {
+        id: "food",
+        name: "Food & Cuisine",
+        emoji: "🍕",
+        words: ["pizza", "waffle", "sushi"],
+      },
+      {
+        id: "objects",
+        name: "Everyday Objects",
+        emoji: "📦",
+        words: ["guitar", "telescope", "camera"],
+      },
+    ];
+
+    it("renders 3 word pack tabs and displays first pack's words by default", () => {
+      renderGame({
+        phase: "word_selection",
+        isDrawer: true,
+        wordPacks: samplePacks,
+      });
+
+      expect(screen.getByTestId("pack-tab-animals")).toBeInTheDocument();
+      expect(screen.getByTestId("pack-tab-food")).toBeInTheDocument();
+      expect(screen.getByTestId("pack-tab-objects")).toBeInTheDocument();
+
+      // First pack words visible
+      expect(screen.getByText("dolphin")).toBeInTheDocument();
+      expect(screen.getByText("kangaroo")).toBeInTheDocument();
+      expect(screen.getByText("turtle")).toBeInTheDocument();
+      expect(screen.queryByText("pizza")).not.toBeInTheDocument();
+    });
+
+    it("switches displayed words instantly when another pack tab is clicked", () => {
+      renderGame({
+        phase: "word_selection",
+        isDrawer: true,
+        wordPacks: samplePacks,
+      });
+
+      // Click on food pack tab
+      fireEvent.click(screen.getByTestId("pack-tab-food"));
+
+      // Food words are now visible, animals hidden
+      expect(screen.getByText("pizza")).toBeInTheDocument();
+      expect(screen.getByText("waffle")).toBeInTheDocument();
+      expect(screen.getByText("sushi")).toBeInTheDocument();
+      expect(screen.queryByText("dolphin")).not.toBeInTheDocument();
+    });
+
+    it("sends select_word with chosen word when clicked", () => {
+      const { send } = renderGame({
+        phase: "word_selection",
+        isDrawer: true,
+        wordPacks: samplePacks,
+      });
+
+      fireEvent.click(screen.getByText("kangaroo"));
+      expect(send).toHaveBeenCalledWith("select_word", { word: "kangaroo" });
     });
   });
 });

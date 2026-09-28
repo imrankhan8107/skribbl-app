@@ -49,6 +49,7 @@ class TurnState:
     hint_task_40: Optional[asyncio.Task] = None
     hint_task_70: Optional[asyncio.Task] = None
     guess_order: list = field(default_factory=list)  # list of player_ids in order they guessed
+    theme: Optional[dict] = None
 
 
 @dataclass

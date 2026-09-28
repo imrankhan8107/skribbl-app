@@ -114,3 +114,41 @@ class TestSelectWord:
         select_word(room, "banana")
         select_word(room, "car")
         assert room.used_words == {"apple", "banana", "car"}
+
+
+class TestDrawWordPackChoices:
+    """Tests for draw_word_pack_choices function."""
+
+    def test_returns_three_packs_with_prefetched_words(self):
+        """draw_word_pack_choices returns 3 distinct packs, each with 3 words."""
+        from backend.game_engine import draw_word_pack_choices
+        from backend.words import WORD_PACKS_BY_ID
+
+        room = _make_room()
+        packs, flat_choices = draw_word_pack_choices(room, num_packs=3, words_per_pack=3)
+
+        assert len(packs) == 3
+        assert len(flat_choices) == 3
+
+        pack_ids = set()
+        for pack in packs:
+            assert "id" in pack
+            assert "name" in pack
+            assert "emoji" in pack
+            assert "words" in pack
+            assert len(pack["words"]) == 3
+            assert pack["id"] in WORD_PACKS_BY_ID
+            pack_ids.add(pack["id"])
+
+        assert len(pack_ids) == 3  # All 3 packs are distinct
+
+    def test_words_not_in_used_words(self):
+        """Selected pack words should prioritize unused words."""
+        from backend.game_engine import draw_word_pack_choices
+        room = _make_room()
+        room.used_words = {"dog", "pizza", "guitar"}
+
+        packs, _ = draw_word_pack_choices(room, num_packs=3, words_per_pack=3)
+        for pack in packs:
+            for w in pack["words"]:
+                assert w not in room.used_words

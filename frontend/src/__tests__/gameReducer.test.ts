@@ -16,6 +16,8 @@ const initialState: GameState = {
   config: { numRounds: 3, turnDuration: 80, maxPlayers: 8 },
   hint: [],
   wordChoices: [],
+  wordPacks: undefined,
+  currentTheme: null,
   drawingEvent: null,
   currentWord: null,
   drawerId: null,
@@ -120,8 +122,46 @@ describe("gameReducer", () => {
     });
   });
 
+  describe("WORD_CHOICES", () => {
+    it("stores wordChoices, wordPacks, and marks local player as drawer", () => {
+      const state: GameState = { ...initialState, localPlayerId: "player-1" };
+      const action: Action = {
+        type: "WORD_CHOICES",
+        payload: {
+          choices: ["dolphin", "pizza", "guitar"],
+          packs: [
+            {
+              id: "animals",
+              name: "Animals & Wildlife",
+              emoji: "🐾",
+              words: ["dolphin", "kangaroo", "turtle"],
+            },
+            {
+              id: "food",
+              name: "Food & Cuisine",
+              emoji: "🍕",
+              words: ["pizza", "waffle", "sushi"],
+            },
+            {
+              id: "objects",
+              name: "Everyday Objects",
+              emoji: "📦",
+              words: ["guitar", "telescope", "camera"],
+            },
+          ],
+        },
+      };
+      const next = gameReducer(state, action);
+      expect(next.isDrawer).toBe(true);
+      expect(next.drawerId).toBe("player-1");
+      expect(next.wordChoices).toEqual(["dolphin", "pizza", "guitar"]);
+      expect(next.wordPacks).toHaveLength(3);
+      expect(next.wordPacks?.[0].id).toBe("animals");
+    });
+  });
+
   describe("TURN_STARTED", () => {
-    it("sets phase to playing, stores hint/duration/round, determines isDrawer when local player is drawer", () => {
+    it("sets phase to playing, stores hint/duration/round, theme, determines isDrawer when local player is drawer", () => {
       const state: GameState = { ...initialState, localPlayerId: "player-1" };
       const action: Action = {
         type: "TURN_STARTED",
@@ -130,6 +170,7 @@ describe("gameReducer", () => {
           hint: ["_", "_", "_", " ", "_", "_"],
           duration: 80,
           round: 2,
+          theme: { id: "animals", name: "Animals & Wildlife", emoji: "🐾" },
         },
       };
       const next = gameReducer(state, action);
@@ -139,6 +180,7 @@ describe("gameReducer", () => {
       expect(next.currentRound).toBe(2);
       expect(next.isDrawer).toBe(true);
       expect(next.hasGuessed).toBe(false);
+      expect(next.currentTheme).toEqual({ id: "animals", name: "Animals & Wildlife", emoji: "🐾" });
     });
 
     it("sets isDrawer to false when local player is not the drawer", () => {

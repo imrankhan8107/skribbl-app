@@ -22,8 +22,14 @@ export default function Game() {
   useGameAudio(gameState);
   const [countdown, setCountdown] = useState(0);
   const [showRoundTransition, setShowRoundTransition] = useState(false);
+  const [selectedPackIndex, setSelectedPackIndex] = useState(0);
   const prevRoundRef = useRef(0);
   const shownForRoundRef = useRef(0);
+
+  // Reset selected pack index when round or drawer changes
+  useEffect(() => {
+    setSelectedPackIndex(0);
+  }, [gameState.currentRound, gameState.drawerId]);
 
   // Track when the round number changes
   useEffect(() => {
@@ -155,11 +161,32 @@ export default function Game() {
             </span>
             <SoundToggle />
           </div>
-          {gameState.isDrawer && gameState.wordChoices.length > 0 ? (
+          {gameState.isDrawer &&
+          ((gameState.wordPacks && gameState.wordPacks.length > 0) ||
+            gameState.wordChoices.length > 0) ? (
             <div className="word-selection" data-testid="word-selection">
-              <h2>Choose a word to draw:</h2>
-              <div className="word-choices">
-                {gameState.wordChoices.map((word) => (
+              <h2>Choose a theme & word to draw:</h2>
+              {gameState.wordPacks && gameState.wordPacks.length > 0 && (
+                <div className="word-pack-tabs" data-testid="word-pack-tabs">
+                  {gameState.wordPacks.map((pack, idx) => (
+                    <button
+                      key={pack.id}
+                      type="button"
+                      className={`word-pack-tab ${idx === selectedPackIndex ? "active" : ""}`}
+                      onClick={() => setSelectedPackIndex(idx)}
+                      data-testid={`pack-tab-${pack.id}`}
+                    >
+                      <span className="pack-tab-emoji">{pack.emoji}</span>
+                      <span className="pack-tab-name">{pack.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="word-choices" data-testid="word-choices">
+                {(gameState.wordPacks && gameState.wordPacks[selectedPackIndex]
+                  ? gameState.wordPacks[selectedPackIndex].words
+                  : gameState.wordChoices
+                ).map((word) => (
                   <button
                     key={word}
                     className="word-choice-btn"
@@ -201,6 +228,11 @@ export default function Game() {
           <span className="round-indicator" data-testid="round-indicator">
             Round {gameState.currentRound} / {gameState.totalRounds}
           </span>
+          {gameState.currentTheme && (
+            <span className="round-theme-badge" data-testid="round-theme-badge">
+              {gameState.currentTheme.emoji} {gameState.currentTheme.name}
+            </span>
+          )}
           <TimerBar seconds={gameState.timerSeconds} total={gameState.config?.turnDuration ?? 80} />
           <SoundToggle />
         </div>

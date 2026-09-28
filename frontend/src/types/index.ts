@@ -20,6 +20,19 @@ export interface GameConfig {
 
 export type GamePhase = "idle" | "lobby" | "word_selection" | "playing" | "game_over";
 
+export interface WordPackChoice {
+  id: string;
+  name: string;
+  emoji: string;
+  words: string[];
+}
+
+export interface RoundTheme {
+  id: string;
+  name: string;
+  emoji: string;
+}
+
 export interface GameState {
   phase: GamePhase;
   roomCode: string | null;
@@ -30,6 +43,8 @@ export interface GameState {
   config: GameConfig;
   hint: string[]; // array of chars; '_' for hidden
   wordChoices: string[]; // word choices for drawer during word_selection phase
+  wordPacks?: WordPackChoice[]; // pre-fetched 3 word packs with words for drawer
+  currentTheme?: RoundTheme | null; // active theme for the ongoing round
   drawingEvent: { type: string; payload: unknown; id: number } | null; // latest remote drawing event
   currentWord: string | null; // the current word (only set for drawer)
   drawerId: string | null; // current drawer's player ID
@@ -64,7 +79,10 @@ export type Action =
       type: "GAME_STARTED";
       payload: { config?: GameConfig; totalRounds?: number; round?: number; drawerId?: string };
     }
-  | { type: "WORD_CHOICES"; payload: { choices: string[] } }
+  | {
+      type: "WORD_CHOICES";
+      payload: { choices: string[]; packs?: WordPackChoice[] };
+    }
   | {
       type: "TURN_STARTED";
       payload: {
@@ -72,6 +90,7 @@ export type Action =
         hint: string[];
         duration: number;
         round: number;
+        theme?: RoundTheme;
       };
     }
   | { type: "HINT_UPDATE"; payload: { hint: string[] } }

@@ -9,7 +9,7 @@ from collections import deque
 
 from backend.fast_json import json_dumps
 from backend.models import Room, RoomState, TurnEndReason, TurnState
-from backend.words import WORDS
+from backend.words import WORDS, WORD_PACKS, WORD_TO_PACK
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -94,6 +94,48 @@ def draw_word_choices(room: Room) -> list[str]:
     room.word_pool = deque(w for w in room.word_pool if w not in set(choices))
 
     return choices
+
+
+def draw_word_pack_choices(
+    room: Room,
+    num_packs: int = 3,
+    words_per_pack: int = 3,
+) -> tuple[list[dict], list[str]]:
+    """Draw random word packs and pre-fetched words for each pack for a turn.
+
+    Selects `num_packs` distinct categories from WORD_PACKS.
+    For each pack, selects `words_per_pack` unused words (or unused in room session).
+    If a category is low on unused words, it draws from available pack words avoiding
+    recent choices.
+
+    Returns:
+        (packs_data, flat_choices):
+        - packs_data: list of dicts with keys (id, name, emoji, words)
+        - flat_choices: 3 representative words (one per pack) for backwards compatibility
+    """
+    sampled_packs = random.sample(WORD_PACKS, min(num_packs, len(WORD_PACKS)))
+    packs_data = []
+    flat_choices = []
+
+    for pack in sampled_packs:
+        pack_words = pack["words"]
+        unused = [w for w in pack_words if w not in room.used_words]
+        if len(unused) < words_per_pack:
+            available = list(pack_words)
+        else:
+            available = unused
+
+        selected = random.sample(available, min(words_per_pack, len(available)))
+        packs_data.append({
+            "id": pack["id"],
+            "name": pack["name"],
+            "emoji": pack["emoji"],
+            "words": selected,
+        })
+        if selected:
+            flat_choices.append(selected[0])
+
+    return packs_data, flat_choices
 
 
 def select_word(room: Room, word: str) -> None:
@@ -204,15 +246,20 @@ async def start_turn(room: Room, room_manager) -> None:
         room_manager: The RoomManager for broadcasting messages.
     """
     drawer = room.players[room.drawer_index]
-    choices = draw_word_choices(room)
+    packs, choices = draw_word_pack_choices(room, num_packs=3, words_per_pack=3)
 
-    # Store choices temporarily on the room for validation during selection
-    room._pending_word_choices = choices
+    # All offered words across the 3 sampled packs are valid for the drawer
+    all_offered_words = [w for p in packs for w in p["words"]]
+    room._pending_word_choices = all_offered_words
+    room._pending_packs = packs
 
-    # Send word_choices only to the drawer
+    # Send word_choices only to the drawer with both flat choices and categorized packs
     message = json_dumps({
         "type": "word_choices",
-        "payload": {"choices": choices},
+        "payload": {
+            "choices": choices,
+            "packs": packs,
+        },
     })
     if drawer.is_connected and drawer.websocket is not None:
         try:
@@ -274,6 +321,9 @@ async def handle_word_selection(room: Room, player_id: str, word: str, room_mana
     # Mark the word as used
     select_word(room, word)
 
+    # Determine theme for the selected word
+    theme_info = WORD_TO_PACK.get(word.lower())
+
     # Create TurnState
     hint = generate_initial_hint(word)
     turn_state = TurnState(
@@ -282,6 +332,7 @@ async def handle_word_selection(room: Room, player_id: str, word: str, room_mana
         hint=hint,
         start_time=time.time(),
         word_choices=pending_choices,
+        theme=theme_info,
     )
     room.turn = turn_state
 
@@ -295,18 +346,24 @@ async def handle_word_selection(room: Room, player_id: str, word: str, room_mana
     # Clean up pending choices
     if hasattr(room, '_pending_word_choices'):
         del room._pending_word_choices
+    if hasattr(room, '_pending_packs'):
+        del room._pending_packs
 
     duration = room.config.turn_duration
+
+    turn_started_payload = {
+        "drawer_id": drawer.id,
+        "hint": hint,
+        "duration": duration,
+        "round": room.current_round,
+    }
+    if theme_info:
+        turn_started_payload["theme"] = theme_info
 
     # Broadcast turn_started to all players
     await room_manager.broadcast(room.code, {
         "type": "turn_started",
-        "payload": {
-            "drawer_id": drawer.id,
-            "hint": hint,
-            "duration": duration,
-            "round": room.current_round,
-        },
+        "payload": turn_started_payload,
     })
 
     # Send the selected word privately to the drawer (for auto-select case)

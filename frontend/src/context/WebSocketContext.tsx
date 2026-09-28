@@ -16,6 +16,8 @@ const initialGameState: GameState = {
   config: { numRounds: 3, turnDuration: 80, maxPlayers: 8 },
   hint: [],
   wordChoices: [],
+  wordPacks: undefined,
+  currentTheme: null,
   drawingEvent: null,
   currentWord: null,
   drawerId: null,
@@ -94,15 +96,19 @@ export function gameReducer(state: GameState, action: Action): GameState {
         drawerId: action.payload.drawerId ?? null,
       };
 
-    case "WORD_CHOICES":
+    case "WORD_CHOICES": {
+      const p = action.payload as Record<string, unknown>;
       return {
         ...state,
-        wordChoices: ((action.payload as Record<string, unknown>).choices as string[]) ?? [],
+        wordChoices: (p.choices as string[]) ?? [],
+        wordPacks: (p.packs as GameState["wordPacks"]) ?? undefined,
         isDrawer: true, // If you receive word choices, you are the drawer
         drawerId: state.localPlayerId, // This player is the new drawer
       };
+    }
 
-    case "TURN_STARTED":
+    case "TURN_STARTED": {
+      const p = action.payload as Record<string, unknown>;
       return {
         ...state,
         phase: "playing",
@@ -113,9 +119,12 @@ export function gameReducer(state: GameState, action: Action): GameState {
         drawerId: action.payload.drawerId ?? state.drawerId,
         hasGuessed: false,
         wordChoices: [],
+        wordPacks: undefined,
+        currentTheme: (p.theme as GameState["currentTheme"]) ?? null,
         // Drawer keeps their currentWord, guessers clear it
         currentWord: action.payload.drawerId === state.localPlayerId ? state.currentWord : null,
       };
+    }
 
     case "HINT_UPDATE":
       return {
@@ -143,6 +152,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
         hasGuessed: false,
         currentWord: null,
         drawerId: null, // Reset — new drawer will be set by WORD_CHOICES or TURN_STARTED
+        currentTheme: null,
         // Transition back to word_selection for the next turn
         phase: "word_selection",
       };
