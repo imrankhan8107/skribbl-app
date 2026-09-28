@@ -4,6 +4,17 @@ import type { ChatMessage } from "../types";
 import { getAvatarForPlayer, getStoredAvatarId, getStoredPlayerName } from "../utils/avatars";
 import { triggerGlobalConfetti } from "./Confetti";
 
+export const QUICK_CHAT_SHORTCUTS = [
+  { label: "So close!", emoji: "🤏", text: "So close! 🤏" },
+  { label: "What is that?!", emoji: "😂", text: "What is that?! 😂" },
+  { label: "Good drawing!", emoji: "🎨", text: "Good drawing! 🎨" },
+  { label: "Hint please!", emoji: "💡", text: "Hint please! 💡" },
+  { label: "GG!", emoji: "👏", text: "GG! 👏" },
+  { label: "No idea!", emoji: "🤷‍♂️", text: "No idea! 🤷‍♂️" },
+  { label: "Masterpiece!", emoji: "✨", text: "Masterpiece! ✨" },
+  { label: "Time ticking!", emoji: "⏰", text: "Time is ticking! ⏰" },
+];
+
 /**
  * Chat component — scrollable message feed + guess/chat input.
  * Guessers send 'guess' messages; Drawer sends 'chat' messages.
@@ -78,6 +89,25 @@ export default function Chat() {
     return classes.join(" ");
   };
 
+  const handleQuickChat = (phrase: string) => {
+    if (gameState.phase === "playing" && gameState.hasGuessed) {
+      return;
+    }
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    if (gameState.phase === "playing" && !gameState.isDrawer && !gameState.hasGuessed) {
+      send("typing", { is_typing: false });
+    }
+
+    if (gameState.phase === "lobby" || gameState.isDrawer) {
+      send("chat", { text: phrase });
+    } else {
+      send("guess", { text: phrase });
+    }
+  };
+
   return (
     <div className="chat-container" data-testid="chat-container">
       <div className="chat-messages" data-testid="chat-messages">
@@ -138,6 +168,29 @@ export default function Chat() {
           </div>
         );
       })()}
+
+      {/* Quick Chat Shortcuts Bar */}
+      <div
+        className="quick-chat-bar"
+        data-testid="quick-chat-bar"
+        aria-label="Quick chat shortcuts"
+      >
+        {QUICK_CHAT_SHORTCUTS.map((item) => (
+          <button
+            key={item.text}
+            type="button"
+            className="quick-chat-chip"
+            data-testid={`quick-chat-${item.label.toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
+            disabled={isInputDisabled}
+            onClick={() => handleQuickChat(item.text)}
+            title={isInputDisabled ? "Already guessed" : `Send "${item.text}"`}
+            aria-label={`Send quick chat: ${item.text}`}
+          >
+            <span className="quick-chat-emoji">{item.emoji}</span>
+            <span className="quick-chat-label">{item.label}</span>
+          </button>
+        ))}
+      </div>
 
       <form className="chat-input-form" onSubmit={handleSubmit} data-testid="chat-form">
         <input

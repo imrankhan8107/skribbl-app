@@ -124,4 +124,42 @@ describe("Chat Component", () => {
       expect(msgEl).not.toHaveClass("chat-system");
     });
   });
+
+  describe("Quick Chat Shortcuts Bar", () => {
+    it("renders quick chat bar with all preset chips", () => {
+      renderChat();
+      const bar = screen.getByTestId("quick-chat-bar");
+      expect(bar).toBeInTheDocument();
+      expect(screen.getByTestId("quick-chat-so-close-")).toBeInTheDocument();
+      expect(screen.getByTestId("quick-chat-what-is-that--")).toBeInTheDocument();
+      expect(screen.getByTestId("quick-chat-hint-please-")).toBeInTheDocument();
+    });
+
+    it("sends guess when guesser clicks a quick chat chip", () => {
+      const { send } = renderChat({ isDrawer: false, hasGuessed: false });
+      const chip = screen.getByTestId("quick-chat-so-close-");
+      chip.click();
+      expect(send).toHaveBeenCalledWith("guess", { text: "So close! 🤏" });
+    });
+
+    it("sends chat when drawer clicks a quick chat chip", () => {
+      const { send } = renderChat({ isDrawer: true, hasGuessed: false });
+      const chip = screen.getByTestId("quick-chat-masterpiece-");
+      chip.click();
+      expect(send).toHaveBeenCalledWith("chat", { text: "Masterpiece! ✨" });
+    });
+
+    it("sends chat when player in lobby clicks a quick chat chip", () => {
+      const { send } = renderChat({ phase: "lobby", isDrawer: false, hasGuessed: false });
+      const chip = screen.getByTestId("quick-chat-gg-");
+      chip.click();
+      expect(send).toHaveBeenCalledWith("chat", { text: "GG! 👏" });
+    });
+
+    it("disables quick chat chips when hasGuessed is true", () => {
+      renderChat({ hasGuessed: true });
+      const chip = screen.getByTestId("quick-chat-so-close-");
+      expect(chip).toBeDisabled();
+    });
+  });
 });

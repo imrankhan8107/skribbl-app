@@ -2526,3 +2526,71 @@ ol {
   animation: bouncePencil 1.2s infinite ease-in-out;
   display: inline-block;
 }
+
+/* ============================================================
+   Quick Chat / Emote Shortcuts Bar
+   ============================================================ */
+.quick-chat-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  overflow-x: auto;
+  background: var(--color-surface-alt, #f8fafc);
+  border-top: 1px solid var(--color-border);
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.quick-chat-bar::-webkit-scrollbar {
+  height: 3px;
+}
+
+.quick-chat-bar::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 9999px;
+}
+
+.quick-chat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  border-radius: 9999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  user-select: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.quick-chat-chip:hover:not(:disabled) {
+  background: var(--color-primary);
+  color: #ffffff;
+  border-color: var(--color-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+.quick-chat-chip:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.quick-chat-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.quick-chat-emoji {
+  font-size: 0.85rem;
+}
+
+.quick-chat-label {
+  font-size: 0.74rem;
+}
