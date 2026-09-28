@@ -45,7 +45,7 @@ export default function Chat() {
   }, [gameState.chatMessages]);
 
   const isInputDisabled = gameState.hasGuessed;
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setText(e.target.value);
