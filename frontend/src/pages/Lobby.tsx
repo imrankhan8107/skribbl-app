@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket";
 import PlayerList from "../components/PlayerList";
@@ -8,6 +8,19 @@ import QRCodeModal from "../components/QRCodeModal";
 import ProfileModal from "../components/ProfileModal";
 import { copyToClipboard } from "../utils/clipboard";
 import { getStoredAvatarId, getStoredPlayerName } from "../utils/avatars";
+
+const PRESET_PACKS = [
+  { name: "🧙‍♂️ Fantasy", words: ["Dragon", "Wizard", "Castle", "Potion", "Unicorn", "Knight"] },
+  {
+    name: "🎮 Gaming",
+    words: ["Minecraft", "Pikachu", "Mario", "Fortnite", "PlayStation", "Zelda"],
+  },
+  {
+    name: "🎬 Cinema",
+    words: ["Lightsaber", "Titanic", "Avatar", "Batman", "Spider-Man", "Inception"],
+  },
+  { name: "🍕 Foodie", words: ["Sushi", "Tacos", "Croissant", "Pancakes", "Bubble Tea", "Ramen"] },
+];
 
 export default function Lobby() {
   const { gameState, send } = useWebSocket();
@@ -20,6 +33,60 @@ export default function Lobby() {
 
   // Fallback config in case state is not yet populated
   const config = gameState.config ?? { numRounds: 3, turnDuration: 80, maxPlayers: 8 };
+
+  const [customWordsText, setCustomWordsText] = useState(
+    config.customWords ? config.customWords.join(", ") : ""
+  );
+  const isCustomWordsDirtyRef = useRef(false);
+
+  useEffect(() => {
+    if (!isCustomWordsDirtyRef.current && config.customWords) {
+      setCustomWordsText(config.customWords.join(", "));
+    }
+  }, [config.customWords]);
+
+  const applyCustomWords = (text: string) => {
+    const words = text
+      .split(/[\n,]+/)
+      .map((w) => w.trim())
+      .filter((w) => w.length > 0 && w.length <= 40);
+
+    const seen = new Set<string>();
+    const uniqueWords: string[] = [];
+    for (const w of words) {
+      if (!seen.has(w.toLowerCase())) {
+        seen.add(w.toLowerCase());
+        uniqueWords.push(w);
+      }
+    }
+    isCustomWordsDirtyRef.current = false;
+    send("update_settings", { custom_words: uniqueWords });
+  };
+
+  const handleCustomWordsChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    isCustomWordsDirtyRef.current = true;
+    setCustomWordsText(e.target.value);
+  };
+
+  const handleCustomWordsBlur = () => {
+    applyCustomWords(customWordsText);
+  };
+
+  const handleAddPreset = (presetWords: string[]) => {
+    const existing = customWordsText
+      .split(/[\n,]+/)
+      .map((w) => w.trim())
+      .filter(Boolean);
+    const combined = [...existing, ...presetWords];
+    const newText = combined.join(", ");
+    setCustomWordsText(newText);
+    applyCustomWords(newText);
+  };
+
+  const handleClearCustomWords = () => {
+    setCustomWordsText("");
+    applyCustomWords("");
+  };
 
   // Navigate to game when phase transitions to 'playing' or 'word_selection'
   useEffect(() => {
@@ -259,6 +326,76 @@ export default function Lobby() {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* Custom Words Section */}
+                <div className="custom-words-section">
+                  <div className="custom-words-header">
+                    <label htmlFor="custom-words">Custom Words (Pack Creator)</label>
+                    {config.customWords && config.customWords.length > 0 && (
+                      <span className="custom-words-count-badge" data-testid="custom-words-count">
+                        ✨ {config.customWords.length} words
+                      </span>
+                    )}
+                  </div>
+                  {gameState.isHost && (
+                    <div className="custom-words-presets">
+                      <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
+                        Presets:
+                      </span>
+                      {PRESET_PACKS.map((preset) => (
+                        <button
+                          key={preset.name}
+                          type="button"
+                          className="preset-chip"
+                          data-testid={`preset-pack-${preset.name.toLowerCase().replace(/[^a-z]/g, "")}`}
+                          onClick={() => handleAddPreset(preset.words)}
+                        >
+                          + {preset.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <textarea
+                    id="custom-words"
+                    className="custom-words-textarea"
+                    data-testid="custom-words-textarea"
+                    rows={2}
+                    placeholder="Type words separated by commas or newlines (e.g. Hogwarts, Pikachu, Lightsaber)"
+                    value={customWordsText}
+                    onChange={handleCustomWordsChange}
+                    onBlur={handleCustomWordsBlur}
+                    disabled={!gameState.isHost}
+                  />
+                  <div className="custom-words-footer">
+                    <span className="custom-words-hint">
+                      {gameState.isHost
+                        ? "Injected as ✨ Custom Words pack in word selection"
+                        : `${config.customWords?.length || 0} custom words configured by host`}
+                    </span>
+                    {gameState.isHost && (
+                      <div style={{ display: "flex", gap: "4px" }}>
+                        {customWordsText && (
+                          <button
+                            type="button"
+                            className="preset-chip"
+                            onClick={handleClearCustomWords}
+                            style={{ color: "var(--color-danger)" }}
+                          >
+                            Clear
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="custom-words-save-btn"
+                          data-testid="save-custom-words-btn"
+                          onClick={() => applyCustomWords(customWordsText)}
+                        >
+                          Save
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </fieldset>
             </div>

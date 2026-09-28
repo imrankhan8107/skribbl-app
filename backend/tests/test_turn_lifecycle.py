@@ -16,6 +16,7 @@ import pytest
 
 from backend.game_engine import (
     advance_turn_or_round,
+    draw_word_pack_choices,
     end_turn,
     handle_word_selection,
     start_turn,
@@ -430,3 +431,44 @@ class TestAutoSelect:
             assert hasattr(room, "_auto_select_task")
             if hasattr(room, "_auto_select_task") and room._auto_select_task:
                 room._auto_select_task.cancel()
+
+
+class TestCustomWords:
+    """Tests for custom word pack creation and round injection."""
+
+    def test_draw_word_pack_choices_includes_custom_pack(self):
+        """When custom_words exist in config, Custom Words pack is guaranteed among choices."""
+        room = _make_room()
+        room.config.custom_words = ["Tardis", "Dalek", "Cyberman", "SonicScrewdriver"]
+
+        packs, flat_choices = draw_word_pack_choices(room)
+        assert len(packs) == 3
+        custom_pack = next((p for p in packs if p["id"] == "custom"), None)
+        assert custom_pack is not None
+        assert custom_pack["name"] == "Custom Words"
+        assert custom_pack["emoji"] == "✨"
+        assert any(w in room.config.custom_words for w in custom_pack["words"])
+
+    @pytest.mark.asyncio
+    async def test_handle_word_selection_custom_word_theme(self):
+        """Selecting a custom word assigns the custom theme and starts turn properly."""
+        room = _make_room()
+        room.config.custom_words = ["Tardis", "Dalek"]
+        room._pending_word_choices = ["Tardis", "Apple", "Guitar"]
+        room_manager = _make_room_manager()
+
+        await handle_word_selection(room, "player-0", "Tardis", room_manager)
+
+        assert room.state == RoomState.PLAYING
+        assert room.turn is not None
+        assert room.turn.word == "Tardis"
+        assert room.turn.theme is not None
+        assert room.turn.theme["id"] == "custom"
+        assert room.turn.theme["name"] == "Custom Words"
+        assert room.turn.theme["emoji"] == "✨"
+
+        # Cleanup timers
+        for task in (room.turn.timer_task, room.turn.hint_task_40, room.turn.hint_task_70):
+            if task and not task.done():
+                task.cancel()
+

@@ -19,6 +19,7 @@ import time
 from collections import deque
 from typing import Optional
 from uuid import uuid4
+import re
 
 from backend.fast_json import json_dumps, json_loads
 
@@ -105,6 +106,7 @@ class RoomManager:
             "num_rounds": config.num_rounds,
             "turn_duration": config.turn_duration,
             "max_players": config.max_players,
+            "custom_words": list(config.custom_words) if getattr(config, "custom_words", None) else [],
         }
 
     def snapshot_room(self, room: Room) -> dict:
@@ -153,6 +155,7 @@ class RoomManager:
             num_rounds=cfg_data.get("num_rounds", 3),
             turn_duration=cfg_data.get("turn_duration", 80),
             max_players=cfg_data.get("max_players", 8),
+            custom_words=cfg_data.get("custom_words", []),
         )
 
         state_str = snapshot.get("state", "lobby")
@@ -1318,6 +1321,23 @@ class RoomManager:
             room.config.turn_duration = settings_dict["turn_duration"]
         if "max_players" in settings_dict:
             room.config.max_players = settings_dict["max_players"]
+        if "custom_words" in settings_dict:
+            raw_words = settings_dict["custom_words"]
+            sanitized_words: list[str] = []
+            if isinstance(raw_words, str):
+                raw_list = [w.strip() for w in re.split(r"[\n,]+", raw_words)]
+            elif isinstance(raw_words, list):
+                raw_list = [str(w).strip() for w in raw_words if isinstance(w, (str, int))]
+            else:
+                raw_list = []
+
+            seen = set()
+            for w in raw_list:
+                w = w[:40].strip()
+                if w and w.lower() not in seen:
+                    seen.add(w.lower())
+                    sanitized_words.append(w)
+            room.config.custom_words = sanitized_words[:500]
 
         # Broadcast settings_updated to all players in the room
         await self.broadcast(

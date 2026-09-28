@@ -301,4 +301,52 @@ describe("Lobby", () => {
     expect(localStorage.getItem("skribbl_player_name")).toBe("Alicia");
     expect(localStorage.getItem("skribbl_player_avatar")).toBe("cat");
   });
+
+  it("allows host to type custom words and saves via update_settings", async () => {
+    const user = userEvent.setup();
+    const { send } = renderLobby();
+
+    const textarea = screen.getByTestId("custom-words-textarea");
+    expect(textarea).not.toBeDisabled();
+
+    await user.type(textarea, "Pikachu, Charizard, Squirtle");
+    const saveBtn = screen.getByTestId("save-custom-words-btn");
+    await user.click(saveBtn);
+
+    expect(send).toHaveBeenCalledWith("update_settings", {
+      custom_words: ["Pikachu", "Charizard", "Squirtle"],
+    });
+  });
+
+  it("adds preset pack words when preset chip is clicked", async () => {
+    const user = userEvent.setup();
+    const { send } = renderLobby();
+
+    const fantasyPresetBtn = screen.getByTestId("preset-pack-fantasy");
+    await user.click(fantasyPresetBtn);
+
+    expect(send).toHaveBeenCalledWith("update_settings", {
+      custom_words: ["Dragon", "Wizard", "Castle", "Potion", "Unicorn", "Knight"],
+    });
+  });
+
+  it("disables custom words textarea for non-host and hides presets", () => {
+    const gameState: GameState = {
+      ...defaultGameState,
+      isHost: false,
+      localPlayerId: "p2",
+      config: {
+        numRounds: 3,
+        turnDuration: 80,
+        maxPlayers: 8,
+        customWords: ["Apple", "Banana"],
+      },
+    };
+    renderLobby({ gameState });
+
+    const textarea = screen.getByTestId("custom-words-textarea");
+    expect(textarea).toBeDisabled();
+    expect(screen.queryByTestId("preset-pack-fantasy")).not.toBeInTheDocument();
+    expect(screen.getByTestId("custom-words-count")).toHaveTextContent("✨ 2 words");
+  });
 });

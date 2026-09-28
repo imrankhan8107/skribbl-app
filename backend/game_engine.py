@@ -87,8 +87,20 @@ def draw_word_choices(room: Room) -> list[str]:
         room.word_pool = deque(new_pool)
         available = [w for w in room.word_pool if w not in room.used_words]
 
-    # Pop 3 words from the available pool (use first 3 available)
-    choices = available[:3]
+    has_custom = bool(getattr(room.config, "custom_words", None))
+    if has_custom and room.config.custom_words:
+        unused_custom = [w for w in room.config.custom_words if w not in room.used_words]
+        custom_choice = random.choice(unused_custom) if unused_custom else random.choice(room.config.custom_words)
+        choices = [custom_choice]
+        for w in available:
+            if w.lower() != custom_choice.lower():
+                choices.append(w)
+                if len(choices) == 3:
+                    break
+    else:
+        # Pop 3 words from the available pool (use first 3 available)
+        choices = available[:3]
+
     # Remove chosen words from word_pool
     # Since deque doesn't have efficient arbitrary removal, rebuild without chosen words
     room.word_pool = deque(w for w in room.word_pool if w not in set(choices))
@@ -103,19 +115,33 @@ def draw_word_pack_choices(
 ) -> tuple[list[dict], list[str]]:
     """Draw random word packs and pre-fetched words for each pack for a turn.
 
-    Selects `num_packs` distinct categories from WORD_PACKS.
-    For each pack, selects `words_per_pack` unused words (or unused in room session).
-    If a category is low on unused words, it draws from available pack words avoiding
-    recent choices.
-
-    Returns:
-        (packs_data, flat_choices):
-        - packs_data: list of dicts with keys (id, name, emoji, words)
-        - flat_choices: 3 representative words (one per pack) for backwards compatibility
+    If the room has custom_words configured, a 'Custom Words' pack is guaranteed
+    to be included among the choices.
     """
-    sampled_packs = random.sample(WORD_PACKS, min(num_packs, len(WORD_PACKS)))
+    has_custom = bool(getattr(room.config, "custom_words", None))
     packs_data = []
     flat_choices = []
+
+    if has_custom and room.config.custom_words:
+        custom_words = room.config.custom_words
+        unused = [w for w in custom_words if w not in room.used_words]
+        if not unused or len(unused) < words_per_pack:
+            available_custom = list(custom_words)
+        else:
+            available_custom = unused
+
+        selected_custom = random.sample(available_custom, min(words_per_pack, len(available_custom)))
+        packs_data.append({
+            "id": "custom",
+            "name": "Custom Words",
+            "emoji": "✨",
+            "words": selected_custom,
+        })
+        if selected_custom:
+            flat_choices.append(selected_custom[0])
+
+    remaining_count = max(0, num_packs - len(packs_data))
+    sampled_packs = random.sample(WORD_PACKS, min(remaining_count, len(WORD_PACKS)))
 
     for pack in sampled_packs:
         pack_words = pack["words"]
@@ -323,6 +349,13 @@ async def handle_word_selection(room: Room, player_id: str, word: str, room_mana
 
     # Determine theme for the selected word
     theme_info = WORD_TO_PACK.get(word.lower())
+    if not theme_info and getattr(room.config, "custom_words", None):
+        if any(w.lower() == word.lower() for w in room.config.custom_words):
+            theme_info = {
+                "id": "custom",
+                "name": "Custom Words",
+                "emoji": "✨",
+            }
 
     # Create TurnState
     hint = generate_initial_hint(word)

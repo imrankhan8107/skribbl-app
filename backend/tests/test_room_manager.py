@@ -503,6 +503,34 @@ class TestUpdateSettings:
         )
         assert update_result["type"] == "settings_updated"
 
+    async def test_update_custom_words_success(self, manager):
+        ws = make_mock_ws()
+        result = await manager.create_room("Alice", ws)
+        player_id = result["payload"]["player_id"]
+
+        update_result = await manager.update_settings(
+            player_id, {"custom_words": ["Hogwarts", "Gryffindor", "Dumbledore"]}
+        )
+        assert update_result["type"] == "settings_updated"
+        config = update_result["payload"]["config"]
+        assert config["custom_words"] == ["Hogwarts", "Gryffindor", "Dumbledore"]
+
+    async def test_update_custom_words_sanitization(self, manager):
+        ws = make_mock_ws()
+        result = await manager.create_room("Alice", ws)
+        player_id = result["payload"]["player_id"]
+
+        update_result = await manager.update_settings(
+            player_id, {"custom_words": ["  Apple  ", "banana", "Apple", "   ", "a" * 50]}
+        )
+        assert update_result["type"] == "settings_updated"
+        config = update_result["payload"]["config"]
+        # duplicates stripped, spaces trimmed, empty stripped, length capped at 40
+        assert "Apple" in config["custom_words"]
+        assert "banana" in config["custom_words"]
+        assert len(config["custom_words"]) == 3
+
+
     async def test_update_settings_broadcasts_to_all(self, manager):
         ws1 = make_mock_ws()
         ws2 = make_mock_ws()

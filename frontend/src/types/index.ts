@@ -19,6 +19,7 @@ export interface GameConfig {
   numRounds: number; // 2–10
   turnDuration: number; // 30–180 seconds
   maxPlayers: number; // 2–12
+  customWords?: string[];
 }
 
 export type GamePhase = "idle" | "lobby" | "word_selection" | "playing" | "game_over";
