@@ -219,25 +219,19 @@ describe("Landing", () => {
     });
   });
 
-  it("toggles password input when password protect checkbox is clicked and sends password on create", async () => {
+  it("sends password when creating room if password field is filled", async () => {
     const user = userEvent.setup();
     const { send } = renderLanding();
 
     const nameInput = screen.getByLabelText(/player name/i);
     await user.type(nameInput, "HostPlayer");
 
-    const privateCheckbox = screen.getByLabelText(/password protect new room/i);
-    await user.click(privateCheckbox);
+    const passwordInput = screen.getByLabelText(/room password/i);
+    await user.type(passwordInput, "secret456");
 
     const createBtn = screen.getByRole("button", { name: /create room/i });
-    // Disabled while password input is empty
-    expect(createBtn).toBeDisabled();
-
-    const passwordInput = screen.getByPlaceholderText(/set password for new room/i);
-    await user.type(passwordInput, "secret456");
-    expect(createBtn).toBeEnabled();
-
     await user.click(createBtn);
+
     expect(send).toHaveBeenCalledWith("create_room", {
       name: "HostPlayer",
       avatar: expect.any(String),
@@ -245,16 +239,20 @@ describe("Landing", () => {
     });
   });
 
-  it("sends password when joining room if password field is filled", async () => {
+  it("updates password field label and sends password when joining room if password field is filled", async () => {
     const user = userEvent.setup();
     const { send } = renderLanding();
 
     const nameInput = screen.getByLabelText(/player name/i);
     await user.type(nameInput, "Joiner");
 
+    // Initially room code is empty -> label is "Room Password (optional)"
+    expect(screen.getByLabelText(/room password \(optional\)/i)).toBeInTheDocument();
+
     const codeInput = screen.getByLabelText(/room code/i);
     await user.type(codeInput, "ROOM99");
 
+    // After typing room code -> label becomes "Room Password (if private)"
     const joinPasswordInput = screen.getByLabelText(/room password \(if private\)/i);
     await user.type(joinPasswordInput, "mypassword");
 

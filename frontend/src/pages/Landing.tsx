@@ -18,9 +18,7 @@ export default function Landing() {
   const [roomCode, setRoomCode] = useState(() => (roomParam ? roomParam.toUpperCase() : ""));
   const [selectedAvatarId, setSelectedAvatarId] = useState(getStoredAvatarId);
   const [joinAsSpectator, setJoinAsSpectator] = useState(false);
-  const [isPrivateRoom, setIsPrivateRoom] = useState(false);
-  const [createPassword, setCreatePassword] = useState("");
-  const [joinPassword, setJoinPassword] = useState("");
+  const [roomPassword, setRoomPassword] = useState("");
   const { gameState, send } = useWebSocket();
   const navigate = useNavigate();
 
@@ -59,7 +57,7 @@ export default function Landing() {
     e.preventDefault();
     storePlayerName(playerName);
     storeAvatarId(selectedAvatarId);
-    const password = isPrivateRoom && createPassword.trim() ? createPassword.trim() : undefined;
+    const password = roomPassword.trim() || undefined;
     send("create_room", {
       name: playerName,
       avatar: selectedAvatarId,
@@ -71,7 +69,7 @@ export default function Landing() {
     if (e) e.preventDefault();
     storePlayerName(playerName);
     storeAvatarId(selectedAvatarId);
-    const password = joinPassword.trim() || undefined;
+    const password = roomPassword.trim() || undefined;
     send("join_room", {
       name: playerName,
       room_code: roomCode,
@@ -137,15 +135,22 @@ export default function Landing() {
           </div>
 
           <div>
-            <label htmlFor="join-password">Room Password (if private)</label>
+            <label htmlFor="room-password">
+              {roomCode.trim() ? "Room Password (if private)" : "Room Password (optional)"}
+            </label>
             <input
-              id="join-password"
+              id="room-password"
               type="password"
-              value={joinPassword}
-              onChange={(e) => setJoinPassword(e.target.value)}
-              placeholder="Enter password to join"
+              value={roomPassword}
+              onChange={(e) => setRoomPassword(e.target.value)}
+              placeholder={
+                roomCode.trim()
+                  ? "Enter password to join"
+                  : "Set password to protect room (optional)"
+              }
               maxLength={32}
-              autoComplete="current-password"
+              autoComplete={roomCode.trim() ? "current-password" : "new-password"}
+              data-testid="room-password-input"
             />
           </div>
 
@@ -161,37 +166,8 @@ export default function Landing() {
             </label>
           </div>
 
-          <div className="private-room-toggle-wrap">
-            <label className="private-room-toggle-label">
-              <input
-                type="checkbox"
-                checked={isPrivateRoom}
-                onChange={(e) => setIsPrivateRoom(e.target.checked)}
-                data-testid="private-room-checkbox"
-              />
-              <span>🔒 Password protect new room</span>
-            </label>
-            {isPrivateRoom && (
-              <input
-                id="create-password"
-                type="password"
-                value={createPassword}
-                onChange={(e) => setCreatePassword(e.target.value)}
-                placeholder="Set password for new room"
-                maxLength={32}
-                className="create-password-input"
-                data-testid="create-password-input"
-                autoComplete="new-password"
-              />
-            )}
-          </div>
-
           <div className="landing-actions">
-            <button
-              type="button"
-              onClick={handleCreate}
-              disabled={!playerName.trim() || (isPrivateRoom && !createPassword.trim())}
-            >
+            <button type="button" onClick={handleCreate} disabled={!playerName.trim()}>
               Create Room
             </button>
             <button
