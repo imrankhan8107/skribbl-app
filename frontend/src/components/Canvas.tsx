@@ -1,5 +1,5 @@
-import { useRef, useEffect } from "react";
-import { useCanvas } from "../hooks/useCanvas";
+import { useRef, useEffect, useState } from "react";
+import { useCanvas, BRUSH_SIZES } from "../hooks/useCanvas";
 import { useWebSocket } from "../hooks/useWebSocket";
 import type { BrushSize, DrawingAction } from "../hooks/useCanvas";
 import { subscribeDrawing, registerCanvasSnapshotter } from "../context/drawingBus";
@@ -133,9 +133,24 @@ export default function Canvas({
     (canvas as unknown as Record<string, unknown>).__clearCanvas = clearCanvas;
   }, [renderRemoteStroke, renderRemoteFill, renderRemoteUndo, clearCanvas]);
 
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number; scale: number } | null>(null);
+  const [isHoveringCanvas, setIsHoveringCanvas] = useState(false);
+
   const handleClear = () => {
     clearCanvas();
     send("clear_canvas");
+  };
+
+  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    setCursorPos({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+      scale: rect.width / canvas.width,
+    });
+    setIsHoveringCanvas(true);
   };
 
   return (
@@ -156,6 +171,9 @@ export default function Canvas({
           width={800}
           height={600}
           data-testid="drawing-canvas"
+          onPointerMove={handleCanvasPointerMove}
+          onPointerEnter={() => setIsHoveringCanvas(true)}
+          onPointerLeave={() => setIsHoveringCanvas(false)}
           style={{
             display: "block",
             width: "100%",
@@ -167,6 +185,26 @@ export default function Canvas({
             touchAction: "none",
           }}
         />
+        {isDrawer && isHoveringCanvas && cursorPos && tool !== "fill" && (
+          <div
+            className="brush-cursor-preview"
+            data-testid="brush-cursor-preview"
+            style={{
+              position: "absolute",
+              left: `${cursorPos.x}px`,
+              top: `${cursorPos.y}px`,
+              width: `${Math.max(4, BRUSH_SIZES[brushSize] * cursorPos.scale)}px`,
+              height: `${Math.max(4, BRUSH_SIZES[brushSize] * cursorPos.scale)}px`,
+              transform: "translate(-50%, -50%)",
+              borderRadius: "50%",
+              pointerEvents: "none",
+              border: tool === "eraser" ? "2px dashed #e11d48" : "1.5px solid rgba(0, 0, 0, 0.8)",
+              boxShadow: "0 0 0 1px rgba(255, 255, 255, 0.9)",
+              backgroundColor: tool === "eraser" ? "rgba(255, 255, 255, 0.6)" : `${color}40`,
+              zIndex: 20,
+            }}
+          />
+        )}
         <FloatingReactions />
         {showRoundTransition && roundInfo && (
           <RoundTransition
@@ -192,18 +230,74 @@ export default function Canvas({
                 type="button"
                 aria-label={`Color ${c}`}
                 data-testid={`color-${c}`}
-                onClick={() => setColor(c)}
+                onClick={() => {
+                  setColor(c);
+                  if (tool === "eraser") setTool("pen");
+                }}
                 style={{
                   width: 28,
                   height: 28,
                   backgroundColor: c,
-                  border: color === c ? "3px solid #333" : "1px solid #ccc",
+                  border:
+                    color.toLowerCase() === c.toLowerCase() && tool !== "eraser"
+                      ? "3px solid #333"
+                      : "1px solid #ccc",
                   borderRadius: 4,
                   cursor: "pointer",
                   margin: 2,
                 }}
               />
             ))}
+            {/* Custom Hex Color Picker */}
+            <label
+              className="custom-color-picker-label"
+              title="Pick custom color"
+              data-testid="custom-color-label"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 28,
+                height: 28,
+                borderRadius: 4,
+                border: "1px solid #ccc",
+                cursor: "pointer",
+                margin: 2,
+                position: "relative",
+                overflow: "hidden",
+                background:
+                  "linear-gradient(135deg, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff)",
+              }}
+            >
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => {
+                  setColor(e.target.value);
+                  if (tool === "eraser") setTool("pen");
+                }}
+                aria-label="Custom color picker"
+                data-testid="custom-color-picker"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  opacity: 0,
+                  cursor: "pointer",
+                  width: "100%",
+                  height: "100%",
+                }}
+              />
+              <span
+                style={{
+                  fontSize: "14px",
+                  textShadow: "0 1px 2px rgba(0,0,0,0.6)",
+                  color: "#fff",
+                  pointerEvents: "none",
+                }}
+              >
+                🎨
+              </span>
+            </label>
           </div>
 
           {/* Brush Size Selector */}

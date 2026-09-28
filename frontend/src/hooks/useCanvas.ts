@@ -367,12 +367,24 @@ export function useCanvas(
         e.preventDefault();
         redo();
       } else if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-        if (e.key.toLowerCase() === "b") {
+        const key = e.key.toLowerCase();
+        if (key === "b" || key === "p") {
           setTool("pen");
-        } else if (e.key.toLowerCase() === "e") {
+        } else if (key === "e") {
           setTool("eraser");
-        } else if (e.key.toLowerCase() === "f") {
+        } else if (key === "f") {
           setTool("fill");
+        } else if (e.key === "[") {
+          const SIZES: BrushSize[] = ["xs", "small", "medium", "large", "xl"];
+          const idx = SIZES.indexOf(brushSizeRef.current);
+          if (idx > 0) setBrushSize(SIZES[idx - 1]);
+        } else if (e.key === "]") {
+          const SIZES: BrushSize[] = ["xs", "small", "medium", "large", "xl"];
+          const idx = SIZES.indexOf(brushSizeRef.current);
+          if (idx < SIZES.length - 1) setBrushSize(SIZES[idx + 1]);
+        } else if (key === "c") {
+          clearCanvas();
+          send("clear_canvas");
         }
       }
     };
@@ -381,7 +393,7 @@ export function useCanvas(
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isDrawer, undo, redo]);
+  }, [isDrawer, undo, redo, clearCanvas, send]);
 
   // ---------------------------------------------------------------------------
   // Pointer event handlers (attached only when isDrawer is true)

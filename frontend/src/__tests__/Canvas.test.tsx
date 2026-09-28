@@ -229,5 +229,33 @@ describe("Canvas", () => {
         expect.objectContaining({ actions: expect.any(Array) })
       );
     });
+
+    it("renders custom color picker and allows custom color selection", () => {
+      renderCanvas(true);
+      const customPicker = screen.getByTestId("custom-color-picker");
+      expect(customPicker).toBeInTheDocument();
+      fireEvent.change(customPicker, { target: { value: "#123456" } });
+      expect(customPicker).toHaveValue("#123456");
+    });
+
+    it("supports keyboard shortcuts for tools and brush sizes", () => {
+      const { send } = renderCanvas(true);
+
+      // Switch to eraser via 'e'
+      fireEvent.keyDown(window, { key: "e" });
+      expect(screen.getByTestId("tool-eraser")).toHaveAttribute("aria-pressed", "true");
+
+      // Switch to fill via 'f'
+      fireEvent.keyDown(window, { key: "f" });
+      expect(screen.getByTestId("tool-fill")).toHaveAttribute("aria-pressed", "true");
+
+      // Switch to pen via 'p'
+      fireEvent.keyDown(window, { key: "p" });
+      expect(screen.getByTestId("tool-pen")).toHaveAttribute("aria-pressed", "true");
+
+      // Clear canvas via 'c'
+      fireEvent.keyDown(window, { key: "c" });
+      expect(send).toHaveBeenCalledWith("clear_canvas");
+    });
   });
 });
