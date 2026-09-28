@@ -301,6 +301,7 @@ class RoomManager:
             "payload": {
                 "room_code": room_code,
                 "player_id": player_id,
+                "players": [self._serialize_player(p) for p in room.players],
                 "config": self._serialize_config(room.config),
             },
         }

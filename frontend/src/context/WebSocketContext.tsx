@@ -1,7 +1,8 @@
 import React, { createContext, useReducer, useRef, useCallback, useEffect, useState } from "react";
-import type { GameState, Action, ChatMessage } from "../types";
+import type { GameState, Action, ChatMessage, PlayerInfo } from "../types";
 import { publishDrawing, getCanvasSnapshot } from "./drawingBus";
 import { publishReaction } from "./reactionBus";
+import { getStoredAvatarId, getStoredPlayerName, getAvatarForPlayer } from "../utils/avatars";
 
 // ---------------------------------------------------------------------------
 // Initial state
@@ -40,7 +41,26 @@ const initialGameState: GameState = {
 
 export function gameReducer(state: GameState, action: Action): GameState {
   switch (action.type) {
-    case "ROOM_CREATED":
+    case "ROOM_CREATED": {
+      const p = action.payload as Record<string, unknown>;
+      const incomingPlayers = (p.players ?? []) as unknown as Array<Record<string, unknown>>;
+      let players = state.players;
+      if (incomingPlayers && incomingPlayers.length > 0) {
+        players = incomingPlayers.map((pl) => {
+          const avatar = (pl.avatar as string) || getStoredAvatarId() || undefined;
+          const plObj: PlayerInfo = {
+            id: (pl.id as string) ?? "",
+            name: (pl.name as string) ?? "",
+            score: (pl.score as number) ?? 0,
+            hasGuessed: (pl.hasGuessed as boolean) ?? false,
+            isConnected: (pl.isConnected as boolean) ?? true,
+            isReady: (pl.isReady as boolean) ?? false,
+            isHost: true,
+          };
+          if (avatar) plObj.avatar = avatar;
+          return plObj;
+        });
+      }
       return {
         ...state,
         phase: "lobby",
@@ -48,36 +68,76 @@ export function gameReducer(state: GameState, action: Action): GameState {
         localPlayerId: action.payload.playerId,
         isHost: true,
         config: action.payload.config ?? state.config,
+        players,
         artworkGallery: [],
       };
+    }
 
-    case "ROOM_JOINED":
+    case "ROOM_JOINED": {
+      const p = action.payload as Record<string, unknown>;
+      const incomingPlayers = (p.players ?? []) as unknown as Array<Record<string, unknown>>;
+      let players = state.players;
+      if (incomingPlayers && incomingPlayers.length > 0) {
+        players = incomingPlayers.map((pl) => {
+          const isLocal = pl.id === action.payload.playerId;
+          const avatar = (pl.avatar as string) || (isLocal ? getStoredAvatarId() : undefined);
+          const plObj: PlayerInfo = {
+            id: (pl.id as string) ?? "",
+            name: (pl.name as string) ?? "",
+            score: (pl.score as number) ?? 0,
+            hasGuessed: (pl.hasGuessed as boolean) ?? false,
+            isConnected: (pl.isConnected as boolean) ?? true,
+            isReady: (pl.isReady as boolean) ?? false,
+            isHost: (pl.isHost as boolean) ?? pl.id === (p.hostId as string),
+          };
+          if (avatar) plObj.avatar = avatar;
+          return plObj;
+        });
+      }
       return {
         ...state,
         phase: "lobby",
         roomCode: action.payload.roomCode,
         localPlayerId: action.payload.playerId,
         isHost: action.payload.isHost,
+        players,
         artworkGallery: [],
       };
+    }
 
     case "PLAYER_LIST": {
       // Server doesn't always send isHost — preserve it from current state or use incoming if present
       const incomingPlayers = (action.payload.players ?? []) as unknown as Array<
         Record<string, unknown>
       >;
-      const updatedPlayers = incomingPlayers.map((p) => ({
-        id: (p.id as string) ?? "",
-        name: (p.name as string) ?? "",
-        score: (p.score as number) ?? 0,
-        hasGuessed: (p.hasGuessed as boolean) ?? false,
-        isConnected: (p.isConnected as boolean) ?? true,
-        isReady: (p.isReady as boolean) ?? false,
-        isHost:
-          (p.isHost as boolean) ??
-          state.players.find((existing) => existing.id === p.id)?.isHost ??
-          false,
-      }));
+      const updatedPlayers = incomingPlayers.map((p) => {
+        const existing = state.players.find((ep) => ep.id === p.id);
+        const isLocal =
+          (state.localPlayerId && p.id === state.localPlayerId) ||
+          (!state.localPlayerId && p.name === getStoredPlayerName());
+        const resolvedAvatar =
+          (p.avatar as string) || existing?.avatar || (isLocal ? getStoredAvatarId() : undefined);
+
+        const playerObj: PlayerInfo = {
+          id: (p.id as string) ?? "",
+          name: (p.name as string) ?? "",
+          score: (p.score as number) ?? 0,
+          hasGuessed: (p.hasGuessed as boolean) ?? false,
+          isConnected: (p.isConnected as boolean) ?? true,
+          isReady: (p.isReady as boolean) ?? false,
+          isHost: (p.isHost as boolean) ?? existing?.isHost ?? false,
+        };
+        if (resolvedAvatar) {
+          playerObj.avatar = resolvedAvatar;
+        }
+        if (p.streak !== undefined || existing?.streak !== undefined) {
+          playerObj.streak = (p.streak as number) ?? existing?.streak;
+        }
+        if (p.isFirstGuesser !== undefined || existing?.isFirstGuesser !== undefined) {
+          playerObj.isFirstGuesser = (p.isFirstGuesser as boolean) ?? existing?.isFirstGuesser;
+        }
+        return playerObj;
+      });
       return {
         ...state,
         players: updatedPlayers,
@@ -238,15 +298,28 @@ export function gameReducer(state: GameState, action: Action): GameState {
       const p = action.payload as Record<string, unknown>;
       const scores = p.scores as Array<{ id: string; name: string; score: number }> | undefined;
       const finalPlayers = scores
-        ? scores.map((s) => ({
-            id: s.id,
-            name: s.name,
-            score: s.score,
-            isHost: state.players.find((pl) => pl.id === s.id)?.isHost ?? false,
-            hasGuessed: false,
-            isConnected: true,
-            isReady: false,
-          }))
+        ? scores.map((s) => {
+            const existing = state.players.find((pl) => pl.id === s.id);
+            const isLocal =
+              (state.localPlayerId && s.id === state.localPlayerId) ||
+              (!state.localPlayerId && s.name === getStoredPlayerName());
+            const avatar =
+              ((s as unknown as Record<string, unknown>).avatar as string) ||
+              existing?.avatar ||
+              (isLocal ? getStoredAvatarId() : undefined);
+            const plObj: PlayerInfo = {
+              id: s.id,
+              name: s.name,
+              score: s.score,
+              isHost: existing?.isHost ?? false,
+              hasGuessed: false,
+              isConnected: true,
+              isReady: false,
+            };
+            if (avatar) plObj.avatar = avatar;
+            if (existing?.streak !== undefined) plObj.streak = existing.streak;
+            return plObj;
+          })
         : ((p.players as typeof state.players) ?? state.players);
       return {
         ...state,
@@ -387,7 +460,31 @@ export function gameReducer(state: GameState, action: Action): GameState {
       }
       if (act.type === "REMATCH_STARTED") {
         const p = act.payload as Record<string, unknown>;
-        const players = (p.players as typeof state.players) ?? [];
+        const rawPlayers = (p.players ?? []) as unknown as Array<Record<string, unknown>>;
+        const players =
+          rawPlayers.length > 0
+            ? rawPlayers.map((pl) => {
+                const existing = state.players.find((ep) => ep.id === pl.id);
+                const isLocal =
+                  (state.localPlayerId && pl.id === state.localPlayerId) ||
+                  (!state.localPlayerId && pl.name === getStoredPlayerName());
+                const avatar =
+                  (pl.avatar as string) ||
+                  existing?.avatar ||
+                  (isLocal ? getStoredAvatarId() : undefined);
+                const plObj: PlayerInfo = {
+                  id: (pl.id as string) ?? "",
+                  name: (pl.name as string) ?? "",
+                  score: (pl.score as number) ?? 0,
+                  hasGuessed: false,
+                  isConnected: (pl.isConnected as boolean) ?? true,
+                  isReady: (pl.isReady as boolean) ?? false,
+                  isHost: (pl.isHost as boolean) ?? existing?.isHost ?? false,
+                };
+                if (avatar) plObj.avatar = avatar;
+                return plObj;
+              })
+            : state.players.map((pl) => ({ ...pl, score: 0, hasGuessed: false, isReady: false }));
         const config = (p.config as typeof state.config) ?? state.config;
         return {
           ...initialGameState,
@@ -566,7 +663,11 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
             ws.send(
               JSON.stringify({
                 type: "reconnect",
-                payload: { name: playerName, room_code: roomCode },
+                payload: {
+                  name: playerName,
+                  room_code: roomCode,
+                  avatar: getStoredAvatarId(),
+                },
               })
             );
           }
@@ -670,6 +771,9 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
             const word = (msg.payload?.word as string) || gameStateRef.current.currentWord || "";
             const drawerId = gameStateRef.current.drawerId;
             const drawer = gameStateRef.current.players.find((p) => p.id === drawerId);
+            const drawerAvatarInfo = drawer
+              ? getAvatarForPlayer(drawer.name || drawer.id, drawer.avatar)
+              : null;
             dispatch({
               type: "SAVE_ARTWORK",
               payload: {
@@ -677,7 +781,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
                 word,
                 drawerId: drawerId || undefined,
                 drawerName: drawer?.name || "Anonymous",
-                drawerAvatar: drawer?.avatar || "🎨",
+                drawerAvatar: drawerAvatarInfo?.emoji || "🎨",
                 imageDataUrl: snapshot,
                 theme: gameStateRef.current.currentTheme?.name || undefined,
               },

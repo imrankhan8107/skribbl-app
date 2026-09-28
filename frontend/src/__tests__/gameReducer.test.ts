@@ -102,6 +102,35 @@ describe("gameReducer", () => {
       expect(next.players).toEqual(players);
       expect(next.players).toHaveLength(2);
     });
+
+    it("preserves incoming avatars in PLAYER_LIST", () => {
+      const players = [
+        {
+          id: "p1",
+          name: "Alice",
+          score: 100,
+          isHost: true,
+          hasGuessed: false,
+          isConnected: true,
+          isReady: false,
+          avatar: "lion",
+        },
+        {
+          id: "p2",
+          name: "Bob",
+          score: 50,
+          isHost: false,
+          hasGuessed: false,
+          isConnected: true,
+          isReady: false,
+          avatar: "panda",
+        },
+      ];
+      const action: Action = { type: "PLAYER_LIST", payload: { players: players as any } };
+      const next = gameReducer(initialState, action);
+      expect(next.players[0].avatar).toBe("lion");
+      expect(next.players[1].avatar).toBe("panda");
+    });
   });
 
   describe("SETTINGS_UPDATED", () => {
