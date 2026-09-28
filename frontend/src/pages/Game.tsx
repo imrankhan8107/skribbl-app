@@ -110,35 +110,13 @@ export default function Game() {
 
   // Reconnection banner component
   const reconnectBanner = gameState.waitingForReconnect ? (
-    <div
-      className="reconnect-banner"
-      data-testid="reconnect-banner"
-      style={{
-        background: "#fff3cd",
-        border: "1px solid #ffc107",
-        borderRadius: "8px",
-        padding: "12px 16px",
-        margin: "8px 0",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: "12px",
-      }}
-    >
+    <div className="reconnect-banner" data-testid="reconnect-banner">
       <span>Player disconnected — waiting for reconnection ({countdown}s remaining)...</span>
       {gameState.isHost && (
         <button
           className="end-game-now-btn"
           data-testid="end-game-now-btn"
           onClick={() => send("end_game_now", {})}
-          style={{
-            background: "#dc3545",
-            color: "white",
-            border: "none",
-            borderRadius: "4px",
-            padding: "6px 12px",
-            cursor: "pointer",
-          }}
         >
           End Game Now
         </button>
