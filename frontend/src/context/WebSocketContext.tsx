@@ -1,6 +1,6 @@
 import React, { createContext, useReducer, useRef, useCallback, useEffect, useState } from "react";
 import type { GameState, Action, ChatMessage } from "../types";
-import { publishDrawing } from "./drawingBus";
+import { publishDrawing, getCanvasSnapshot } from "./drawingBus";
 
 // ---------------------------------------------------------------------------
 // Initial state
@@ -29,6 +29,7 @@ const initialGameState: GameState = {
   chatMessages: [],
   waitingForReconnect: false,
   reconnectCountdown: 0,
+  artworkGallery: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -45,6 +46,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
         localPlayerId: action.payload.playerId,
         isHost: true,
         config: action.payload.config ?? state.config,
+        artworkGallery: [],
       };
 
     case "ROOM_JOINED":
@@ -54,6 +56,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
         roomCode: action.payload.roomCode,
         localPlayerId: action.payload.playerId,
         isHost: action.payload.isHost,
+        artworkGallery: [],
       };
 
     case "PLAYER_LIST": {
@@ -282,6 +285,12 @@ export function gameReducer(state: GameState, action: Action): GameState {
         errorMessage: action.payload.message,
       };
 
+    case "SAVE_ARTWORK":
+      return {
+        ...state,
+        artworkGallery: [...(state.artworkGallery ?? []), action.payload],
+      };
+
     case "TICK":
       return {
         ...state,
@@ -423,6 +432,8 @@ function mapKeys(obj: unknown): unknown {
 
 export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const [gameState, dispatch] = useReducer(gameReducer, initialGameState);
+  const gameStateRef = useRef(gameState);
+  gameStateRef.current = gameState;
   const [isConnected, setIsConnected] = useState(false);
   // Bumping this nonce forces the connection effect to tear down the current
   // socket and reconnect — used to follow a room-sticky redirect.
@@ -576,6 +587,28 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
         if (msg.type === "drawer_selecting") {
           dispatch({ type: "DRAWER_SELECTING", payload: msg.payload } as unknown as Action);
           return;
+        }
+
+        // On turn_ended, capture canvas snapshot for masterpiece gallery before state resets
+        if (msg.type === "turn_ended") {
+          const snapshot = getCanvasSnapshot();
+          if (snapshot) {
+            const word = (msg.payload?.word as string) || gameStateRef.current.currentWord || "";
+            const drawerId = gameStateRef.current.drawerId;
+            const drawer = gameStateRef.current.players.find((p) => p.id === drawerId);
+            dispatch({
+              type: "SAVE_ARTWORK",
+              payload: {
+                round: gameStateRef.current.currentRound,
+                word,
+                drawerId: drawerId || undefined,
+                drawerName: drawer?.name || "Anonymous",
+                drawerAvatar: drawer?.avatar || "🎨",
+                imageDataUrl: snapshot,
+                theme: gameStateRef.current.currentTheme?.name || undefined,
+              },
+            });
+          }
         }
 
         const actionType = mapServerTypeToActionType(msg.type);

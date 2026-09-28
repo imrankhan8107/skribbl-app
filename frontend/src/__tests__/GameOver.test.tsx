@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { WebSocketContext } from "../context/WebSocketContext";
@@ -62,6 +62,7 @@ const defaultGameState: GameState = {
   chatMessages: [],
   waitingForReconnect: false,
   reconnectCountdown: 0,
+  artworkGallery: [],
 };
 
 function renderGameOver(overrides: Partial<WebSocketContextValue> = {}) {
@@ -141,5 +142,61 @@ describe("GameOver", () => {
     await user.click(rematchBtn);
 
     expect(send).toHaveBeenCalledWith("rematch");
+  });
+
+  it("renders Masterpiece Gallery with artwork cards, opens modal, and closes modal", async () => {
+    const user = userEvent.setup();
+    const sampleArtwork = [
+      {
+        round: 1,
+        word: "Elephant",
+        drawerId: "p1",
+        drawerName: "Alice",
+        drawerAvatar: "🐘",
+        imageDataUrl: "data:image/png;base64,mockElephantData",
+        theme: "Animals",
+      },
+      {
+        round: 2,
+        word: "Pizza",
+        drawerId: "p2",
+        drawerName: "Bob",
+        drawerAvatar: "🦁",
+        imageDataUrl: "data:image/png;base64,mockPizzaData",
+      },
+    ];
+
+    const gameState: GameState = {
+      ...defaultGameState,
+      artworkGallery: sampleArtwork,
+    };
+
+    renderGameOver({ gameState });
+
+    // Check gallery exists
+    const gallery = screen.getByTestId("masterpiece-gallery");
+    expect(gallery).toBeInTheDocument();
+    expect(within(gallery).getByText("🎨 Masterpiece Gallery")).toBeInTheDocument();
+
+    // Check artwork cards inside gallery
+    expect(within(gallery).getByText("Elephant")).toBeInTheDocument();
+    expect(within(gallery).getByText("Animals")).toBeInTheDocument();
+    expect(within(gallery).getByText("Alice")).toBeInTheDocument();
+    expect(within(gallery).getByText("Pizza")).toBeInTheDocument();
+    expect(within(gallery).getByText("Bob")).toBeInTheDocument();
+
+    // Open lightbox modal by clicking the artwork thumbnail
+    const firstCardImgWrap = screen.getByTitle("View drawing for Elephant");
+    await user.click(firstCardImgWrap);
+
+    // Modal should be open
+    const modal = screen.getByTestId("gallery-modal");
+    expect(modal).toBeInTheDocument();
+    expect(screen.getByText(/Drawn by Alice • Round 1 • Animals/)).toBeInTheDocument();
+
+    // Close modal
+    const closeBtn = screen.getByTestId("gallery-modal-close");
+    await user.click(closeBtn);
+    expect(screen.queryByTestId("gallery-modal")).not.toBeInTheDocument();
   });
 });

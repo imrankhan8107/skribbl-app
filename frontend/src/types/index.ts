@@ -34,6 +34,16 @@ export interface RoundTheme {
   emoji: string;
 }
 
+export interface RoundArtwork {
+  round: number;
+  word: string;
+  drawerId?: string;
+  drawerName?: string;
+  drawerAvatar?: string;
+  imageDataUrl: string;
+  theme?: string;
+}
+
 export interface GameState {
   phase: GamePhase;
   roomCode: string | null;
@@ -57,6 +67,7 @@ export interface GameState {
   chatMessages: ChatMessage[];
   waitingForReconnect: boolean;
   reconnectCountdown: number;
+  artworkGallery?: RoundArtwork[];
 }
 
 export interface ChatMessage {
@@ -128,5 +139,6 @@ export type Action =
   | { type: "KICKED"; payload: { message: string } }
   | { type: "LEFT_ROOM"; payload: Record<string, never> }
   | { type: "REMATCH_STARTED"; payload: Record<string, unknown> }
+  | { type: "SAVE_ARTWORK"; payload: RoundArtwork }
   | { type: "TICK" }
   | { type: "RESET" };

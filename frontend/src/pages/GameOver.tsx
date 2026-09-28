@@ -1,8 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { HeaderBar } from "../components/HeaderBar";
 import { getAvatarForPlayer, getStoredAvatarId, getStoredPlayerName } from "../utils/avatars";
+import type { RoundArtwork } from "../types";
 
 /**
  * Canvas-based confetti/party popper animation.
@@ -166,6 +167,17 @@ function ConfettiCanvas() {
   );
 }
 
+function downloadArtwork(art: RoundArtwork) {
+  const link = document.createElement("a");
+  const safeWord = (art.word || "drawing").toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+  const safeDrawer = (art.drawerName || "player").toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+  link.download = `skribbl_${safeWord}_by_${safeDrawer}.png`;
+  link.href = art.imageDataUrl;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 /**
  * GameOver page — displays the final ranked leaderboard with winner highlight.
  * The Rematch button is only enabled for the host.
@@ -173,6 +185,7 @@ function ConfettiCanvas() {
 export default function GameOver() {
   const { gameState, send } = useWebSocket();
   const navigate = useNavigate();
+  const [selectedArtwork, setSelectedArtwork] = useState<RoundArtwork | null>(null);
 
   // Navigate back to lobby when rematch transitions state to 'lobby'
   useEffect(() => {
@@ -262,6 +275,118 @@ export default function GameOver() {
           </>
         ) : (
           <p>No scores available</p>
+        )}
+
+        {/* Masterpiece Gallery */}
+        {gameState.artworkGallery && gameState.artworkGallery.length > 0 && (
+          <div className="masterpiece-gallery-section" data-testid="masterpiece-gallery">
+            <div className="gallery-header">
+              <h2>🎨 Masterpiece Gallery</h2>
+              <p className="gallery-subtitle">
+                Relive every drawing from this game! Click any image to view or download.
+              </p>
+            </div>
+            <div className="gallery-grid">
+              {gameState.artworkGallery.map((art, idx) => (
+                <div key={idx} className="gallery-card" data-testid={`gallery-card-${idx}`}>
+                  <div
+                    className="gallery-card-img-wrap"
+                    onClick={() => setSelectedArtwork(art)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") setSelectedArtwork(art);
+                    }}
+                    title={`View drawing for ${art.word}`}
+                  >
+                    <img
+                      src={art.imageDataUrl}
+                      alt={`Drawing of ${art.word}`}
+                      className="gallery-thumbnail"
+                      loading="lazy"
+                    />
+                    <div className="gallery-hover-overlay">
+                      <span>🔍 Expand</span>
+                    </div>
+                  </div>
+                  <div className="gallery-card-info">
+                    <div className="gallery-card-title-row">
+                      <span className="gallery-card-word">{art.word}</span>
+                      {art.theme && <span className="gallery-card-theme-tag">{art.theme}</span>}
+                    </div>
+                    <div className="gallery-card-meta">
+                      <span className="gallery-drawer-badge">
+                        <span className="gallery-drawer-avatar">{art.drawerAvatar || "🎨"}</span>
+                        <span className="gallery-drawer-name">{art.drawerName || "Anonymous"}</span>
+                      </span>
+                      <span className="gallery-round-tag">R{art.round}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="gallery-download-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadArtwork(art);
+                      }}
+                      title="Download PNG"
+                      data-testid={`download-artwork-${idx}`}
+                    >
+                      💾 Download
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Lightbox Modal */}
+        {selectedArtwork && (
+          <div
+            className="gallery-modal-backdrop"
+            onClick={() => setSelectedArtwork(null)}
+            role="dialog"
+            aria-modal="true"
+            data-testid="gallery-modal"
+          >
+            <div className="gallery-modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="gallery-modal-header">
+                <div>
+                  <h3 className="gallery-modal-word">{selectedArtwork.word}</h3>
+                  <span className="gallery-modal-sub">
+                    {selectedArtwork.drawerAvatar} Drawn by {selectedArtwork.drawerName} • Round{" "}
+                    {selectedArtwork.round}
+                    {selectedArtwork.theme ? ` • ${selectedArtwork.theme}` : ""}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="gallery-modal-close"
+                  onClick={() => setSelectedArtwork(null)}
+                  aria-label="Close"
+                  data-testid="gallery-modal-close"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="gallery-modal-body">
+                <img
+                  src={selectedArtwork.imageDataUrl}
+                  alt={selectedArtwork.word}
+                  className="gallery-modal-img"
+                />
+              </div>
+              <div className="gallery-modal-footer">
+                <button
+                  type="button"
+                  className="gallery-download-btn modal-download"
+                  onClick={() => downloadArtwork(selectedArtwork)}
+                >
+                  💾 Download Artwork (PNG)
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         <div className="game-over-actions">

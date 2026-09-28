@@ -2,7 +2,7 @@ import { useRef, useEffect } from "react";
 import { useCanvas } from "../hooks/useCanvas";
 import { useWebSocket } from "../hooks/useWebSocket";
 import type { BrushSize, DrawingAction } from "../hooks/useCanvas";
-import { subscribeDrawing } from "../context/drawingBus";
+import { subscribeDrawing, registerCanvasSnapshotter } from "../context/drawingBus";
 import RoundTransition from "./RoundTransition";
 
 // ---------------------------------------------------------------------------
@@ -84,6 +84,19 @@ export default function Canvas({
     if (!ctx) return;
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }, []);
+
+  // Register snapshot getter so game engine can capture artwork upon turn end
+  useEffect(() => {
+    return registerCanvasSnapshotter(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      try {
+        return canvas.toDataURL("image/png");
+      } catch {
+        return null;
+      }
+    });
   }, []);
 
   // Subscribe to incoming drawing events from the server. Rendering happens the

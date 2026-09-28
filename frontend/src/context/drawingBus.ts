@@ -37,3 +37,20 @@ export function publishDrawing(event: DrawingEvent): void {
     listener(event);
   }
 }
+
+let snapshotGetter: (() => string | null) | null = null;
+
+/** Register active canvas snapshot provider. Returns an unsubscribe function. */
+export function registerCanvasSnapshotter(getter: () => string | null): () => void {
+  snapshotGetter = getter;
+  return () => {
+    if (snapshotGetter === getter) {
+      snapshotGetter = null;
+    }
+  };
+}
+
+/** Capture base64 PNG data URL of the canvas artwork right now. */
+export function getCanvasSnapshot(): string | null {
+  return snapshotGetter ? snapshotGetter() : null;
+}

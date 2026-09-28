@@ -29,6 +29,7 @@ const initialState: GameState = {
   chatMessages: [],
   waitingForReconnect: false,
   reconnectCountdown: 0,
+  artworkGallery: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -372,6 +373,63 @@ describe("gameReducer", () => {
       };
       const next = gameReducer(initialState, action);
       expect(next.errorMessage).toBe("Room not found");
+    });
+  });
+
+  describe("SAVE_ARTWORK", () => {
+    it("appends an artwork item to artworkGallery", () => {
+      const artwork = {
+        round: 1,
+        word: "banana",
+        drawerId: "p1",
+        drawerName: "Alice",
+        drawerAvatar: "🦁",
+        imageDataUrl: "data:image/png;base64,sample123",
+        theme: "Food & Drinks",
+      };
+      const action: Action = {
+        type: "SAVE_ARTWORK",
+        payload: artwork,
+      };
+      const next = gameReducer(initialState, action);
+      expect(next.artworkGallery).toHaveLength(1);
+      expect(next.artworkGallery![0]).toEqual(artwork);
+
+      // Add a second artwork
+      const artwork2 = {
+        round: 2,
+        word: "guitar",
+        drawerId: "p2",
+        drawerName: "Bob",
+        imageDataUrl: "data:image/png;base64,sample456",
+      };
+      const next2 = gameReducer(next, { type: "SAVE_ARTWORK", payload: artwork2 });
+      expect(next2.artworkGallery).toHaveLength(2);
+      expect(next2.artworkGallery![1].word).toBe("guitar");
+    });
+
+    it("resets artworkGallery on ROOM_CREATED or ROOM_JOINED", () => {
+      const stateWithArt = {
+        ...initialState,
+        artworkGallery: [
+          {
+            round: 1,
+            word: "cat",
+            imageDataUrl: "data:image/png;base64,cat",
+          },
+        ],
+      };
+      const created = gameReducer(stateWithArt, {
+        type: "ROOM_CREATED",
+        payload: { roomCode: "NEW123", playerId: "p1" },
+      });
+      expect(created.artworkGallery).toEqual([]);
+
+      const joined = gameReducer(stateWithArt, {
+        type: "ROOM_JOINED",
+        payload: { roomCode: "JOIN456", playerId: "p2", isHost: false },
+      });
+      expect(joined.artworkGallery).toEqual([]);
     });
   });
 });
