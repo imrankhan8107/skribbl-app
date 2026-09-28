@@ -1700,7 +1700,8 @@ ol {
   position: relative;
 }
 
-.theme-selector-btn {
+.theme-selector-btn,
+.sound-toggle-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
@@ -1712,15 +1713,23 @@ ol {
   font-size: 0.85rem;
   font-weight: 600;
   transition: all 0.15s ease;
+  cursor: pointer;
+  user-select: none;
 }
 
-.theme-selector-btn:hover {
+.theme-selector-btn:hover,
+.sound-toggle-btn:hover {
   border-color: var(--color-primary);
   background: var(--color-surface);
 }
 
-.theme-btn-icon {
+.theme-btn-icon,
+.sound-btn-icon {
   font-size: 1rem;
+}
+
+.sound-btn-label {
+  font-size: 0.85rem;
 }
 
 .theme-dropdown-menu {

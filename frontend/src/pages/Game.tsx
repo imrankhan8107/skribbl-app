@@ -6,7 +6,6 @@ import Canvas from "../components/Canvas";
 import Chat from "../components/Chat";
 import PlayerList from "../components/PlayerList";
 import TimerBar from "../components/TimerBar";
-import { SoundToggle } from "../components/SoundToggle";
 import { useGameAudio } from "../hooks/useGameAudio";
 import { HeaderBar } from "../components/HeaderBar";
 import { Confetti } from "../components/Confetti";
@@ -159,7 +158,6 @@ export default function Game() {
               Round {gameState.currentRound || 1} /{" "}
               {gameState.totalRounds || gameState.config?.numRounds || 3}
             </span>
-            <SoundToggle />
           </div>
           {gameState.isDrawer &&
           ((gameState.wordPacks && gameState.wordPacks.length > 0) ||
@@ -234,7 +232,6 @@ export default function Game() {
             </span>
           )}
           <TimerBar seconds={gameState.timerSeconds} total={gameState.config?.turnDuration ?? 80} />
-          <SoundToggle />
         </div>
 
         {/* Hint display — drawer sees the actual word */}

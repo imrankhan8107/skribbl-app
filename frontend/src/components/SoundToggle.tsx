@@ -21,16 +21,12 @@ export const SoundToggle: React.FC<SoundToggleProps> = ({ className = "" }) => {
     <button
       type="button"
       onClick={handleToggle}
-      className={`inline-flex items-center justify-center p-2 rounded-lg transition-colors border text-sm font-medium ${
-        muted
-          ? "bg-gray-100 text-gray-500 border-gray-300 hover:bg-gray-200"
-          : "bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100"
-      } ${className}`}
+      className={`sound-toggle-btn ${className}`}
       title={muted ? "Unmute game sounds" : "Mute game sounds"}
       aria-label={muted ? "Unmute game sounds" : "Mute game sounds"}
     >
-      <span className="text-base mr-1">{muted ? "🔇" : "🔊"}</span>
-      <span className="hidden sm:inline">{muted ? "Muted" : "Sound On"}</span>
+      <span className="sound-btn-icon">{muted ? "🔇" : "🔊"}</span>
+      <span className="sound-btn-label">{muted ? "Muted" : "Sound On"}</span>
     </button>
   );
 };
