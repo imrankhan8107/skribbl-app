@@ -121,6 +121,7 @@ class RoomManager:
             "turn_duration": config.turn_duration,
             "max_players": config.max_players,
             "custom_words": list(config.custom_words) if getattr(config, "custom_words", None) else [],
+            "is_private": bool(getattr(config, "password", None)),
         }
 
     def snapshot_room(self, room: Room) -> dict:
@@ -136,13 +137,17 @@ class RoomManager:
                 "guess_order": list(room.turn.guess_order),
             }
 
+        cfg_dict = self._serialize_config(room.config)
+        if getattr(room.config, "password", None):
+            cfg_dict["_password"] = room.config.password
+
         return {
             "code": room.code,
             "host_id": room.host_id,
             "state": room.state.value,
             "current_round": room.current_round,
             "drawer_index": room.drawer_index,
-            "config": self._serialize_config(room.config),
+            "config": cfg_dict,
             "used_words": list(room.used_words),
             "word_pool": list(room.word_pool),
             "players": [
@@ -170,6 +175,7 @@ class RoomManager:
             turn_duration=cfg_data.get("turn_duration", 80),
             max_players=cfg_data.get("max_players", 8),
             custom_words=cfg_data.get("custom_words", []),
+            password=cfg_data.get("_password"),
         )
 
         state_str = snapshot.get("state", "lobby")
@@ -248,13 +254,20 @@ class RoomManager:
                 logger.error("Failed to drain room %s: %s", room.code, e)
         return count
 
-    async def create_room(self, name: str, websocket, avatar: Optional[str] = None) -> dict:
+    async def create_room(
+        self,
+        name: str,
+        websocket,
+        avatar: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> dict:
         """Create a new room with the given player as host.
 
         Args:
             name: Display name for the host player.
             websocket: WebSocket connection for the host.
             avatar: Optional avatar identifier for the host player.
+            password: Optional room password for private rooms.
 
         Returns:
             A dict payload for the `room_created` message, or an error payload.
@@ -283,8 +296,10 @@ class RoomManager:
         # Create the host player
         host = Player(id=player_id, name=name, websocket=websocket, avatar=avatar)
 
-        # Create the room
-        room = Room(code=room_code, host_id=player_id)
+        # Create the room with optional password
+        pwd = password.strip()[:64] if isinstance(password, str) and password.strip() else None
+        config = GameConfig(password=pwd)
+        room = Room(code=room_code, host_id=player_id, config=config)
         room.add_player(host)
         self.rooms[room_code] = room
         self._player_to_room[player_id] = room_code
@@ -330,6 +345,7 @@ class RoomManager:
         websocket,
         avatar: Optional[str] = None,
         as_spectator: bool = False,
+        password: Optional[str] = None,
     ) -> dict:
         """Join an existing room.
 
@@ -345,6 +361,7 @@ class RoomManager:
             websocket: WebSocket connection for the player.
             avatar: Optional avatar identifier for the joining player.
             as_spectator: True if joining as a spectator.
+            password: Optional password for private rooms.
 
         Returns:
             A dict payload for the `room_joined` message, or an error payload.
@@ -361,7 +378,9 @@ class RoomManager:
         room = self.rooms.get(room_code)
         if room is not None and not room.is_proxy:
             # Room is truly owned by this worker — join directly
-            return await self._join_room_local(room, room_code, name, websocket, avatar=avatar, as_spectator=as_spectator)
+            return await self._join_room_local(
+                room, room_code, name, websocket, avatar=avatar, as_spectator=as_spectator, password=password
+            )
 
         # Room is either not local or is a proxy (owned by another worker).
         # In both cases, route via RPC to the owning worker.
@@ -375,7 +394,7 @@ class RoomManager:
                 await asyncio.sleep(0.3)
             if owner_worker is not None:
                 return await self._join_room_remote(
-                    room_code, name, websocket, owner_worker, avatar=avatar, as_spectator=as_spectator
+                    room_code, name, websocket, owner_worker, avatar=avatar, as_spectator=as_spectator, password=password
                 )
 
         # Check if a snapshot exists from a drained or restarted worker
@@ -390,7 +409,9 @@ class RoomManager:
                     redis_pubsub.subscribe_room(room_code),
                     return_exceptions=True,
                 )
-                return await self._join_room_local(room, room_code, name, websocket, avatar=avatar, as_spectator=as_spectator)
+                return await self._join_room_local(
+                    room, room_code, name, websocket, avatar=avatar, as_spectator=as_spectator, password=password
+                )
 
         return {
             "type": "error",
@@ -405,8 +426,29 @@ class RoomManager:
         websocket,
         avatar: Optional[str] = None,
         as_spectator: bool = False,
+        password: Optional[str] = None,
     ) -> dict:
         """Join a room that exists on this worker."""
+        # Check room password if configured
+        if getattr(room.config, "password", None):
+            provided_pwd = (password or "").strip()
+            if not provided_pwd:
+                return {
+                    "type": "error",
+                    "payload": {
+                        "code": "PASSWORD_REQUIRED",
+                        "message": "This room is private. Please enter the password.",
+                    },
+                }
+            if provided_pwd != room.config.password:
+                return {
+                    "type": "error",
+                    "payload": {
+                        "code": "INVALID_PASSWORD",
+                        "message": "Incorrect room password",
+                    },
+                }
+
         if room.state != RoomState.LOBBY and not as_spectator:
             return {
                 "type": "error",
@@ -492,6 +534,7 @@ class RoomManager:
         owner_worker: str,
         avatar: Optional[str] = None,
         as_spectator: bool = False,
+        password: Optional[str] = None,
     ) -> dict:
         """Join a room that exists on another worker via Redis RPC.
 
@@ -518,6 +561,7 @@ class RoomManager:
             "player_name": name,
             "avatar": avatar,
             "as_spectator": as_spectator,
+            "password": password,
         })
 
         # Wait for response from the owning worker
@@ -1066,10 +1110,22 @@ class RoomManager:
             as_spectator = rpc.get("as_spectator", False)
 
             room = self.rooms.get(room_code)
+            room_pwd = getattr(room.config, "password", None) if room else None
+            provided_pwd = (rpc.get("password") or "").strip()
             if room is None:
                 response = {
                     "type": "error",
                     "payload": {"code": "ROOM_NOT_FOUND", "message": "Room not found on owner"},
+                }
+            elif room_pwd and not provided_pwd:
+                response = {
+                    "type": "error",
+                    "payload": {"code": "PASSWORD_REQUIRED", "message": "This room is private. Please enter the password."},
+                }
+            elif room_pwd and provided_pwd != room_pwd:
+                response = {
+                    "type": "error",
+                    "payload": {"code": "INVALID_PASSWORD", "message": "Incorrect room password"},
                 }
             elif room.state != RoomState.LOBBY and not as_spectator:
                 response = {
@@ -1424,6 +1480,12 @@ class RoomManager:
                     seen.add(w.lower())
                     sanitized_words.append(w)
             room.config.custom_words = sanitized_words[:500]
+        if "password" in settings_dict:
+            raw_pwd = settings_dict["password"]
+            if raw_pwd is None or (isinstance(raw_pwd, str) and not raw_pwd.strip()):
+                room.config.password = None
+            elif isinstance(raw_pwd, str):
+                room.config.password = raw_pwd.strip()[:64]
 
         # Broadcast settings_updated to all players in the room
         await self.broadcast(

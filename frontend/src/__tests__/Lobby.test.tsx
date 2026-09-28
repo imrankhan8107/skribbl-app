@@ -374,4 +374,20 @@ describe("Lobby", () => {
     expect(screen.queryByTestId("transfer-host-p1")).not.toBeInTheDocument();
     expect(screen.queryByTestId("transfer-host-p2")).not.toBeInTheDocument();
   });
+
+  it("renders private room lock indicator and privacy status when isPrivate is true", () => {
+    const gameState: GameState = {
+      ...defaultGameState,
+      config: {
+        numRounds: 3,
+        turnDuration: 80,
+        maxPlayers: 8,
+        isPrivate: true,
+      },
+    };
+    renderLobby({ gameState });
+
+    expect(screen.getByTestId("private-room-indicator")).toBeInTheDocument();
+    expect(screen.getByTestId("room-privacy-status")).toHaveTextContent(/private/i);
+  });
 });

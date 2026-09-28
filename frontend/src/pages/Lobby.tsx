@@ -259,6 +259,15 @@ export default function Lobby() {
               data-testid="room-code"
               title="Click to copy room code"
             >
+              {gameState.config?.isPrivate && (
+                <span
+                  className="room-private-lock"
+                  title="Private room"
+                  data-testid="private-room-indicator"
+                >
+                  🔒{" "}
+                </span>
+              )}
               {gameState.roomCode}{" "}
               {copied && snackbarText.includes("Room code") ? "✓ Copied!" : "📋"}
             </button>
@@ -338,6 +347,12 @@ export default function Lobby() {
                       </option>
                     ))}
                   </select>
+                </div>
+                <div>
+                  <label>Room Privacy</label>
+                  <div className="room-privacy-status" data-testid="room-privacy-status">
+                    {config.isPrivate ? "🔒 Private (Password required)" : "🌐 Public Room"}
+                  </div>
                 </div>
 
                 {/* Custom Words Section */}

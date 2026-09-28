@@ -73,7 +73,8 @@ async def websocket_handler(websocket: WebSocket) -> None:
                 if msg_type == "create_room":
                     name = payload.get("name", "")
                     avatar = payload.get("avatar")
-                    result = await room_manager.create_room(name, websocket, avatar=avatar)
+                    password = payload.get("password")
+                    result = await room_manager.create_room(name, websocket, avatar=avatar, password=password)
                     if result.get("type") == "room_created":
                         player_id = result["payload"]["player_id"]
                         room_code = result["payload"]["room_code"]
@@ -84,7 +85,8 @@ async def websocket_handler(websocket: WebSocket) -> None:
                     rc = payload.get("room_code", "")
                     avatar = payload.get("avatar")
                     as_spectator = payload.get("as_spectator", False)
-                    result = await room_manager.join_room(name, rc, websocket, avatar=avatar, as_spectator=as_spectator)
+                    password = payload.get("password")
+                    result = await room_manager.join_room(name, rc, websocket, avatar=avatar, as_spectator=as_spectator, password=password)
                     if result.get("type") == "room_joined":
                         player_id = result["payload"]["player_id"]
                         room_code = result["payload"]["room_code"]

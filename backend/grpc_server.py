@@ -346,7 +346,8 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
         if message_type == "create_room":
             name = payload.get("name", "")
             avatar = payload.get("avatar")
-            result = await room_manager.create_room(name, transport, avatar=avatar)
+            password = payload.get("password") if isinstance(payload, dict) else None
+            result = await room_manager.create_room(name, transport, avatar=avatar, password=password)
             # Send the result back to the player via transport. This response is
             # still targeted at the CURRENT transport.player_id (the pending id),
             # which matches the gateway's session registry at this instant.
@@ -367,7 +368,8 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             rc = payload.get("room_code", room_code) or room_code
             avatar = payload.get("avatar")
             as_spectator = payload.get("as_spectator", False) if isinstance(payload, dict) else False
-            result = await room_manager.join_room(name, rc, transport, avatar=avatar, as_spectator=as_spectator)
+            password = payload.get("password") if isinstance(payload, dict) else None
+            result = await room_manager.join_room(name, rc, transport, avatar=avatar, as_spectator=as_spectator, password=password)
             await transport.send_json(result)
             if _TRACE_ENABLED:
                 logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type") if isinstance(result, dict) else None)

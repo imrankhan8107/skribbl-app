@@ -39,6 +39,7 @@ export interface GameConfig {
   turnDuration: number; // 30–180 seconds
   maxPlayers: number; // 2–12
   customWords?: string[];
+  isPrivate?: boolean;
 }
 
 export type GamePhase = "idle" | "lobby" | "word_selection" | "playing" | "game_over";

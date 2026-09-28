@@ -218,4 +218,55 @@ describe("Landing", () => {
       avatar: "lion",
     });
   });
+
+  it("toggles password input when password protect checkbox is clicked and sends password on create", async () => {
+    const user = userEvent.setup();
+    const { send } = renderLanding();
+
+    const nameInput = screen.getByLabelText(/player name/i);
+    await user.type(nameInput, "HostPlayer");
+
+    const privateCheckbox = screen.getByLabelText(/password protect new room/i);
+    await user.click(privateCheckbox);
+
+    const createBtn = screen.getByRole("button", { name: /create room/i });
+    // Disabled while password input is empty
+    expect(createBtn).toBeDisabled();
+
+    const passwordInput = screen.getByPlaceholderText(/set password for new room/i);
+    await user.type(passwordInput, "secret456");
+    expect(createBtn).toBeEnabled();
+
+    await user.click(createBtn);
+    expect(send).toHaveBeenCalledWith("create_room", {
+      name: "HostPlayer",
+      avatar: expect.any(String),
+      password: "secret456",
+    });
+  });
+
+  it("sends password when joining room if password field is filled", async () => {
+    const user = userEvent.setup();
+    const { send } = renderLanding();
+
+    const nameInput = screen.getByLabelText(/player name/i);
+    await user.type(nameInput, "Joiner");
+
+    const codeInput = screen.getByLabelText(/room code/i);
+    await user.type(codeInput, "ROOM99");
+
+    const joinPasswordInput = screen.getByLabelText(/room password \(if private\)/i);
+    await user.type(joinPasswordInput, "mypassword");
+
+    const joinBtn = screen.getByRole("button", { name: /join room/i });
+    await user.click(joinBtn);
+
+    expect(send).toHaveBeenCalledWith("join_room", {
+      name: "Joiner",
+      room_code: "ROOM99",
+      avatar: expect.any(String),
+      as_spectator: false,
+      password: "mypassword",
+    });
+  });
 });

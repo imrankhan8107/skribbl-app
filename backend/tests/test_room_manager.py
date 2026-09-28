@@ -880,4 +880,78 @@ class TestSpectatorMode:
         assert start_res2["type"] == "game_started"
 
 
+class TestPrivateRooms:
+    async def test_create_private_room(self, manager):
+        ws1 = make_mock_ws()
+        res = await manager.create_room("Alice", ws1, password="supersecret123")
+        assert res["type"] == "room_created"
+        config = res["payload"]["config"]
+        assert config["is_private"] is True
+        assert "password" not in config  # plaintext password must never leak to clients
+
+    async def test_join_private_room_requires_password(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res = await manager.create_room("Alice", ws1, password="mysecret")
+        room_code = res["payload"]["room_code"]
+
+        # Join with no password
+        res_no_pw = await manager.join_room("Bob", room_code, ws2)
+        assert res_no_pw["type"] == "error"
+        assert res_no_pw["payload"]["code"] == "PASSWORD_REQUIRED"
+
+        # Join with wrong password
+        res_wrong_pw = await manager.join_room("Bob", room_code, ws2, password="wrongpassword")
+        assert res_wrong_pw["type"] == "error"
+        assert res_wrong_pw["payload"]["code"] == "INVALID_PASSWORD"
+
+        # Join with correct password
+        res_correct = await manager.join_room("Bob", room_code, ws2, password="mysecret")
+        assert res_correct["type"] == "room_joined"
+        assert res_correct["payload"]["config"]["is_private"] is True
+
+    async def test_spectator_join_private_room(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res = await manager.create_room("Alice", ws1, password="specsecret")
+        room_code = res["payload"]["room_code"]
+
+        # Spectator without password rejected
+        res_spec_fail = await manager.join_room("Bob", room_code, ws2, as_spectator=True)
+        assert res_spec_fail["type"] == "error"
+        assert res_spec_fail["payload"]["code"] == "PASSWORD_REQUIRED"
+
+        # Spectator with correct password accepted
+        res_spec_ok = await manager.join_room("Bob", room_code, ws2, as_spectator=True, password="specsecret")
+        assert res_spec_ok["type"] == "room_joined"
+        assert res_spec_ok["payload"]["is_spectator"] is True
+
+    async def test_update_settings_password(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res = await manager.create_room("Alice", ws1)
+        p1_id = res["payload"]["player_id"]
+        room_code = res["payload"]["room_code"]
+        assert res["payload"]["config"]["is_private"] is False
+
+        # Host adds a password in lobby settings
+        update_res = await manager.update_settings(p1_id, {"password": "newpassword456"})
+        assert update_res["type"] == "settings_updated"
+        assert update_res["payload"]["config"]["is_private"] is True
+
+        # Now Bob joining needs the password
+        res_fail = await manager.join_room("Bob", room_code, ws2)
+        assert res_fail["type"] == "error"
+        assert res_fail["payload"]["code"] == "PASSWORD_REQUIRED"
+
+        res_ok = await manager.join_room("Bob", room_code, ws2, password="newpassword456")
+        assert res_ok["type"] == "room_joined"
+
+        # Host removes the password
+        clear_res = await manager.update_settings(p1_id, {"password": ""})
+        assert clear_res["type"] == "settings_updated"
+        assert clear_res["payload"]["config"]["is_private"] is False
+
+
+
 

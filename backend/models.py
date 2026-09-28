@@ -47,6 +47,7 @@ class GameConfig:
     turn_duration: int = 80        # 30–180 seconds
     max_players: int = 8           # 2–12
     custom_words: list = field(default_factory=list)  # Custom word pack injected into word choices
+    password: Optional[str] = None # Room password for private rooms (None for public)
 
 
 @dataclass
