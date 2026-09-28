@@ -2324,6 +2324,133 @@ ol {
   }
 }
 
+/* ============================================================
+   Live Floating Reactions & Reaction Toolbar
+   ============================================================ */
+.floating-reactions-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 15;
+}
+
+.floating-reaction-item {
+  position: absolute;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: floatReactionUp 2.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.28));
+  user-select: none;
+  pointer-events: none;
+}
+
+.floating-emoji {
+  font-size: 2.3rem;
+  line-height: 1;
+}
+
+.floating-sender {
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: rgba(15, 23, 42, 0.8);
+  color: #ffffff;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  margin-top: 3px;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+@keyframes floatReactionUp {
+  0% {
+    transform: translateY(0) scale(0.35) rotate(0deg);
+    opacity: 0;
+  }
+  12% {
+    transform: translateY(-30px) scale(1.15) rotate(-6deg);
+    opacity: 1;
+  }
+  30% {
+    transform: translateY(-90px) scale(1) rotate(5deg);
+    opacity: 0.95;
+  }
+  65% {
+    transform: translateY(-240px) scale(0.95) rotate(-4deg);
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateY(-420px) scale(0.75) rotate(10deg);
+    opacity: 0;
+  }
+}
+
+.reaction-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.65rem;
+  padding: 0.5rem 1rem;
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  max-width: 800px;
+  width: 100%;
+}
+
+.reaction-toolbar-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text-secondary, #64748b);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.reaction-buttons-group {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.reaction-btn {
+  background: var(--color-surface-subtle, #f8fafc);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 9999px;
+  padding: 0.35rem 0.6rem;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1),
+    background-color 0.15s,
+    box-shadow 0.15s,
+    border-color 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+.reaction-btn:hover:not(:disabled) {
+  transform: scale(1.25) translateY(-2px);
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border-color: var(--color-primary, #4361ee);
+}
+
+.reaction-btn:active:not(:disabled),
+.reaction-btn.popping {
+  transform: scale(0.88) rotate(-8deg);
+  background: #ede9fe;
+}
+
 .chat-correct-guess {
   animation: correctPulse 0.4s ease-out;
 }

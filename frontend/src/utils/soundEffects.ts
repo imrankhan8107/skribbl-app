@@ -162,6 +162,15 @@ class SoundEffectsManager {
   }
 
   /**
+   * Reaction emote pop (cheerful double blip)
+   */
+  public playReaction(): void {
+    if (this.muted) return;
+    this.playTone(587.33, "triangle", 0.07, 0.0, 0.2); // D5
+    this.playTone(880.0, "sine", 0.1, 0.04, 0.25); // A5
+  }
+
+  /**
    * Timer countdown warning tick (when remaining time <= 10s)
    */
   public playTimerTick(remainingSeconds: number): void {

@@ -1,6 +1,7 @@
 import React, { createContext, useReducer, useRef, useCallback, useEffect, useState } from "react";
 import type { GameState, Action, ChatMessage } from "../types";
 import { publishDrawing, getCanvasSnapshot } from "./drawingBus";
+import { publishReaction } from "./reactionBus";
 
 // ---------------------------------------------------------------------------
 // Initial state
@@ -559,10 +560,21 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // Handle reaction messages — add as system chat message
+        // Handle reaction messages — publish to reaction bus for floating emotes and add as system chat message
         if (msg.type === "reaction") {
           const playerName = msg.payload?.player_name ?? "Someone";
           const emoji = msg.payload?.emoji ?? "";
+          const playerId = msg.payload?.player_id;
+
+          publishReaction({
+            id: String(Date.now()) + Math.random().toString(36).slice(2),
+            emoji,
+            playerName,
+            playerId,
+            xPercent: 12 + Math.random() * 76,
+            createdAt: Date.now(),
+          });
+
           const reactionMsg: ChatMessage = {
             id: String(Date.now()) + Math.random(),
             senderId: "",

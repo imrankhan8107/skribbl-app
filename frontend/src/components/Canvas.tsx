@@ -4,6 +4,8 @@ import { useWebSocket } from "../hooks/useWebSocket";
 import type { BrushSize, DrawingAction } from "../hooks/useCanvas";
 import { subscribeDrawing, registerCanvasSnapshotter } from "../context/drawingBus";
 import RoundTransition from "./RoundTransition";
+import FloatingReactions from "./FloatingReactions";
+import ReactionToolbar from "./ReactionToolbar";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -165,6 +167,7 @@ export default function Canvas({
             touchAction: "none",
           }}
         />
+        <FloatingReactions />
         {showRoundTransition && roundInfo && (
           <RoundTransition
             round={roundInfo.round}
@@ -174,7 +177,7 @@ export default function Canvas({
           />
         )}
       </div>
-      {isDrawer && (
+      {isDrawer ? (
         <div
           className="drawing-toolbar"
           data-testid="drawing-toolbar"
@@ -291,6 +294,8 @@ export default function Canvas({
             <ClearButton onClear={handleClear} />
           </div>
         </div>
+      ) : (
+        <ReactionToolbar onReact={(emoji) => send("reaction", { emoji })} />
       )}
     </div>
   );

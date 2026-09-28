@@ -95,14 +95,17 @@ function renderCanvas(isDrawer: boolean, overrides: Partial<WebSocketContextValu
 
 describe("Canvas", () => {
   describe("Toolbar visibility (Requirement 5.9)", () => {
-    it("hides toolbar when isDrawer is false", () => {
+    it("hides drawing toolbar and shows reaction toolbar when isDrawer is false", () => {
       renderCanvas(false);
       expect(screen.queryByTestId("drawing-toolbar")).not.toBeInTheDocument();
+      expect(screen.getByTestId("reaction-toolbar")).toBeInTheDocument();
+      expect(screen.getByTestId("floating-reactions")).toBeInTheDocument();
     });
 
-    it("shows toolbar when isDrawer is true", () => {
+    it("shows drawing toolbar when isDrawer is true", () => {
       renderCanvas(true);
       expect(screen.getByTestId("drawing-toolbar")).toBeInTheDocument();
+      expect(screen.queryByTestId("reaction-toolbar")).not.toBeInTheDocument();
     });
   });
 
