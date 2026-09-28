@@ -14,6 +14,8 @@
 // batching in the path. State that other components care about is untouched.
 // ---------------------------------------------------------------------------
 
+import type { DrawingAction } from "../types";
+
 export interface DrawingEvent {
   type: "stroke" | "fill" | "clear_canvas" | "undo";
   payload: unknown;
@@ -53,4 +55,21 @@ export function registerCanvasSnapshotter(getter: () => string | null): () => vo
 /** Capture base64 PNG data URL of the canvas artwork right now. */
 export function getCanvasSnapshot(): string | null {
   return snapshotGetter ? snapshotGetter() : null;
+}
+
+let historyGetter: (() => DrawingAction[]) | null = null;
+
+/** Register active canvas action history provider. Returns an unsubscribe function. */
+export function registerCanvasHistoryGetter(getter: () => DrawingAction[]): () => void {
+  historyGetter = getter;
+  return () => {
+    if (historyGetter === getter) {
+      historyGetter = null;
+    }
+  };
+}
+
+/** Get list of drawing actions recorded during this turn. */
+export function getCanvasHistory(): DrawingAction[] {
+  return historyGetter ? historyGetter() : [];
 }

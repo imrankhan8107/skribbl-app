@@ -2,7 +2,11 @@ import { useRef, useEffect, useState } from "react";
 import { useCanvas, BRUSH_SIZES } from "../hooks/useCanvas";
 import { useWebSocket } from "../hooks/useWebSocket";
 import type { BrushSize, DrawingAction } from "../hooks/useCanvas";
-import { subscribeDrawing, registerCanvasSnapshotter } from "../context/drawingBus";
+import {
+  subscribeDrawing,
+  registerCanvasSnapshotter,
+  registerCanvasHistoryGetter,
+} from "../context/drawingBus";
 import RoundTransition from "./RoundTransition";
 import FloatingReactions from "./FloatingReactions";
 import ReactionToolbar from "./ReactionToolbar";
@@ -76,6 +80,7 @@ export default function Canvas({
     renderRemoteStroke,
     renderRemoteFill,
     renderRemoteUndo,
+    getHistory,
   } = useCanvas(canvasRef, isDrawer);
 
   // Initialize canvas with white background on mount
@@ -88,9 +93,9 @@ export default function Canvas({
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }, []);
 
-  // Register snapshot getter so game engine can capture artwork upon turn end
+  // Register snapshot getter and history getter so game engine can capture artwork and replay upon turn end
   useEffect(() => {
-    return registerCanvasSnapshotter(() => {
+    const unsubSnapshot = registerCanvasSnapshotter(() => {
       const canvas = canvasRef.current;
       if (!canvas) return null;
       try {
@@ -99,7 +104,14 @@ export default function Canvas({
         return null;
       }
     });
-  }, []);
+    const unsubHistory = registerCanvasHistoryGetter(() => {
+      return getHistory();
+    });
+    return () => {
+      unsubSnapshot();
+      unsubHistory();
+    };
+  }, [getHistory]);
 
   // Subscribe to incoming drawing events from the server. Rendering happens the
   // instant each event arrives (see drawingBus) so no segment is lost to React

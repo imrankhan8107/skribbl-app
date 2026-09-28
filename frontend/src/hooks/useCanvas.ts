@@ -8,9 +8,8 @@ import { useWebSocket } from "./useWebSocket";
 export type DrawingTool = "pen" | "fill" | "eraser";
 export type BrushSize = "xs" | "small" | "medium" | "large" | "xl";
 
-export type DrawingAction =
-  | { type: "stroke"; points: [number, number][]; color: string; size: number }
-  | { type: "fill"; x: number; y: number; color: string };
+import type { DrawingAction } from "../types";
+export type { DrawingAction };
 
 export interface UseCanvasReturn {
   color: string;
@@ -27,6 +26,7 @@ export interface UseCanvasReturn {
   renderRemoteStroke: (stroke: { points: [number, number][]; color: string; size: number }) => void;
   renderRemoteFill: (fill: { x: number; y: number; color: string }) => void;
   renderRemoteUndo: (actions?: DrawingAction[]) => void;
+  getHistory: () => DrawingAction[];
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +316,12 @@ export function useCanvas(
   const renderRemoteStroke = useCallback(
     (stroke: { points: [number, number][]; color: string; size: number }) => {
       drawStroke(stroke.points, stroke.color, stroke.size);
+      actionHistoryRef.current.push({
+        type: "stroke",
+        points: stroke.points,
+        color: stroke.color,
+        size: stroke.size,
+      });
     },
     [drawStroke]
   );
@@ -326,6 +332,12 @@ export function useCanvas(
   const renderRemoteFill = useCallback(
     (fill: { x: number; y: number; color: string }) => {
       floodFill(fill.x, fill.y, fill.color);
+      actionHistoryRef.current.push({
+        type: "fill",
+        x: fill.x,
+        y: fill.y,
+        color: fill.color,
+      });
     },
     [floodFill]
   );
@@ -336,11 +348,16 @@ export function useCanvas(
   const renderRemoteUndo = useCallback(
     (actions?: DrawingAction[]) => {
       if (actions) {
+        actionHistoryRef.current = [...actions];
         replayActions(actions);
       }
     },
     [replayActions]
   );
+
+  const getHistory = useCallback(() => {
+    return actionHistoryRef.current.slice();
+  }, []);
 
   // ---------------------------------------------------------------------------
   // Keyboard Shortcuts (B=Pen, E=Eraser, F=Fill, Ctrl+Z=Undo, Ctrl+Y=Redo)
@@ -551,6 +568,7 @@ export function useCanvas(
     renderRemoteStroke,
     renderRemoteFill,
     renderRemoteUndo,
+    getHistory,
   };
 }
 

@@ -36,6 +36,10 @@ export interface RoundTheme {
   emoji: string;
 }
 
+export type DrawingAction =
+  | { type: "stroke"; points: [number, number][]; color: string; size: number }
+  | { type: "fill"; x: number; y: number; color: string };
+
 export interface RoundArtwork {
   round: number;
   word: string;
@@ -44,6 +48,7 @@ export interface RoundArtwork {
   drawerAvatar?: string;
   imageDataUrl: string;
   theme?: string;
+  replayActions?: DrawingAction[];
 }
 
 export interface GameState {

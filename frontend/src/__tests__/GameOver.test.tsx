@@ -199,4 +199,131 @@ describe("GameOver", () => {
     await user.click(closeBtn);
     expect(screen.queryByTestId("gallery-modal")).not.toBeInTheDocument();
   });
+
+  it("opens Replay modal from gallery card, displays controls, allows speed and scrubber interaction", async () => {
+    const user = userEvent.setup();
+    const sampleArtwork = [
+      {
+        round: 1,
+        word: "Elephant",
+        drawerId: "p1",
+        drawerName: "Alice",
+        drawerAvatar: "🐘",
+        imageDataUrl: "data:image/png;base64,mockElephantData",
+        replayActions: [
+          {
+            type: "stroke" as const,
+            points: [
+              [10, 10],
+              [20, 20],
+            ] as [number, number][],
+            color: "#000000",
+            size: 4,
+          },
+          {
+            type: "stroke" as const,
+            points: [
+              [20, 20],
+              [30, 30],
+            ] as [number, number][],
+            color: "#000000",
+            size: 4,
+          },
+          {
+            type: "fill" as const,
+            x: 50,
+            y: 50,
+            color: "#ff0000",
+          },
+        ],
+      },
+    ];
+
+    const gameState: GameState = {
+      ...defaultGameState,
+      artworkGallery: sampleArtwork,
+    };
+
+    renderGameOver({ gameState });
+
+    // Click Replay button on card
+    const replayBtn = screen.getByTestId("replay-artwork-0");
+    await user.click(replayBtn);
+
+    // Replay modal should be open
+    const replayModal = screen.getByTestId("replay-modal");
+    expect(replayModal).toBeInTheDocument();
+    expect(within(replayModal).getByText(/🎬 Replay: Elephant/)).toBeInTheDocument();
+    expect(screen.getByTestId("replay-canvas")).toBeInTheDocument();
+    expect(screen.getByTestId("replay-scrubber")).toBeInTheDocument();
+    expect(screen.getByTestId("replay-counter")).toBeInTheDocument();
+
+    // Speed toggles
+    const speed2x = screen.getByTestId("replay-speed-2x");
+    await user.click(speed2x);
+    expect(speed2x).toHaveClass("active");
+
+    const speed4x = screen.getByTestId("replay-speed-4x");
+    await user.click(speed4x);
+    expect(speed4x).toHaveClass("active");
+
+    // Play/Pause button
+    const playPauseBtn = screen.getByTestId("replay-play-pause-btn");
+    expect(playPauseBtn).toBeInTheDocument();
+
+    // Restart button
+    const restartBtn = screen.getByTestId("replay-restart-btn");
+    await user.click(restartBtn);
+
+    // Close replay modal
+    const closeBtn = screen.getByTestId("replay-modal-close");
+    await user.click(closeBtn);
+    expect(screen.queryByTestId("replay-modal")).not.toBeInTheDocument();
+  });
+
+  it("allows opening Replay modal from within the lightbox modal footer", async () => {
+    const user = userEvent.setup();
+    const sampleArtwork = [
+      {
+        round: 1,
+        word: "Giraffe",
+        drawerId: "p2",
+        drawerName: "Bob",
+        drawerAvatar: "🦒",
+        imageDataUrl: "data:image/png;base64,mockGiraffeData",
+        replayActions: [
+          {
+            type: "stroke" as const,
+            points: [
+              [100, 100],
+              [150, 150],
+            ] as [number, number][],
+            color: "#ffaa00",
+            size: 8,
+          },
+        ],
+      },
+    ];
+
+    const gameState: GameState = {
+      ...defaultGameState,
+      artworkGallery: sampleArtwork,
+    };
+
+    renderGameOver({ gameState });
+
+    // Open lightbox
+    const thumbWrap = screen.getByTitle("View drawing for Giraffe");
+    await user.click(thumbWrap);
+    expect(screen.getByTestId("gallery-modal")).toBeInTheDocument();
+
+    // Click "Watch Replay" button in lightbox footer
+    const lightboxReplayBtn = screen.getByTestId("lightbox-replay-btn");
+    await user.click(lightboxReplayBtn);
+
+    // Lightbox should close and Replay modal should open
+    expect(screen.queryByTestId("gallery-modal")).not.toBeInTheDocument();
+    expect(screen.getByTestId("replay-modal")).toBeInTheDocument();
+    expect(screen.getByText(/🎬 Replay: Giraffe/)).toBeInTheDocument();
+  });
 });

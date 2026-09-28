@@ -1,6 +1,6 @@
 import React, { createContext, useReducer, useRef, useCallback, useEffect, useState } from "react";
 import type { GameState, Action, ChatMessage, PlayerInfo } from "../types";
-import { publishDrawing, getCanvasSnapshot } from "./drawingBus";
+import { publishDrawing, getCanvasSnapshot, getCanvasHistory } from "./drawingBus";
 import { publishReaction } from "./reactionBus";
 import { getStoredAvatarId, getStoredPlayerName, getAvatarForPlayer } from "../utils/avatars";
 
@@ -774,6 +774,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
             const drawerAvatarInfo = drawer
               ? getAvatarForPlayer(drawer.name || drawer.id, drawer.avatar)
               : null;
+            const history = getCanvasHistory();
             dispatch({
               type: "SAVE_ARTWORK",
               payload: {
@@ -784,6 +785,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
                 drawerAvatar: drawerAvatarInfo?.emoji || "🎨",
                 imageDataUrl: snapshot,
                 theme: gameStateRef.current.currentTheme?.name || undefined,
+                replayActions: history && history.length > 0 ? history : undefined,
               },
             });
           }

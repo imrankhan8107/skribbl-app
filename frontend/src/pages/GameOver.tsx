@@ -1,9 +1,374 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { HeaderBar } from "../components/HeaderBar";
 import { getAvatarForPlayer, getStoredAvatarId, getStoredPlayerName } from "../utils/avatars";
-import type { RoundArtwork } from "../types";
+import type { RoundArtwork, DrawingAction } from "../types";
+
+/**
+ * Utility: hex color to RGBA array
+ */
+function hexToRGBA(hex: string): [number, number, number, number] {
+  const clean = hex.replace("#", "");
+  const r = parseInt(clean.substring(0, 2), 16);
+  const g = parseInt(clean.substring(2, 4), 16);
+  const b = parseInt(clean.substring(4, 6), 16);
+  return [r, g, b, 255];
+}
+
+/**
+ * Draw stroke helper for replay canvas
+ */
+function drawReplayStroke(
+  ctx: CanvasRenderingContext2D,
+  points: [number, number][],
+  strokeColor: string,
+  size: number
+) {
+  if (points.length === 0) return;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = size;
+
+  ctx.beginPath();
+  ctx.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i][0], points[i][1]);
+  }
+  if (points.length === 1) {
+    ctx.lineTo(points[0][0] + 0.1, points[0][1] + 0.1);
+  }
+  ctx.stroke();
+}
+
+/**
+ * BFS Flood fill helper for replay canvas
+ */
+function floodFillReplayCanvas(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  startX: number,
+  startY: number,
+  fillColor: string
+) {
+  const width = canvas.width;
+  const height = canvas.height;
+  let imageData: ImageData;
+  try {
+    imageData = ctx.getImageData(0, 0, width, height);
+  } catch {
+    return;
+  }
+  const data = imageData.data;
+  const fillRGBA = hexToRGBA(fillColor);
+  const sx = Math.floor(startX);
+  const sy = Math.floor(startY);
+  if (sx < 0 || sx >= width || sy < 0 || sy >= height) return;
+
+  const startIdx = (sy * width + sx) * 4;
+  const targetR = data[startIdx];
+  const targetG = data[startIdx + 1];
+  const targetB = data[startIdx + 2];
+  const targetA = data[startIdx + 3];
+
+  if (
+    targetR === fillRGBA[0] &&
+    targetG === fillRGBA[1] &&
+    targetB === fillRGBA[2] &&
+    targetA === fillRGBA[3]
+  ) {
+    return;
+  }
+
+  const tolerance = 10;
+  const matchesTarget = (idx: number): boolean => {
+    return (
+      Math.abs(data[idx] - targetR) <= tolerance &&
+      Math.abs(data[idx + 1] - targetG) <= tolerance &&
+      Math.abs(data[idx + 2] - targetB) <= tolerance &&
+      Math.abs(data[idx + 3] - targetA) <= tolerance
+    );
+  };
+
+  const queue: [number, number][] = [[sx, sy]];
+  const visited = new Uint8Array(width * height);
+  visited[sy * width + sx] = 1;
+
+  while (queue.length > 0) {
+    const [cx, cy] = queue.shift()!;
+    const idx = (cy * width + cx) * 4;
+
+    if (!matchesTarget(idx)) continue;
+    data[idx] = fillRGBA[0];
+    data[idx + 1] = fillRGBA[1];
+    data[idx + 2] = fillRGBA[2];
+    data[idx + 3] = fillRGBA[3];
+
+    const neighbors: [number, number][] = [
+      [cx - 1, cy],
+      [cx + 1, cy],
+      [cx, cy - 1],
+      [cx, cy + 1],
+    ];
+
+    for (const [nx, ny] of neighbors) {
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+        const nIdx = ny * width + nx;
+        if (!visited[nIdx]) {
+          visited[nIdx] = 1;
+          queue.push([nx, ny]);
+        }
+      }
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+}
+
+/**
+ * Animated Timelapse Replay Player Modal
+ */
+export function ReplayModal({ artwork, onClose }: { artwork: RoundArtwork; onClose: () => void }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const actions: DrawingAction[] = artwork.replayActions || [];
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [speed, setSpeed] = useState<1 | 2 | 4>(1);
+
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
+  const indexRef = useRef(currentIndex);
+  indexRef.current = currentIndex;
+
+  const redrawCanvas = useCallback(
+    (upToIndex: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      for (let i = 0; i < upToIndex && i < actions.length; i++) {
+        const act = actions[i];
+        if (act.type === "stroke") {
+          drawReplayStroke(ctx, act.points, act.color, act.size);
+        } else if (act.type === "fill") {
+          floodFillReplayCanvas(canvas, ctx, act.x, act.y, act.color);
+        }
+      }
+    },
+    [actions]
+  );
+
+  // Initialize canvas on mount
+  useEffect(() => {
+    redrawCanvas(0);
+    setCurrentIndex(0);
+    setIsPlaying(actions.length > 0);
+  }, [actions, redrawCanvas]);
+
+  // Animation playback loop
+  useEffect(() => {
+    if (!isPlaying || actions.length === 0) return;
+
+    let animId: number;
+    let lastTime = performance.now();
+
+    const loop = (now: number) => {
+      const interval = 28 / speedRef.current;
+      if (now - lastTime >= interval) {
+        lastTime = now;
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext("2d");
+        const curr = indexRef.current;
+
+        if (curr >= actions.length) {
+          setIsPlaying(false);
+          return;
+        }
+
+        const step = Math.min(speedRef.current, actions.length - curr);
+        if (canvas && ctx) {
+          for (let i = 0; i < step; i++) {
+            const act = actions[curr + i];
+            if (act.type === "stroke") {
+              drawReplayStroke(ctx, act.points, act.color, act.size);
+            } else if (act.type === "fill") {
+              floodFillReplayCanvas(canvas, ctx, act.x, act.y, act.color);
+            }
+          }
+        }
+
+        const next = curr + step;
+        indexRef.current = next;
+        setCurrentIndex(next);
+
+        if (next >= actions.length) {
+          setIsPlaying(false);
+          return;
+        }
+      }
+
+      animId = requestAnimationFrame(loop);
+    };
+
+    animId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(animId);
+  }, [isPlaying, actions]);
+
+  const handleRestart = () => {
+    indexRef.current = 0;
+    setCurrentIndex(0);
+    redrawCanvas(0);
+    setIsPlaying(true);
+  };
+
+  const handleSeek = (newIndex: number) => {
+    const clamped = Math.max(0, Math.min(newIndex, actions.length));
+    indexRef.current = clamped;
+    setCurrentIndex(clamped);
+    redrawCanvas(clamped);
+  };
+
+  return (
+    <div
+      className="gallery-modal-backdrop"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      data-testid="replay-modal"
+    >
+      <div
+        className="gallery-modal-content replay-modal-content"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="gallery-modal-header">
+          <div>
+            <h3 className="gallery-modal-word">🎬 Replay: {artwork.word}</h3>
+            <span className="gallery-modal-sub">
+              {artwork.drawerAvatar} Drawn by {artwork.drawerName} • Round {artwork.round}
+              {artwork.theme ? ` • ${artwork.theme}` : ""}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="gallery-modal-close"
+            onClick={onClose}
+            aria-label="Close"
+            data-testid="replay-modal-close"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="gallery-modal-body" style={{ flexDirection: "column" }}>
+          <div className="replay-canvas-wrapper">
+            <canvas
+              ref={canvasRef}
+              width={800}
+              height={600}
+              className="replay-canvas"
+              data-testid="replay-canvas"
+            />
+          </div>
+        </div>
+
+        <div className="replay-controls-panel">
+          <div className="replay-scrubber-row">
+            <input
+              type="range"
+              min={0}
+              max={actions.length}
+              value={currentIndex}
+              onChange={(e) => handleSeek(Number(e.target.value))}
+              className="replay-scrubber"
+              aria-label="Timeline scrubber"
+              data-testid="replay-scrubber"
+              disabled={actions.length === 0}
+            />
+            <span className="replay-counter" data-testid="replay-counter">
+              {currentIndex} / {actions.length}
+            </span>
+          </div>
+
+          <div className="replay-buttons-row">
+            <div className="replay-main-buttons">
+              <button
+                type="button"
+                className="replay-ctrl-btn primary"
+                onClick={() => {
+                  if (currentIndex >= actions.length) {
+                    handleRestart();
+                  } else {
+                    setIsPlaying(!isPlaying);
+                  }
+                }}
+                data-testid="replay-play-pause-btn"
+                disabled={actions.length === 0}
+              >
+                {currentIndex >= actions.length
+                  ? "🔄 Replay Again"
+                  : isPlaying
+                    ? "⏸️ Pause"
+                    : "▶️ Play"}
+              </button>
+              <button
+                type="button"
+                className="replay-ctrl-btn"
+                onClick={handleRestart}
+                data-testid="replay-restart-btn"
+                disabled={actions.length === 0}
+              >
+                ⏮️ Restart
+              </button>
+            </div>
+
+            <div className="replay-speed-group" data-testid="replay-speed-group">
+              <button
+                type="button"
+                className={`replay-speed-btn ${speed === 1 ? "active" : ""}`}
+                onClick={() => setSpeed(1)}
+                data-testid="replay-speed-1x"
+              >
+                1x
+              </button>
+              <button
+                type="button"
+                className={`replay-speed-btn ${speed === 2 ? "active" : ""}`}
+                onClick={() => setSpeed(2)}
+                data-testid="replay-speed-2x"
+              >
+                2x
+              </button>
+              <button
+                type="button"
+                className={`replay-speed-btn ${speed === 4 ? "active" : ""}`}
+                onClick={() => setSpeed(4)}
+                data-testid="replay-speed-4x"
+              >
+                4x
+              </button>
+            </div>
+
+            <button
+              type="button"
+              className="gallery-download-btn"
+              onClick={() => downloadArtwork(artwork)}
+              title="Download PNG"
+            >
+              💾 Download
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Canvas-based confetti/party popper animation.
@@ -186,6 +551,7 @@ export default function GameOver() {
   const { gameState, send } = useWebSocket();
   const navigate = useNavigate();
   const [selectedArtwork, setSelectedArtwork] = useState<RoundArtwork | null>(null);
+  const [replayArtwork, setReplayArtwork] = useState<RoundArtwork | null>(null);
 
   // Navigate back to lobby when rematch transitions state to 'lobby'
   useEffect(() => {
@@ -321,18 +687,32 @@ export default function GameOver() {
                       </span>
                       <span className="gallery-round-tag">R{art.round}</span>
                     </div>
-                    <button
-                      type="button"
-                      className="gallery-download-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        downloadArtwork(art);
-                      }}
-                      title="Download PNG"
-                      data-testid={`download-artwork-${idx}`}
-                    >
-                      💾 Download
-                    </button>
+                    <div className="gallery-card-actions">
+                      <button
+                        type="button"
+                        className="gallery-replay-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setReplayArtwork(art);
+                        }}
+                        title="Watch animated drawing replay"
+                        data-testid={`replay-artwork-${idx}`}
+                      >
+                        ▶️ Replay
+                      </button>
+                      <button
+                        type="button"
+                        className="gallery-download-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          downloadArtwork(art);
+                        }}
+                        title="Download PNG"
+                        data-testid={`download-artwork-${idx}`}
+                      >
+                        💾 Download
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -379,6 +759,18 @@ export default function GameOver() {
               <div className="gallery-modal-footer">
                 <button
                   type="button"
+                  className="gallery-replay-btn modal-replay"
+                  onClick={() => {
+                    const art = selectedArtwork;
+                    setSelectedArtwork(null);
+                    setReplayArtwork(art);
+                  }}
+                  data-testid="lightbox-replay-btn"
+                >
+                  ▶️ Watch Replay
+                </button>
+                <button
+                  type="button"
                   className="gallery-download-btn modal-download"
                   onClick={() => downloadArtwork(selectedArtwork)}
                 >
@@ -387,6 +779,11 @@ export default function GameOver() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* Animated Drawing Replay Modal */}
+        {replayArtwork && (
+          <ReplayModal artwork={replayArtwork} onClose={() => setReplayArtwork(null)} />
         )}
 
         <div className="game-over-actions">
