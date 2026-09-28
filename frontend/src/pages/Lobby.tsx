@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket";
 import PlayerList from "../components/PlayerList";
 import Chat from "../components/Chat";
@@ -8,6 +8,7 @@ import { copyToClipboard } from "../utils/clipboard";
 
 export default function Lobby() {
   const { gameState, send } = useWebSocket();
+  const { roomCode: routeRoomCode } = useParams<{ roomCode: string }>();
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
 
@@ -31,6 +32,29 @@ export default function Lobby() {
     }
   }, [gameState.phase, gameState.errorMessage, navigate]);
 
+  // When a player lands on /lobby/:roomCode directly without an active session,
+  // redirect to landing homepage with roomCode prefilled
+  useEffect(() => {
+    if (gameState.phase === "idle" && !gameState.errorMessage && routeRoomCode) {
+      const sessionStr =
+        typeof sessionStorage !== "undefined" ? sessionStorage.getItem("skribbl_session") : null;
+      let hasMatchingSession = false;
+      if (sessionStr) {
+        try {
+          const parsed = JSON.parse(sessionStr);
+          if (parsed.roomCode && parsed.roomCode.toUpperCase() === routeRoomCode.toUpperCase()) {
+            hasMatchingSession = true;
+          }
+        } catch {
+          hasMatchingSession = false;
+        }
+      }
+      if (!hasMatchingSession) {
+        navigate(`/?room=${routeRoomCode.toUpperCase()}`, { replace: true });
+      }
+    }
+  }, [gameState.phase, gameState.errorMessage, routeRoomCode, navigate]);
+
   // Show nothing while reconnecting
   if (gameState.phase === "idle") {
     if (gameState.errorMessage) {
@@ -47,7 +71,8 @@ export default function Lobby() {
 
   const handleCopyCode = async () => {
     if (gameState.roomCode) {
-      const ok = await copyToClipboard(gameState.roomCode);
+      const inviteUrl = `${window.location.origin}/lobby/${gameState.roomCode}`;
+      const ok = await copyToClipboard(inviteUrl);
       if (ok) {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
@@ -101,7 +126,7 @@ export default function Lobby() {
             className={`room-code-btn ${copied ? "copied" : ""}`}
             onClick={handleCopyCode}
             data-testid="room-code"
-            title="Click to copy room code"
+            title="Click to copy invite link"
           >
             {gameState.roomCode} {copied ? "✓ Copied!" : "📋"}
           </button>
@@ -110,7 +135,7 @@ export default function Lobby() {
         {/* Snackbar for copy feedback */}
         {copied && (
           <div className="snackbar" data-testid="snackbar">
-            Room code copied to clipboard!
+            Invite link copied to clipboard!
           </div>
         )}
 

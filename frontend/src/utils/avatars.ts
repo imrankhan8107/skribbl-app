@@ -25,6 +25,25 @@ export const AVATARS: AvatarInfo[] = [
 ];
 
 const AVATAR_STORAGE_KEY = "skribbl_player_avatar";
+const PLAYER_NAME_STORAGE_KEY = "skribbl_player_name";
+
+export function getStoredPlayerName(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return localStorage.getItem(PLAYER_NAME_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function storePlayerName(name: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(PLAYER_NAME_STORAGE_KEY, name.trim());
+  } catch {
+    // Ignore error
+  }
+}
 
 export function getStoredAvatarId(): string {
   if (typeof window === "undefined") return AVATARS[0].id;

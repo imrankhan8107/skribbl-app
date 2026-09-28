@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -6,6 +6,16 @@ import { WebSocketContext } from "../context/WebSocketContext";
 import type { WebSocketContextValue } from "../context/WebSocketContext";
 import type { GameState, PlayerInfo } from "../types";
 import Lobby from "../pages/Lobby";
+
+const mockNavigate = vi.fn();
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual("react-router-dom");
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+    useParams: () => ({ roomCode: "ABC123" }),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -81,6 +91,21 @@ function renderLobby(overrides: Partial<WebSocketContextValue> = {}) {
 // ---------------------------------------------------------------------------
 
 describe("Lobby", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sessionStorage.clear();
+  });
+
+  it("redirects unauthenticated direct link visits without session to /?room=:roomCode", () => {
+    const gameState: GameState = {
+      ...defaultGameState,
+      phase: "idle",
+      roomCode: null,
+    };
+    renderLobby({ gameState });
+    expect(mockNavigate).toHaveBeenCalledWith("/?room=ABC123", { replace: true });
+  });
+
   it("displays the room code prominently", () => {
     renderLobby();
     expect(screen.getByTestId("room-code")).toHaveTextContent("ABC123");

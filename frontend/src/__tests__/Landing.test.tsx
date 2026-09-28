@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -34,7 +34,10 @@ const defaultGameState: GameState = {
   reconnectCountdown: 0,
 };
 
-function renderLanding(overrides: Partial<WebSocketContextValue> = {}) {
+function renderLanding(
+  overrides: Partial<WebSocketContextValue> = {},
+  initialEntries: string[] = ["/"]
+) {
   const send = vi.fn();
   const contextValue: WebSocketContextValue = {
     gameState: defaultGameState,
@@ -46,7 +49,7 @@ function renderLanding(overrides: Partial<WebSocketContextValue> = {}) {
 
   const utils = render(
     <WebSocketContext.Provider value={contextValue}>
-      <MemoryRouter initialEntries={["/"]}>
+      <MemoryRouter initialEntries={initialEntries}>
         <Landing />
       </MemoryRouter>
     </WebSocketContext.Provider>
@@ -60,6 +63,31 @@ function renderLanding(overrides: Partial<WebSocketContextValue> = {}) {
 // ---------------------------------------------------------------------------
 
 describe("Landing", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("prefills room code from URL query parameter ?room=XYZ123", () => {
+    renderLanding({}, ["/?room=XYZ123"]);
+    const roomInput = screen.getByLabelText(/room code/i) as HTMLInputElement;
+    expect(roomInput.value).toBe("XYZ123");
+  });
+
+  it("loads and persists player name in localStorage", async () => {
+    localStorage.setItem("skribbl_player_name", "PreviousPlayer");
+    const user = userEvent.setup();
+    const { send } = renderLanding();
+
+    const nameInput = screen.getByLabelText(/player name/i) as HTMLInputElement;
+    expect(nameInput.value).toBe("PreviousPlayer");
+
+    const createBtn = screen.getByRole("button", { name: /create room/i });
+    expect(createBtn).not.toBeDisabled();
+    await user.click(createBtn);
+
+    expect(send).toHaveBeenCalledWith("create_room", { name: "PreviousPlayer" });
+  });
+
   it("calls send with create_room and player name when Create Room is clicked", async () => {
     const user = userEvent.setup();
     const { send } = renderLanding();
