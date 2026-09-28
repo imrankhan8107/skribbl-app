@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { generateQRMatrix } from "../utils/qr";
+import { generateQRMatrix, generateQRPath } from "../utils/qr";
 import { copyToClipboard } from "../utils/clipboard";
 
 export interface QRCodeModalProps {
@@ -20,6 +20,14 @@ export default function QRCodeModal({ roomCode, onClose }: QRCodeModalProps) {
       return null;
     }
   }, [inviteUrl]);
+
+  const quietZone = 4;
+  const matrixSize = matrix?.length ?? 25;
+  const fullSize = matrixSize + quietZone * 2;
+
+  const qrPath = useMemo(() => {
+    return matrix ? generateQRPath(matrix, quietZone) : "";
+  }, [matrix, quietZone]);
 
   const handleCopyLink = async () => {
     const ok = await copyToClipboard(inviteUrl);
@@ -55,10 +63,6 @@ export default function QRCodeModal({ roomCode, onClose }: QRCodeModalProps) {
     }
   };
 
-  const quietZone = 4;
-  const matrixSize = matrix?.length ?? 25;
-  const fullSize = matrixSize + quietZone * 2;
-
   return (
     <div
       className="gallery-modal-backdrop qr-modal-backdrop"
@@ -87,30 +91,18 @@ export default function QRCodeModal({ roomCode, onClose }: QRCodeModalProps) {
         </div>
 
         <div className="qr-modal-body" data-testid="qr-modal-body">
-          {matrix ? (
+          {matrix && qrPath ? (
             <div className="qr-svg-wrapper" data-testid="qr-svg-wrapper">
               <svg
                 viewBox={`0 0 ${fullSize} ${fullSize}`}
                 className="qr-code-svg"
                 role="img"
+                shapeRendering="crispEdges"
                 aria-label={`QR Code for room ${roomCode}`}
                 data-testid="qr-svg"
               >
-                <rect width={fullSize} height={fullSize} fill="#ffffff" rx={1.5} />
-                {matrix.map((row, r) =>
-                  row.map((isDark, c) =>
-                    isDark ? (
-                      <rect
-                        key={`${r}-${c}`}
-                        x={c + quietZone}
-                        y={r + quietZone}
-                        width={1}
-                        height={1}
-                        fill="#0f172a"
-                      />
-                    ) : null
-                  )
-                )}
+                <rect width={fullSize} height={fullSize} fill="#ffffff" />
+                <path d={qrPath} fill="#0f172a" />
               </svg>
             </div>
           ) : (
