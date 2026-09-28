@@ -4,21 +4,12 @@ import { useWebSocket } from "../hooks/useWebSocket";
 import PlayerList from "../components/PlayerList";
 import Chat from "../components/Chat";
 import { HeaderBar } from "../components/HeaderBar";
-import {
-  PRESET_WORD_PACKS,
-  getStoredPackId,
-  storePackId,
-  getStoredCustomWords,
-  storeCustomWords,
-  parseCustomWords,
-} from "../utils/wordPacks";
+import { copyToClipboard } from "../utils/clipboard";
 
 export default function Lobby() {
   const { gameState, send } = useWebSocket();
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
-  const [selectedPackId, setSelectedPackId] = useState(getStoredPackId);
-  const [customWordsText, setCustomWordsText] = useState(getStoredCustomWords);
 
   // Fallback config in case state is not yet populated
   const config = gameState.config ?? { numRounds: 3, turnDuration: 80, maxPlayers: 8 };
@@ -54,11 +45,13 @@ export default function Lobby() {
     return null;
   }
 
-  const handleCopyCode = () => {
+  const handleCopyCode = async () => {
     if (gameState.roomCode) {
-      navigator.clipboard.writeText(gameState.roomCode);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      const ok = await copyToClipboard(gameState.roomCode);
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
     }
   };
 
@@ -72,17 +65,6 @@ export default function Lobby() {
 
   const handleMaxPlayersChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     send("update_settings", { max_players: Number(e.target.value) });
-  };
-
-  const handlePackSelect = (packId: string) => {
-    setSelectedPackId(packId);
-    storePackId(packId);
-  };
-
-  const handleCustomWordsChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const val = e.target.value;
-    setCustomWordsText(val);
-    storeCustomWords(val);
   };
 
   const handleStartGame = () => {
@@ -108,32 +90,20 @@ export default function Lobby() {
   const readyCount = gameState.players.filter((p) => p.isReady).length;
   const totalCount = gameState.players.length;
   const canStart = gameState.isHost && gameState.players.length >= 2;
-  const activePack = PRESET_WORD_PACKS.find((p) => p.id === selectedPackId);
-  const parsedCustom = parseCustomWords(customWordsText);
 
   return (
     <>
-      <HeaderBar roomCode={gameState.roomCode} phase={gameState.phase} />
+      <HeaderBar phase={gameState.phase} />
       <div className="lobby-page">
         <div className="lobby-header">
-          <div className="lobby-title-wrap">
-            <h1>Lobby</h1>
-            {activePack && (
-              <span className="active-pack-badge" title={activePack.description}>
-                {activePack.emoji} {activePack.name}
-              </span>
-            )}
-            {selectedPackId === "custom" && (
-              <span className="active-pack-badge">✏️ Custom ({parsedCustom.length} words)</span>
-            )}
-          </div>
+          <h1>Lobby</h1>
           <button
-            className="room-code-btn"
+            className={`room-code-btn ${copied ? "copied" : ""}`}
             onClick={handleCopyCode}
             data-testid="room-code"
             title="Click to copy room code"
           >
-            {gameState.roomCode} 📋
+            {gameState.roomCode} {copied ? "✓ Copied!" : "📋"}
           </button>
         </div>
 
@@ -190,60 +160,6 @@ export default function Lobby() {
                       </option>
                     ))}
                   </select>
-                </div>
-
-                {/* Word Pack / Theme Configuration */}
-                <div className="word-pack-container">
-                  <div className="word-pack-header">
-                    <span className="word-pack-label">Word Pack Theme</span>
-                    {!gameState.isHost && (
-                      <span className="custom-words-hint">(Host controls pack)</span>
-                    )}
-                  </div>
-                  <div className="word-pack-grid">
-                    {PRESET_WORD_PACKS.map((pack) => {
-                      const isSelected = selectedPackId === pack.id;
-                      return (
-                        <button
-                          key={pack.id}
-                          type="button"
-                          className={`word-pack-card ${isSelected ? "selected" : ""}`}
-                          onClick={() => handlePackSelect(pack.id)}
-                          disabled={!gameState.isHost}
-                        >
-                          <span className="word-pack-card-name">
-                            {pack.emoji} {pack.name}
-                          </span>
-                          <span className="word-pack-card-desc">{pack.description}</span>
-                        </button>
-                      );
-                    })}
-                    <button
-                      type="button"
-                      className={`word-pack-card ${selectedPackId === "custom" ? "selected" : ""}`}
-                      onClick={() => handlePackSelect("custom")}
-                      disabled={!gameState.isHost}
-                    >
-                      <span className="word-pack-card-name">✏️ Custom Words</span>
-                      <span className="word-pack-card-desc">Enter your own word list</span>
-                    </button>
-                  </div>
-
-                  {selectedPackId === "custom" && (
-                    <>
-                      <textarea
-                        className="custom-words-textarea"
-                        rows={2}
-                        placeholder="pizza, telescope, astronaut, superhero (comma separated)"
-                        value={customWordsText}
-                        onChange={handleCustomWordsChange}
-                        disabled={!gameState.isHost}
-                      />
-                      <div className="custom-words-hint">
-                        {parsedCustom.length} valid words loaded
-                      </div>
-                    </>
-                  )}
                 </div>
               </fieldset>
             </div>

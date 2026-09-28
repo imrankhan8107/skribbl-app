@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { ThemeSelector } from "./ThemeSelector";
 import { SoundToggle } from "./SoundToggle";
 
@@ -7,16 +7,7 @@ interface HeaderBarProps {
   phase?: string;
 }
 
-export const HeaderBar: React.FC<HeaderBarProps> = ({ roomCode, phase }) => {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopyCode = () => {
-    if (!roomCode) return;
-    navigator.clipboard.writeText(roomCode);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
+export const HeaderBar: React.FC<HeaderBarProps> = ({ phase }) => {
   return (
     <header className="global-header-bar" role="banner">
       <div className="header-left">
@@ -24,18 +15,6 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({ roomCode, phase }) => {
           <span className="logo-icon">✏️</span>
           <span className="logo-text">Skribbl</span>
         </a>
-        {roomCode && (
-          <button
-            type="button"
-            className="header-room-chip"
-            onClick={handleCopyCode}
-            title="Click to copy room code"
-          >
-            <span className="chip-label">Room:</span>
-            <span className="chip-code">{roomCode}</span>
-            <span className="chip-icon">{copied ? "✓" : "📋"}</span>
-          </button>
-        )}
         {phase && phase !== "idle" && (
           <span className="header-phase-badge">{phase.replace("_", " ").toUpperCase()}</span>
         )}

@@ -136,12 +136,21 @@ body {
 button {
   font-family: inherit;
   cursor: pointer;
+  color: inherit;
 }
 
 input,
-select {
+select,
+textarea {
   font-family: inherit;
   font-size: 1rem;
+  color: var(--color-text);
+  background-color: var(--color-surface);
+}
+
+::placeholder {
+  color: var(--color-text-muted);
+  opacity: 0.8;
 }
 
 ul,
@@ -194,7 +203,11 @@ ol {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   font-size: 1rem;
-  transition: border-color 0.2s;
+  color: var(--color-text);
+  background-color: var(--color-surface);
+  transition:
+    border-color 0.2s,
+    background-color 0.2s;
 }
 
 .landing-page input[type="text"]:focus {
@@ -318,6 +331,7 @@ ol {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .start-game-btn {
@@ -637,6 +651,27 @@ ol {
   gap: 0.25rem;
 }
 
+.drawing-toolbar button {
+  color: var(--color-text);
+  background-color: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+
+.drawing-toolbar button:hover:not(:disabled) {
+  background-color: var(--color-surface);
+  border-color: var(--color-primary);
+}
+
+.drawing-toolbar button[aria-pressed="true"] {
+  border-color: var(--color-primary) !important;
+  color: var(--color-primary) !important;
+  background-color: var(--color-surface) !important;
+  font-weight: 700;
+}
+
 /* ============================================================
    Chat
    ============================================================ */
@@ -695,10 +730,13 @@ ol {
   border: none;
   outline: none;
   font-size: 0.875rem;
+  color: var(--color-text);
+  background-color: var(--color-surface);
 }
 
 .chat-input-form input:disabled {
   background: var(--color-surface-alt);
+  color: var(--color-text-muted);
   cursor: not-allowed;
 }
 
@@ -799,17 +837,17 @@ ol {
   align-items: center;
   gap: 0.5rem;
   padding: 2.5rem 3.5rem;
-  background: linear-gradient(145deg, #ffffff 0%, #f8f6ff 100%);
+  background: var(--color-surface);
   border-radius: 20px;
   box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.25),
     0 0 60px rgba(255, 215, 0, 0.15),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
   margin-bottom: 1.5rem;
   animation: winner-pop 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
   position: relative;
   z-index: 1;
-  border: 2px solid rgba(255, 215, 0, 0.3);
+  border: 2px solid rgba(255, 215, 0, 0.4);
 }
 
 .winner-trophy {
@@ -876,10 +914,11 @@ ol {
 .leaderboard {
   width: 100%;
   max-width: 450px;
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   backdrop-filter: blur(10px);
   border-radius: 16px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-md);
   overflow: hidden;
   counter-reset: rank;
   position: relative;
@@ -957,9 +996,9 @@ ol {
   padding: 0.875rem 2.5rem;
   font-size: 1.125rem;
   font-weight: 700;
-  border: none;
+  border: 2px solid var(--color-primary);
   border-radius: var(--radius-md);
-  background-color: #fff;
+  background-color: var(--color-surface);
   color: var(--color-primary);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   transition:
@@ -969,7 +1008,7 @@ ol {
 }
 
 .rematch-button:hover:not(:disabled) {
-  background-color: #f0f0f0;
+  background-color: var(--color-surface-alt);
   transform: translateY(-1px);
 }
 
@@ -1222,6 +1261,11 @@ ol {
   color: #fff;
 }
 
+.room-code-btn.copied {
+  background: var(--color-primary);
+  color: #fff;
+}
+
 .room-code-btn:active {
   transform: scale(0.95);
 }
@@ -1424,14 +1468,14 @@ ol {
 }
 
 .game-over-actions .rematch-button {
-  border: none;
-  background-color: #fff;
+  border: 2px solid var(--color-primary);
+  background-color: var(--color-surface);
   color: var(--color-primary);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
 }
 
 .game-over-actions .rematch-button:hover:not(:disabled) {
-  background-color: #f0f0f0;
+  background-color: var(--color-surface-alt);
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
@@ -1883,101 +1927,6 @@ ol {
   margin-left: 0.4rem;
   font-size: 0.95rem;
   animation: bouncePencil 1.3s infinite ease-in-out;
-}
-
-/* Word Pack Selector in Lobby */
-.word-pack-container {
-  margin-top: 0.75rem;
-  padding: 0.75rem;
-  background: var(--color-surface-alt);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
-}
-
-.word-pack-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.5rem;
-}
-
-.word-pack-label {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.word-pack-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 0.5rem;
-}
-
-.word-pack-card {
-  padding: 0.5rem 0.6rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  text-align: left;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.word-pack-card:hover {
-  border-color: var(--color-primary);
-}
-
-.word-pack-card.selected {
-  border-color: var(--color-primary);
-  background: var(--color-surface);
-  box-shadow: 0 0 0 1px var(--color-primary);
-}
-
-.word-pack-card-name {
-  font-weight: 700;
-  font-size: 0.8rem;
-  color: var(--color-text);
-  display: block;
-}
-
-.word-pack-card-desc {
-  font-size: 0.7rem;
-  color: var(--color-text-muted);
-  display: block;
-  margin-top: 0.15rem;
-  line-height: 1.2;
-}
-
-.custom-words-textarea {
-  width: 100%;
-  margin-top: 0.5rem;
-  padding: 0.5rem;
-  font-size: 0.85rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-family: inherit;
-  resize: vertical;
-}
-
-.custom-words-hint {
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
-  margin-top: 0.25rem;
-}
-
-.active-pack-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.25rem 0.6rem;
-  background: var(--color-surface-alt);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--color-primary);
 }
 
 /* Animations */
