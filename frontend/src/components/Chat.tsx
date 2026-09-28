@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState } from "react";
 import { useWebSocket } from "../hooks/useWebSocket";
 import type { ChatMessage } from "../types";
-import { getAvatarForPlayer } from "../utils/avatars";
+import { getAvatarForPlayer, getStoredAvatarId, getStoredPlayerName } from "../utils/avatars";
 import { triggerGlobalConfetti } from "./Confetti";
 
 /**
@@ -62,7 +62,14 @@ export default function Chat() {
     <div className="chat-container" data-testid="chat-container">
       <div className="chat-messages" data-testid="chat-messages">
         {gameState.chatMessages.map((msg) => {
-          const avatar = getAvatarForPlayer(msg.senderName || msg.senderId);
+          const sender = gameState.players.find(
+            (p) => p.id === msg.senderId || p.name === msg.senderName
+          );
+          const isLocal =
+            (gameState.localPlayerId && msg.senderId === gameState.localPlayerId) ||
+            msg.senderName === getStoredPlayerName();
+          const explicitAvatar = sender?.avatar || (isLocal ? getStoredAvatarId() : undefined);
+          const avatar = getAvatarForPlayer(msg.senderName || msg.senderId, explicitAvatar);
           return (
             <div
               key={msg.id}

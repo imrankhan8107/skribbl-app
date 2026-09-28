@@ -1,5 +1,5 @@
 import type { PlayerInfo } from "../types";
-import { getAvatarForPlayer } from "../utils/avatars";
+import { getAvatarForPlayer, getStoredAvatarId, getStoredPlayerName } from "../utils/avatars";
 
 interface PlayerListProps {
   players: PlayerInfo[];
@@ -27,7 +27,11 @@ export default function PlayerList({
   return (
     <ul className="player-list" data-testid="player-list">
       {players.map((player) => {
-        const avatar = getAvatarForPlayer(player.name || player.id);
+        const isLocal =
+          (localPlayerId && player.id === localPlayerId) ||
+          (!localPlayerId && player.name === getStoredPlayerName());
+        const explicitAvatar = player.avatar || (isLocal ? getStoredAvatarId() : undefined);
+        const avatar = getAvatarForPlayer(player.name || player.id, explicitAvatar);
         const isDrawing = drawerId ? player.id === drawerId : false;
         const classes = [
           "player-item",

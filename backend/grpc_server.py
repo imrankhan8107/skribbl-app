@@ -345,7 +345,8 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
 
         if message_type == "create_room":
             name = payload.get("name", "")
-            result = await room_manager.create_room(name, transport)
+            avatar = payload.get("avatar")
+            result = await room_manager.create_room(name, transport, avatar=avatar)
             # Send the result back to the player via transport. This response is
             # still targeted at the CURRENT transport.player_id (the pending id),
             # which matches the gateway's session registry at this instant.
@@ -364,7 +365,8 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
         elif message_type == "join_room":
             name = payload.get("name", "")
             rc = payload.get("room_code", room_code) or room_code
-            result = await room_manager.join_room(name, rc, transport)
+            avatar = payload.get("avatar")
+            result = await room_manager.join_room(name, rc, transport, avatar=avatar)
             await transport.send_json(result)
             if _TRACE_ENABLED:
                 logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type") if isinstance(result, dict) else None)
@@ -378,7 +380,8 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
         elif message_type == "reconnect":
             name = payload.get("name", "")
             rc = payload.get("room_code", room_code) or room_code
-            result = await room_manager.handle_reconnect(name, rc, transport)
+            avatar = payload.get("avatar")
+            result = await room_manager.handle_reconnect(name, rc, transport, avatar=avatar)
             # On successful reconnect, the transport is now set as the player's websocket
             await transport.send_json(result)
             if _TRACE_ENABLED:

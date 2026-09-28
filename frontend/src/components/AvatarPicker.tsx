@@ -50,6 +50,7 @@ export const AvatarPicker: React.FC<AvatarPickerProps> = ({ selectedAvatarId, on
               type="button"
               role="radio"
               aria-checked={isSelected}
+              aria-label={avatar.label}
               className={`avatar-choice-btn ${isSelected ? "selected" : ""}`}
               onClick={() => onSelectAvatar(avatar.id)}
               title={avatar.label}

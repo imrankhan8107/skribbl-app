@@ -72,7 +72,8 @@ async def websocket_handler(websocket: WebSocket) -> None:
                 # Dispatch based on message type
                 if msg_type == "create_room":
                     name = payload.get("name", "")
-                    result = await room_manager.create_room(name, websocket)
+                    avatar = payload.get("avatar")
+                    result = await room_manager.create_room(name, websocket, avatar=avatar)
                     if result.get("type") == "room_created":
                         player_id = result["payload"]["player_id"]
                         room_code = result["payload"]["room_code"]
@@ -81,7 +82,8 @@ async def websocket_handler(websocket: WebSocket) -> None:
                 elif msg_type == "join_room":
                     name = payload.get("name", "")
                     rc = payload.get("room_code", "")
-                    result = await room_manager.join_room(name, rc, websocket)
+                    avatar = payload.get("avatar")
+                    result = await room_manager.join_room(name, rc, websocket, avatar=avatar)
                     if result.get("type") == "room_joined":
                         player_id = result["payload"]["player_id"]
                         room_code = result["payload"]["room_code"]
@@ -90,7 +92,8 @@ async def websocket_handler(websocket: WebSocket) -> None:
                 elif msg_type == "reconnect":
                     name = payload.get("name", "")
                     rc = payload.get("room_code", "")
-                    result = await room_manager.handle_reconnect(name, rc, websocket)
+                    avatar = payload.get("avatar")
+                    result = await room_manager.handle_reconnect(name, rc, websocket, avatar=avatar)
                     if result.get("type") == "reconnected":
                         player_id = result["payload"]["player_id"]
                         room_code = result["payload"]["room_code"]

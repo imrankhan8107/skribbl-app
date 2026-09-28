@@ -26,6 +26,7 @@ class Player:
     has_guessed: bool = False                    # True once correct guess in current turn
     is_connected: bool = True
     is_ready: bool = False                       # Ready status in lobby
+    avatar: Optional[str] = None                 # Selected avatar ID
     websocket: object = None                     # WebSocket instance (not serialized)
     disconnect_time: Optional[float] = None      # epoch seconds
     cleanup_task: Optional[asyncio.Task] = None  # asyncio task that fires after 120s to permanently remove the player

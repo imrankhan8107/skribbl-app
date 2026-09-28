@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { HeaderBar } from "../components/HeaderBar";
-import { getAvatarForPlayer } from "../utils/avatars";
+import { getAvatarForPlayer, getStoredAvatarId, getStoredPlayerName } from "../utils/avatars";
 
 /**
  * Canvas-based confetti/party popper animation.
@@ -185,7 +185,13 @@ export default function GameOver() {
   const rankedPlayers = [...(gameState.players || [])].sort((a, b) => b.score - a.score);
   const winner = rankedPlayers[0];
 
-  const winnerAvatar = winner ? getAvatarForPlayer(winner.name || winner.id) : null;
+  const winnerIsLocal =
+    (gameState.localPlayerId && winner?.id === gameState.localPlayerId) ||
+    winner?.name === getStoredPlayerName();
+  const winnerExplicitAvatar = winner?.avatar || (winnerIsLocal ? getStoredAvatarId() : undefined);
+  const winnerAvatar = winner
+    ? getAvatarForPlayer(winner.name || winner.id, winnerExplicitAvatar)
+    : null;
 
   return (
     <>
@@ -227,7 +233,11 @@ export default function GameOver() {
             {/* Full Leaderboard */}
             <ol data-testid="leaderboard" className="leaderboard">
               {rankedPlayers.map((player, index) => {
-                const avatar = getAvatarForPlayer(player.name || player.id);
+                const isLocal =
+                  (gameState.localPlayerId && player.id === gameState.localPlayerId) ||
+                  player.name === getStoredPlayerName();
+                const explicitAvatar = player.avatar || (isLocal ? getStoredAvatarId() : undefined);
+                const avatar = getAvatarForPlayer(player.name || player.id, explicitAvatar);
                 return (
                   <li key={player.id} className={`leaderboard-entry leaderboard-rank-${index + 1}`}>
                     <span className="leaderboard-rank">

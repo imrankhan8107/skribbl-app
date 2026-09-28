@@ -85,7 +85,10 @@ describe("Landing", () => {
     expect(createBtn).not.toBeDisabled();
     await user.click(createBtn);
 
-    expect(send).toHaveBeenCalledWith("create_room", { name: "PreviousPlayer" });
+    expect(send).toHaveBeenCalledWith("create_room", {
+      name: "PreviousPlayer",
+      avatar: expect.any(String),
+    });
   });
 
   it("calls send with create_room and player name when Create Room is clicked", async () => {
@@ -98,7 +101,10 @@ describe("Landing", () => {
     const createBtn = screen.getByRole("button", { name: /create room/i });
     await user.click(createBtn);
 
-    expect(send).toHaveBeenCalledWith("create_room", { name: "Alice" });
+    expect(send).toHaveBeenCalledWith("create_room", {
+      name: "Alice",
+      avatar: expect.any(String),
+    });
   });
 
   it("calls send with join_room, player name, and room code when Join Room is clicked", async () => {
@@ -114,7 +120,11 @@ describe("Landing", () => {
     const joinBtn = screen.getByRole("button", { name: /join room/i });
     await user.click(joinBtn);
 
-    expect(send).toHaveBeenCalledWith("join_room", { name: "Bob", room_code: "ABC123" });
+    expect(send).toHaveBeenCalledWith("join_room", {
+      name: "Bob",
+      room_code: "ABC123",
+      avatar: expect.any(String),
+    });
   });
 
   it("disables Create Room button when player name is empty", () => {
@@ -162,5 +172,24 @@ describe("Landing", () => {
   it("does not display error section when errorMessage is null", () => {
     renderLanding();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("sends selected avatar when Lion avatar is chosen and Create Room is clicked", async () => {
+    const user = userEvent.setup();
+    const { send } = renderLanding();
+
+    const nameInput = screen.getByLabelText(/player name/i);
+    await user.type(nameInput, "Simba");
+
+    const lionOption = screen.getByRole("radio", { name: /Lion/i });
+    await user.click(lionOption);
+
+    const createBtn = screen.getByRole("button", { name: /create room/i });
+    await user.click(createBtn);
+
+    expect(send).toHaveBeenCalledWith("create_room", {
+      name: "Simba",
+      avatar: "lion",
+    });
   });
 });

@@ -71,8 +71,7 @@ export default function Lobby() {
 
   const handleCopyCode = async () => {
     if (gameState.roomCode) {
-      const inviteUrl = `${window.location.origin}/lobby/${gameState.roomCode}`;
-      const ok = await copyToClipboard(inviteUrl);
+      const ok = await copyToClipboard(gameState.roomCode);
       if (ok) {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
@@ -126,7 +125,7 @@ export default function Lobby() {
             className={`room-code-btn ${copied ? "copied" : ""}`}
             onClick={handleCopyCode}
             data-testid="room-code"
-            title="Click to copy invite link"
+            title="Click to copy room code"
           >
             {gameState.roomCode} {copied ? "✓ Copied!" : "📋"}
           </button>
@@ -135,7 +134,7 @@ export default function Lobby() {
         {/* Snackbar for copy feedback */}
         {copied && (
           <div className="snackbar" data-testid="snackbar">
-            Invite link copied to clipboard!
+            Room code copied to clipboard!
           </div>
         )}
 

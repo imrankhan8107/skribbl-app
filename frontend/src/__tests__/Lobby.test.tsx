@@ -188,4 +188,34 @@ describe("Lobby", () => {
     const startBtn = screen.getByRole("button", { name: /start game/i });
     expect(startBtn).not.toBeDisabled();
   });
+
+  it("renders the selected Lion avatar when stored in localStorage for local player", () => {
+    localStorage.setItem("skribbl_player_avatar", "lion");
+    renderLobby();
+    const avatars = screen.getAllByTestId("player-avatar");
+    // Local player (Alice, p1) should show Lion
+    expect(avatars[0]).toHaveTextContent("🦁");
+    expect(avatars[0]).toHaveAttribute("title", "Lion");
+  });
+
+  it("renders the explicit avatar when provided in PlayerInfo", () => {
+    const playersWithAvatar: PlayerInfo[] = [
+      {
+        ...twoPlayers[0],
+        avatar: "lion",
+      },
+      {
+        ...twoPlayers[1],
+        avatar: "panda",
+      },
+    ];
+    const gameState: GameState = {
+      ...defaultGameState,
+      players: playersWithAvatar,
+    };
+    renderLobby({ gameState });
+    const avatars = screen.getAllByTestId("player-avatar");
+    expect(avatars[0]).toHaveTextContent("🦁");
+    expect(avatars[1]).toHaveTextContent("🐼");
+  });
 });

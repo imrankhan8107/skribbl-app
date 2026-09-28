@@ -10,6 +10,7 @@ export interface PlayerInfo {
   hasGuessed: boolean;
   isConnected: boolean;
   isReady: boolean;
+  avatar?: string;
 }
 
 export interface GameConfig {

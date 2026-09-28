@@ -49,14 +49,14 @@ export default function Landing() {
     e.preventDefault();
     storePlayerName(playerName);
     storeAvatarId(selectedAvatarId);
-    send("create_room", { name: playerName });
+    send("create_room", { name: playerName, avatar: selectedAvatarId });
   };
 
   const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
     storePlayerName(playerName);
     storeAvatarId(selectedAvatarId);
-    send("join_room", { name: playerName, room_code: roomCode });
+    send("join_room", { name: playerName, room_code: roomCode, avatar: selectedAvatarId });
   };
 
   return (

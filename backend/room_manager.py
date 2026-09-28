@@ -86,7 +86,7 @@ class RoomManager:
 
     def _serialize_player(self, player: Player) -> dict:
         """Serialize a Player to a JSON-safe dict (excludes websocket)."""
-        return {
+        data = {
             "id": player.id,
             "name": player.name,
             "score": player.score,
@@ -94,6 +94,9 @@ class RoomManager:
             "is_connected": player.is_connected,
             "is_ready": player.is_ready,
         }
+        if player.avatar:
+            data["avatar"] = player.avatar
+        return data
 
     def _serialize_config(self, config: GameConfig) -> dict:
         """Serialize a GameConfig to a JSON-safe dict."""
@@ -133,6 +136,7 @@ class RoomManager:
                     "has_guessed": p.has_guessed,
                     "is_connected": p.is_connected,
                     "is_ready": p.is_ready,
+                    "avatar": p.avatar,
                     "disconnect_time": p.disconnect_time,
                 }
                 for p in room.players
@@ -175,6 +179,7 @@ class RoomManager:
                 has_guessed=p_data.get("has_guessed", False),
                 is_connected=False,  # Reconnection restores connection
                 is_ready=p_data.get("is_ready", False),
+                avatar=p_data.get("avatar"),
                 disconnect_time=p_data.get("disconnect_time") or time.time(),
             )
             room.add_player(p)
@@ -225,12 +230,13 @@ class RoomManager:
                 logger.error("Failed to drain room %s: %s", room.code, e)
         return count
 
-    async def create_room(self, name: str, websocket) -> dict:
+    async def create_room(self, name: str, websocket, avatar: Optional[str] = None) -> dict:
         """Create a new room with the given player as host.
 
         Args:
             name: Display name for the host player.
             websocket: WebSocket connection for the host.
+            avatar: Optional avatar identifier for the host player.
 
         Returns:
             A dict payload for the `room_created` message, or an error payload.
@@ -257,7 +263,7 @@ class RoomManager:
         player_id = str(uuid4())
 
         # Create the host player
-        host = Player(id=player_id, name=name, websocket=websocket)
+        host = Player(id=player_id, name=name, websocket=websocket, avatar=avatar)
 
         # Create the room
         room = Room(code=room_code, host_id=player_id)
@@ -298,7 +304,7 @@ class RoomManager:
             },
         }
 
-    async def join_room(self, name: str, room_code: str, websocket) -> dict:
+    async def join_room(self, name: str, room_code: str, websocket, avatar: Optional[str] = None) -> dict:
         """Join an existing room.
 
         If the room exists locally and is owned by this worker, joins directly.
@@ -311,6 +317,7 @@ class RoomManager:
             name: Display name for the joining player.
             room_code: The room code to join.
             websocket: WebSocket connection for the player.
+            avatar: Optional avatar identifier for the joining player.
 
         Returns:
             A dict payload for the `room_joined` message, or an error payload.
@@ -327,7 +334,7 @@ class RoomManager:
         room = self.rooms.get(room_code)
         if room is not None and not room.is_proxy:
             # Room is truly owned by this worker — join directly
-            return await self._join_room_local(room, room_code, name, websocket)
+            return await self._join_room_local(room, room_code, name, websocket, avatar=avatar)
 
         # Room is either not local or is a proxy (owned by another worker).
         # In both cases, route via RPC to the owning worker.
@@ -341,7 +348,7 @@ class RoomManager:
                 await asyncio.sleep(0.3)
             if owner_worker is not None:
                 return await self._join_room_remote(
-                    room_code, name, websocket, owner_worker
+                    room_code, name, websocket, owner_worker, avatar=avatar
                 )
 
         # Check if a snapshot exists from a drained or restarted worker
@@ -356,14 +363,14 @@ class RoomManager:
                     redis_pubsub.subscribe_room(room_code),
                     return_exceptions=True,
                 )
-                return await self._join_room_local(room, room_code, name, websocket)
+                return await self._join_room_local(room, room_code, name, websocket, avatar=avatar)
 
         return {
             "type": "error",
             "payload": {"code": "ROOM_NOT_FOUND", "message": "Room not found"},
         }
 
-    async def _join_room_local(self, room, room_code: str, name: str, websocket) -> dict:
+    async def _join_room_local(self, room, room_code: str, name: str, websocket, avatar: Optional[str] = None) -> dict:
         """Join a room that exists on this worker."""
         # Check room is in lobby state
         if room.state != RoomState.LOBBY:
@@ -385,7 +392,7 @@ class RoomManager:
 
         # Create the new player
         player_id = str(uuid4())
-        player = Player(id=player_id, name=name, websocket=websocket)
+        player = Player(id=player_id, name=name, websocket=websocket, avatar=avatar)
         room.add_player(player)
         self._player_to_room[player_id] = room_code
 
@@ -419,7 +426,7 @@ class RoomManager:
             },
         }
 
-    async def _join_room_remote(self, room_code: str, name: str, websocket, owner_worker: str) -> dict:
+    async def _join_room_remote(self, room_code: str, name: str, websocket, owner_worker: str, avatar: Optional[str] = None) -> dict:
         """Join a room that exists on another worker via Redis RPC.
 
         The player's WebSocket lives on this worker. We register the player
@@ -443,6 +450,7 @@ class RoomManager:
             "room_code": room_code,
             "player_id": player_id,
             "player_name": name,
+            "avatar": avatar,
         })
 
         # Wait for response from the owning worker
@@ -468,7 +476,7 @@ class RoomManager:
             self.rooms[room_code] = proxy_room
 
         proxy_room = self.rooms[room_code]
-        player = Player(id=player_id, name=name, websocket=websocket)
+        player = Player(id=player_id, name=name, websocket=websocket, avatar=avatar)
         proxy_room.add_player(player)
         self._player_to_room[player_id] = room_code
 
@@ -589,7 +597,7 @@ class RoomManager:
                                 from backend.models import TurnEndReason
                                 await game_engine.end_turn(room, TurnEndReason.ALL_GUESSED, self)
 
-    async def handle_reconnect(self, name: str, room_code: str, websocket) -> dict:
+    async def handle_reconnect(self, name: str, room_code: str, websocket, avatar: Optional[str] = None) -> dict:
         """Handle a player reconnecting within the 120-second grace window.
 
         Matches by room_code and display name. Cancels the cleanup task,
@@ -599,6 +607,7 @@ class RoomManager:
             name: Display name of the reconnecting player.
             room_code: The room code to reconnect to.
             websocket: New WebSocket connection for the player.
+            avatar: Optional avatar identifier for the reconnecting player.
 
         Returns:
             A dict payload for the reconnection response, or an error payload.
@@ -660,6 +669,8 @@ class RoomManager:
         player.is_connected = True
         player.disconnect_time = None
         player.websocket = websocket
+        if avatar and not player.avatar:
+            player.avatar = avatar
 
         # Check if we should cancel the insufficient players countdown
         connected = sum(1 for p in room.players if p.is_connected)
@@ -1004,7 +1015,8 @@ class RoomManager:
                 }
             else:
                 # Add the player to the room (no WebSocket — it's on the other worker)
-                player = Player(id=player_id, name=player_name, websocket=None)
+                avatar = rpc.get("avatar")
+                player = Player(id=player_id, name=player_name, websocket=None, avatar=avatar)
                 player.is_connected = True  # Logically connected (via remote worker)
                 room.add_player(player)
                 self._player_to_room[player_id] = room_code
