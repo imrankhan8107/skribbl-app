@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { HeaderBar } from "../components/HeaderBar";
+import ScorecardModal from "../components/ScorecardModal";
 import { getAvatarForPlayer, getStoredAvatarId, getStoredPlayerName } from "../utils/avatars";
 import type { RoundArtwork, DrawingAction } from "../types";
 
@@ -656,6 +657,7 @@ export default function GameOver() {
   const [selectedArtwork, setSelectedArtwork] = useState<RoundArtwork | null>(null);
   const [replayArtwork, setReplayArtwork] = useState<RoundArtwork | null>(null);
   const [viewMode, setViewMode] = useState<"game" | "session">("game");
+  const [showScorecardModal, setShowScorecardModal] = useState(false);
 
   // Navigate back to lobby when rematch transitions state to 'lobby'
   useEffect(() => {
@@ -994,7 +996,25 @@ export default function GameOver() {
           <ReplayModal artwork={replayArtwork} onClose={() => setReplayArtwork(null)} />
         )}
 
+        {/* Scorecard Share Modal */}
+        {showScorecardModal && (
+          <ScorecardModal
+            roomCode={gameState.roomCode}
+            players={gameState.players}
+            mvpAwards={gameState.mvpAwards}
+            onClose={() => setShowScorecardModal(false)}
+          />
+        )}
+
         <div className="game-over-actions">
+          <button
+            type="button"
+            className="share-scorecard-button"
+            onClick={() => setShowScorecardModal(true)}
+            data-testid="open-scorecard-btn"
+          >
+            📸 Share Scorecard
+          </button>
           <button
             className="rematch-button"
             onClick={() => send("rematch")}

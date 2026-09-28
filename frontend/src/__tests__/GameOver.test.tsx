@@ -386,4 +386,22 @@ describe("GameOver", () => {
     await user.click(gameToggle);
     expect(screen.getByTestId("leaderboard")).toBeInTheDocument();
   });
+
+  it("opens ScorecardModal on clicking Share Scorecard button, displays preview, and can close", async () => {
+    const user = userEvent.setup();
+    renderGameOver();
+
+    const openBtn = screen.getByTestId("open-scorecard-btn");
+    expect(openBtn).toBeInTheDocument();
+
+    await user.click(openBtn);
+    expect(screen.getByTestId("scorecard-modal")).toBeInTheDocument();
+    expect(screen.getByTestId("download-scorecard-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("copy-scorecard-btn")).toBeInTheDocument();
+
+    // Close modal
+    const closeBtn = screen.getByTestId("scorecard-modal-close");
+    await user.click(closeBtn);
+    expect(screen.queryByTestId("scorecard-modal")).not.toBeInTheDocument();
+  });
 });
