@@ -134,9 +134,8 @@ export default function Lobby() {
     if (gameState.errorMessage) {
       return (
         <div className="lobby-page">
-          <h1>Session Expired</h1>
+          <h2>Redirecting...</h2>
           <p>{gameState.errorMessage}</p>
-          <button onClick={() => (window.location.href = "/")}>Back to Home</button>
         </div>
       );
     }

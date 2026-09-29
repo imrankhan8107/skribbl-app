@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useWebSocket } from "../hooks/useWebSocket";
 import type { Action } from "../types";
 import Canvas from "../components/Canvas";
@@ -19,6 +19,7 @@ import { getAvatarForPlayer } from "../utils/avatars";
  */
 export default function Game() {
   const navigate = useNavigate();
+  const { roomCode: routeRoomCode } = useParams<{ roomCode: string }>();
   const { gameState, send, dispatch, mutedPlayerIds, toggleMutePlayer } = useWebSocket();
   useGameAudio(gameState);
   const [countdown, setCountdown] = useState(0);
@@ -77,6 +78,36 @@ export default function Game() {
     }
   }, [gameState.phase, gameState.roomCode, navigate]);
 
+  // Navigate to landing when kicked or on error while idle
+  useEffect(() => {
+    if (gameState.phase === "idle" && gameState.errorMessage) {
+      navigate("/");
+    }
+  }, [gameState.phase, gameState.errorMessage, navigate]);
+
+  // When a player is on /game/:roomCode directly without an active session,
+  // redirect to landing homepage with roomCode prefilled
+  useEffect(() => {
+    if (gameState.phase === "idle" && !gameState.errorMessage && routeRoomCode) {
+      const sessionStr =
+        typeof sessionStorage !== "undefined" ? sessionStorage.getItem("skribbl_session") : null;
+      let hasMatchingSession = false;
+      if (sessionStr) {
+        try {
+          const parsed = JSON.parse(sessionStr);
+          if (parsed.roomCode && parsed.roomCode.toUpperCase() === routeRoomCode.toUpperCase()) {
+            hasMatchingSession = true;
+          }
+        } catch {
+          hasMatchingSession = false;
+        }
+      }
+      if (!hasMatchingSession) {
+        navigate(`/?room=${routeRoomCode}`);
+      }
+    }
+  }, [gameState.phase, gameState.errorMessage, routeRoomCode, navigate]);
+
   // Reconnection countdown timer
   useEffect(() => {
     if (gameState.waitingForReconnect) {
@@ -100,8 +131,16 @@ export default function Game() {
   const drawerName =
     gameState.players.find((p) => p.id === gameState.drawerId)?.name ?? "The drawer";
 
-  // Show loading state while reconnecting
+  // Show loading state while reconnecting (or redirecting if kicked)
   if (gameState.phase === "idle" || gameState.phase === "lobby") {
+    if (gameState.phase === "idle" && gameState.errorMessage) {
+      return (
+        <div className="game-page" data-testid="game-page">
+          <h2>Redirecting...</h2>
+          <p>{gameState.errorMessage}</p>
+        </div>
+      );
+    }
     return (
       <div className="game-page" data-testid="game-page">
         <h2>Reconnecting...</h2>

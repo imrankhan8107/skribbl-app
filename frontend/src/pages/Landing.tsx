@@ -122,19 +122,47 @@ export default function Landing() {
         )}
 
         {gameState.errorMessage && (
-          <div className="error-message" role="alert">
-            {gameState.errorMessage}
-            {isRoomInProgress && (
-              <div style={{ marginTop: "0.5rem" }}>
-                <button
-                  type="button"
-                  className="join-spectator-action-btn"
-                  onClick={() => handleJoin(undefined, true)}
-                >
-                  👀 Join as Spectator Instead
-                </button>
-              </div>
-            )}
+          <div
+            className="error-message"
+            role="alert"
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "8px",
+            }}
+          >
+            <div>
+              {gameState.errorMessage}
+              {isRoomInProgress && (
+                <div style={{ marginTop: "0.5rem" }}>
+                  <button
+                    type="button"
+                    className="join-spectator-action-btn"
+                    onClick={() => handleJoin(undefined, true)}
+                  >
+                    👀 Join as Spectator Instead
+                  </button>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              className="error-dismiss-btn"
+              onClick={() => dispatch({ type: "CLEAR_ERROR" })}
+              aria-label="Dismiss error"
+              style={{
+                background: "transparent",
+                border: "none",
+                fontSize: "1.1rem",
+                cursor: "pointer",
+                padding: "2px 6px",
+                color: "inherit",
+                opacity: 0.75,
+              }}
+            >
+              ✕
+            </button>
           </div>
         )}
 

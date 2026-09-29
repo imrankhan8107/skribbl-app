@@ -666,6 +666,13 @@ export default function GameOver() {
     }
   }, [gameState.phase, gameState.roomCode, navigate]);
 
+  // Navigate to landing when kicked or on error while idle
+  useEffect(() => {
+    if (gameState.phase === "idle" && gameState.errorMessage) {
+      navigate("/");
+    }
+  }, [gameState.phase, gameState.errorMessage, navigate]);
+
   // Sort players by score descending
   const rankedPlayers = [...(gameState.players || [])].sort((a, b) => b.score - a.score);
   const winner = rankedPlayers[0];

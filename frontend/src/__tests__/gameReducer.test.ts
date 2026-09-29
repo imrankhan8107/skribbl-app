@@ -829,4 +829,35 @@ describe("gameReducer", () => {
       expect(next.activeVoteKick).toBeNull();
     });
   });
+
+  describe("KICKED and CLEAR_ERROR", () => {
+    it("handles KICKED by resetting state and setting error message", () => {
+      const state: GameState = {
+        ...initialState,
+        phase: "playing",
+        roomCode: "ABC123",
+        localPlayerId: "p1",
+      };
+      const action: Action = {
+        type: "KICKED",
+        payload: { message: "You were kicked out of the room" },
+      };
+      const next = gameReducer(state, action);
+      expect(next.phase).toBe("idle");
+      expect(next.roomCode).toBeNull();
+      expect(next.errorMessage).toBe("You were kicked out of the room");
+    });
+
+    it("handles CLEAR_ERROR by clearing errorMessage", () => {
+      const state: GameState = {
+        ...initialState,
+        errorMessage: "Some error",
+      };
+      const action: Action = {
+        type: "CLEAR_ERROR",
+      };
+      const next = gameReducer(state, action);
+      expect(next.errorMessage).toBeNull();
+    });
+  });
 });

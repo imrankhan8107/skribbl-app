@@ -84,6 +84,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
         config: action.payload.config ?? state.config,
         players,
         artworkGallery: [],
+        errorMessage: null,
       };
     }
 
@@ -144,6 +145,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
         artworkGallery: [],
         joinRequestPending: false,
         pendingJoinRequestId: null,
+        errorMessage: null,
       };
     }
 
@@ -518,12 +520,18 @@ export function gameReducer(state: GameState, action: Action): GameState {
         ...initialGameState,
       };
 
+    case "CLEAR_ERROR":
+      return {
+        ...state,
+        errorMessage: null,
+      };
+
     case "KICKED": {
       sessionStorage.removeItem("skribbl_session");
       const kickPayload = action.payload as Record<string, unknown>;
       return {
         ...initialGameState,
-        errorMessage: (kickPayload.message as string) ?? "You have been kicked",
+        errorMessage: (kickPayload.message as string) ?? "You were kicked out of the room",
       };
     }
 

@@ -202,6 +202,7 @@ export type Action =
       };
     }
   | { type: "ERROR"; payload: { code: string; message: string } }
+  | { type: "CLEAR_ERROR" }
   | { type: "KICKED"; payload: { message: string } }
   | { type: "LEFT_ROOM"; payload: Record<string, never> }
   | { type: "REMATCH_STARTED"; payload: Record<string, unknown> }

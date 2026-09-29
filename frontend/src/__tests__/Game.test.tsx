@@ -358,4 +358,27 @@ describe("Game Page", () => {
       expect(screen.queryByTestId("host-join-approval-container")).not.toBeInTheDocument();
     });
   });
+
+  describe("Kicked and disconnect navigation", () => {
+    it("redirects to landing page when kicked (idle phase with errorMessage)", () => {
+      mockNavigate.mockClear();
+      renderGame({
+        phase: "idle",
+        errorMessage: "You were kicked out of the room",
+      });
+
+      expect(mockNavigate).toHaveBeenCalledWith("/");
+      expect(screen.getByText("Redirecting...")).toBeInTheDocument();
+      expect(screen.getByText("You were kicked out of the room")).toBeInTheDocument();
+    });
+
+    it("renders Reconnecting when idle without errorMessage", () => {
+      renderGame({
+        phase: "idle",
+        errorMessage: null,
+      });
+
+      expect(screen.getByText("Reconnecting...")).toBeInTheDocument();
+    });
+  });
 });

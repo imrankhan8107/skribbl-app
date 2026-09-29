@@ -626,6 +626,7 @@ class RoomManager:
             "state": room.state.value,
             "is_spectator": is_spectator,
             "current_round": room.current_round,
+            "total_rounds": room.config.num_rounds,
             "host_id": room.host_id,
             "drawer_id": room.turn.drawer_id if room.turn else None,
             "hint": room.turn.hint if room.turn else [],
@@ -943,6 +944,7 @@ class RoomManager:
             "state": room.state.value,
             "is_spectator": is_spectator,
             "current_round": room.current_round,
+            "total_rounds": room.config.num_rounds,
             "host_id": room.host_id,
             "drawer_id": room.turn.drawer_id if room.turn else None,
             "hint": room.turn.hint if room.turn else [],
@@ -1745,6 +1747,7 @@ class RoomManager:
                         "state": room.state.value,
                         "is_spectator": is_spectator,
                         "current_round": room.current_round,
+                        "total_rounds": room.config.num_rounds,
                         "host_id": room.host_id,
                         "drawer_id": room.turn.drawer_id if room.turn else None,
                         "hint": room.turn.hint if room.turn else [],
@@ -2320,9 +2323,12 @@ class RoomManager:
             try:
                 kicked_msg = json_dumps({
                     "type": "kicked",
-                    "payload": {"message": "You have been kicked by the host"},
+                    "payload": {"message": "You were kicked out of the room"},
                 })
-                await target.websocket.send_text(kicked_msg)
+                if hasattr(target.websocket, "send_text"):
+                    await target.websocket.send_text(kicked_msg)
+                elif hasattr(target.websocket, "send_json"):
+                    await target.websocket.send_json(json.loads(kicked_msg))
             except Exception:
                 pass
 
