@@ -46,6 +46,10 @@ const initialGameState: GameState = {
   joinRequestPending: false,
   pendingJoinRequestId: null,
   pendingJoinRequests: [],
+  spectatorRoleRequestPending: false,
+  pendingSpectatorRoleRequestId: null,
+  spectatorRequestsRemaining: 2,
+  pendingSpectatorRoleRequests: [],
   activeVoteKick: null,
 };
 
@@ -153,6 +157,10 @@ export function gameReducer(state: GameState, action: Action): GameState {
         artworkGallery: [],
         joinRequestPending: false,
         pendingJoinRequestId: null,
+        spectatorRoleRequestPending: false,
+        pendingSpectatorRoleRequestId: null,
+        spectatorRequestsRemaining: 2,
+        pendingSpectatorRoleRequests: [],
         errorMessage: null,
       };
     }
@@ -193,10 +201,16 @@ export function gameReducer(state: GameState, action: Action): GameState {
       });
       const localPlayer = updatedPlayers.find((p) => p.id === state.localPlayerId);
       const isHost = localPlayer ? localPlayer.isHost : state.isHost;
+      const isSpectator = localPlayer ? Boolean(localPlayer.isSpectator) : state.isSpectator;
       return {
         ...state,
         players: updatedPlayers,
         isHost,
+        isSpectator,
+        isDrawer: !isSpectator && state.drawerId === state.localPlayerId,
+        ...(isSpectator
+          ? {}
+          : { spectatorRoleRequestPending: false, pendingSpectatorRoleRequestId: null }),
       };
     }
 
@@ -243,6 +257,10 @@ export function gameReducer(state: GameState, action: Action): GameState {
         currentRound: action.payload.round ?? state.currentRound,
         isDrawer: action.payload.drawerId === state.localPlayerId,
         drawerId: action.payload.drawerId ?? null,
+        spectatorRequestsRemaining: 2,
+        spectatorRoleRequestPending: false,
+        pendingSpectatorRoleRequestId: null,
+        pendingSpectatorRoleRequests: [],
       };
 
     case "WORD_CHOICES": {
@@ -593,6 +611,68 @@ export function gameReducer(state: GameState, action: Action): GameState {
       };
     }
 
+    case "SPECTATOR_ROLE_REQUEST_PENDING": {
+      const p = action.payload;
+      const remaining = p.requestsRemaining ?? p.requests_remaining;
+      return {
+        ...state,
+        spectatorRoleRequestPending: true,
+        pendingSpectatorRoleRequestId: p.requestId,
+        spectatorRequestsRemaining:
+          remaining !== undefined ? remaining : state.spectatorRequestsRemaining,
+        errorMessage: null,
+      };
+    }
+
+    case "SPECTATOR_ROLE_REQUEST_RECEIVED": {
+      const existing = state.pendingSpectatorRoleRequests ?? [];
+      const updated = existing.filter((r) => r.requestId !== action.payload.requestId);
+      return {
+        ...state,
+        pendingSpectatorRoleRequests: [...updated, action.payload],
+      };
+    }
+
+    case "SPECTATOR_ROLE_REQUEST_RESOLVED": {
+      const existing = state.pendingSpectatorRoleRequests ?? [];
+      const updated = existing.filter((r) => r.requestId !== action.payload.requestId);
+      const isLocal =
+        state.pendingSpectatorRoleRequestId === action.payload.requestId ||
+        (action.payload.playerId && action.payload.playerId === state.localPlayerId);
+      return {
+        ...state,
+        pendingSpectatorRoleRequests: updated,
+        ...(isLocal
+          ? { spectatorRoleRequestPending: false, pendingSpectatorRoleRequestId: null }
+          : {}),
+      };
+    }
+
+    case "SPECTATOR_ROLE_REQUEST_DECLINED": {
+      const p = action.payload;
+      const remaining = p.requestsRemaining ?? p.requests_remaining;
+      return {
+        ...state,
+        spectatorRoleRequestPending: false,
+        pendingSpectatorRoleRequestId: null,
+        spectatorRequestsRemaining:
+          remaining !== undefined
+            ? remaining
+            : state.spectatorRequestsRemaining
+              ? state.spectatorRequestsRemaining - 1
+              : 0,
+        errorMessage: p.message || "Host declined your request to become a player.",
+      };
+    }
+
+    case "CANCEL_SPECTATOR_ROLE_REQUEST": {
+      return {
+        ...state,
+        spectatorRoleRequestPending: false,
+        pendingSpectatorRoleRequestId: null,
+      };
+    }
+
     case "VOTE_KICK_STARTED": {
       const p = action.payload as unknown as Record<string, unknown>;
       const initiatorId = (p.initiatorId ?? p.initiator_id) as string;
@@ -764,6 +844,10 @@ function mapServerTypeToActionType(serverType: string): Action["type"] | null {
     join_request_received: "JOIN_REQUEST_RECEIVED",
     join_request_resolved: "JOIN_REQUEST_RESOLVED",
     join_request_declined: "JOIN_REQUEST_DECLINED",
+    become_player_request_pending: "SPECTATOR_ROLE_REQUEST_PENDING",
+    spectator_role_request_received: "SPECTATOR_ROLE_REQUEST_RECEIVED",
+    spectator_role_request_resolved: "SPECTATOR_ROLE_REQUEST_RESOLVED",
+    spectator_role_request_declined: "SPECTATOR_ROLE_REQUEST_DECLINED",
     vote_kick_started: "VOTE_KICK_STARTED",
     vote_kick_updated: "VOTE_KICK_UPDATED",
     vote_kick_ended: "VOTE_KICK_ENDED",

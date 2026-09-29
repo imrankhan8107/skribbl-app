@@ -83,6 +83,14 @@ export interface JoinRequest {
   roomCode: string;
 }
 
+export interface SpectatorRoleRequest {
+  requestId: string;
+  playerId: string;
+  playerName: string;
+  avatar?: string;
+  roomCode: string;
+}
+
 export interface ActiveVoteKick {
   targetId: string;
   targetName: string;
@@ -125,6 +133,10 @@ export interface GameState {
   joinRequestPending?: boolean;
   pendingJoinRequestId?: string | null;
   pendingJoinRequests?: JoinRequest[];
+  spectatorRoleRequestPending?: boolean;
+  pendingSpectatorRoleRequestId?: string | null;
+  spectatorRequestsRemaining?: number;
+  pendingSpectatorRoleRequests?: SpectatorRoleRequest[];
   activeVoteKick?: ActiveVoteKick | null;
 }
 
@@ -263,6 +275,35 @@ export type Action =
       payload: { requestId?: string; reason?: string; message: string };
     }
   | { type: "CANCEL_JOIN_REQUEST" }
+  | {
+      type: "SPECTATOR_ROLE_REQUEST_PENDING";
+      payload: { requestId: string; requestsRemaining?: number; requests_remaining?: number };
+    }
+  | {
+      type: "SPECTATOR_ROLE_REQUEST_RECEIVED";
+      payload: {
+        requestId: string;
+        playerId: string;
+        playerName: string;
+        avatar?: string;
+        roomCode: string;
+      };
+    }
+  | {
+      type: "SPECTATOR_ROLE_REQUEST_RESOLVED";
+      payload: { requestId: string; status: string; playerId?: string };
+    }
+  | {
+      type: "SPECTATOR_ROLE_REQUEST_DECLINED";
+      payload: {
+        requestId?: string;
+        reason?: string;
+        message: string;
+        requestsRemaining?: number;
+        requests_remaining?: number;
+      };
+    }
+  | { type: "CANCEL_SPECTATOR_ROLE_REQUEST" }
   | {
       type: "VOTE_KICK_STARTED";
       payload: {

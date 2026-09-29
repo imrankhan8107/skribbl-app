@@ -3708,7 +3708,9 @@ ol {
 .spectator-banner {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
   padding: 0.65rem 1.1rem;
   background: linear-gradient(135deg, rgba(108, 92, 231, 0.12), rgba(162, 155, 254, 0.08));
   border: 1px solid rgba(108, 92, 231, 0.3);
@@ -3720,9 +3722,73 @@ ol {
   box-shadow: 0 2px 8px rgba(108, 92, 231, 0.08);
 }
 
+.spectator-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1 1 auto;
+}
+
+.spectator-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-shrink: 0;
+}
+
+.spectator-join-player-btn {
+  background: var(--color-primary, #6c5ce7);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  padding: 0.35rem 0.8rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    filter 0.15s ease;
+}
+
+.spectator-join-player-btn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.spectator-request-pending-box {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(108, 92, 231, 0.1);
+  padding: 0.25rem 0.6rem;
+  border-radius: var(--radius-sm, 6px);
+}
+
+.spectator-request-pending-text {
+  font-size: 0.82rem;
+  color: var(--color-primary, #6c5ce7);
+  font-weight: 600;
+}
+
+.spectator-cancel-btn {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.78rem;
+}
+
+.spectator-request-limit-text {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary, #888);
+  font-weight: 500;
+}
+
 .spectator-banner-icon {
   font-size: 1.15rem;
   animation: pulse 2s infinite ease-in-out;
+}
+
+.spectator-role-approval-card {
+  border-color: #6c5ce7;
+  background: linear-gradient(135deg, var(--color-surface), rgba(108, 92, 231, 0.03));
 }
 
 .spectator-toggle-wrap {

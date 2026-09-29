@@ -193,8 +193,16 @@ export default function Game() {
       ? gameState.pendingJoinRequests
       : [];
 
+  // Host Spectator Promotion Requests
+  const hostSpectatorRequests =
+    gameState.isHost &&
+    gameState.pendingSpectatorRoleRequests &&
+    gameState.pendingSpectatorRoleRequests.length > 0
+      ? gameState.pendingSpectatorRoleRequests
+      : [];
+
   const hostApprovalBanner =
-    hostJoinRequests.length > 0 ? (
+    hostJoinRequests.length > 0 || hostSpectatorRequests.length > 0 ? (
       <div className="host-join-approval-container" data-testid="host-join-approval-container">
         {hostJoinRequests.map((req) => {
           const avatarInfo = getAvatarForPlayer(req.playerName, req.avatar);
@@ -257,8 +265,104 @@ export default function Game() {
             </div>
           );
         })}
+
+        {hostSpectatorRequests.map((req) => {
+          const avatarInfo = getAvatarForPlayer(req.playerName, req.avatar);
+          return (
+            <div
+              key={req.requestId}
+              className="host-join-approval-card spectator-role-approval-card"
+              data-testid={`spectator-request-${req.requestId}`}
+            >
+              <div className="host-join-info">
+                <span className="host-join-avatar">{avatarInfo?.emoji || "👀"}</span>
+                <div className="host-join-text">
+                  <span className="host-join-title">
+                    Spectator <strong>{req.playerName}</strong> wants to become a player!
+                  </span>
+                  <span className="host-join-subtitle">
+                    They will enter the ongoing match with 0 score:
+                  </span>
+                </div>
+              </div>
+              <div className="host-join-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm join-approve-player-btn"
+                  data-testid={`approve-spectator-btn-${req.requestId}`}
+                  onClick={() =>
+                    send("respond_spectator_role_request", {
+                      request_id: req.requestId,
+                      action: "accept",
+                    })
+                  }
+                >
+                  🎮 Approve as Player
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger btn-sm join-decline-btn"
+                  data-testid={`decline-spectator-btn-${req.requestId}`}
+                  onClick={() =>
+                    send("respond_spectator_role_request", {
+                      request_id: req.requestId,
+                      action: "decline",
+                    })
+                  }
+                >
+                  ✕ Decline
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </div>
     ) : null;
+
+  const spectatorRequestsRemaining = gameState.spectatorRequestsRemaining ?? 2;
+  const isSpectatorRequestPending = Boolean(gameState.spectatorRoleRequestPending);
+
+  const spectatorBanner = gameState.isSpectator ? (
+    <div className="spectator-banner" data-testid="spectator-banner">
+      <div className="spectator-banner-content">
+        <span className="spectator-banner-icon">👀</span>
+        <span>You are spectating this match live. Guesses will appear as spectator chat.</span>
+      </div>
+      <div className="spectator-banner-actions">
+        {isSpectatorRequestPending ? (
+          <div className="spectator-request-pending-box" data-testid="spectator-request-pending">
+            <span className="spectator-request-pending-text">⏳ Request pending approval...</span>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm spectator-cancel-btn"
+              data-testid="cancel-spectator-request-btn"
+              onClick={() => {
+                send("cancel_spectator_role_request", {
+                  request_id: gameState.pendingSpectatorRoleRequestId,
+                });
+                dispatch({ type: "CANCEL_SPECTATOR_ROLE_REQUEST" });
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : spectatorRequestsRemaining > 0 ? (
+          <button
+            type="button"
+            className="btn btn-primary btn-sm spectator-join-player-btn"
+            data-testid="request-become-player-btn"
+            onClick={() => send("request_become_player", {})}
+          >
+            🎮 Join as Player ({spectatorRequestsRemaining} left)
+          </button>
+        ) : (
+          <span className="spectator-request-limit-text" data-testid="request-limit-reached-text">
+            ⚠️ Max requests reached (0 left)
+          </span>
+        )}
+      </div>
+    </div>
+  ) : null;
 
   const handleVoteKick = (targetId: string) => {
     const target = gameState.players.find((p) => p.id === targetId);
@@ -276,6 +380,7 @@ export default function Game() {
         <div className="game-page" data-testid="game-page">
           {reconnectBanner}
           {hostApprovalBanner}
+          {spectatorBanner}
           <VoteKickBanner />
           <div className="game-header" data-testid="game-header">
             <span className="round-indicator" data-testid="round-indicator">
@@ -353,14 +458,8 @@ export default function Game() {
       <div className="game-page" data-testid="game-page">
         {reconnectBanner}
         {hostApprovalBanner}
+        {spectatorBanner}
         <VoteKickBanner />
-
-        {gameState.isSpectator && (
-          <div className="spectator-banner" data-testid="spectator-banner">
-            <span className="spectator-banner-icon">👀</span>
-            <span>You are spectating this match live. Guesses will appear as spectator chat.</span>
-          </div>
-        )}
 
         {/* Round and turn indicators */}
         <div className="game-header" data-testid="game-header">

@@ -579,6 +579,24 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             request_id = payload.get("request_id") if isinstance(payload, dict) else None
             await room_manager.cancel_pending_join_request(request_id or transport)
 
+        elif message_type == "request_become_player":
+            result = await room_manager.request_become_player(player_id)
+            await transport.send_json(result)
+            return result
+
+        elif message_type == "respond_spectator_role_request":
+            request_id = payload.get("request_id", "") if isinstance(payload, dict) else ""
+            action = payload.get("action", "") if isinstance(payload, dict) else ""
+            result = await room_manager.respond_spectator_role_request(player_id, request_id, action)
+            await transport.send_json(result)
+            return result
+
+        elif message_type == "cancel_spectator_role_request":
+            request_id = payload.get("request_id") if isinstance(payload, dict) else None
+            result = await room_manager.cancel_spectator_role_request(player_id, request_id)
+            await transport.send_json(result)
+            return result
+
         elif message_type == "shape":
             room = room_manager._find_room_by_player(player_id)
             if room is not None and room.turn and room.turn.drawer_id == player_id:

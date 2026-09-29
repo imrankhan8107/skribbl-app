@@ -127,6 +127,7 @@ async def websocket_handler(websocket: WebSocket) -> None:
                             "kick_player", "leave_room", "reaction", "typing",
                             "toggle_ready", "rematch", "end_game_now", "update_profile",
                             "undo", "shape", "highlighter", "respond_join_request", "cancel_join_request",
+                            "request_become_player", "respond_spectator_role_request", "cancel_spectator_role_request",
                         }
                         if msg_type not in known_types:
                             await _send_error(websocket, "UNKNOWN_MESSAGE", f"Unknown message type: {msg_type}")
@@ -378,6 +379,24 @@ async def _handle_local_message(
         action = payload.get("action", "") if isinstance(payload, dict) else ""
         result = await room_manager.respond_join_request(player_id, request_id, action)
         await websocket.send_json(result)
+
+    elif msg_type == "request_become_player":
+        result = await room_manager.request_become_player(player_id)
+        if result.get("type") == "error":
+            await websocket.send_json(result)
+
+    elif msg_type == "respond_spectator_role_request":
+        request_id = payload.get("request_id", "") if isinstance(payload, dict) else ""
+        action = payload.get("action", "") if isinstance(payload, dict) else ""
+        result = await room_manager.respond_spectator_role_request(player_id, request_id, action)
+        if result.get("type") == "error":
+            await websocket.send_json(result)
+
+    elif msg_type == "cancel_spectator_role_request":
+        request_id = payload.get("request_id") if isinstance(payload, dict) else None
+        result = await room_manager.cancel_spectator_role_request(player_id, request_id)
+        if result.get("type") == "error":
+            await websocket.send_json(result)
 
     elif msg_type == "leave_room":
         result = await room_manager.leave_room(player_id)

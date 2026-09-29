@@ -918,6 +918,98 @@ class TestSpectatorMode:
         assert result["payload"]["code"] == "INVALID_TARGET"
         assert "spectator" in result["payload"]["message"].lower()
 
+    async def test_spectator_become_player_approved(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        host_id = res1["payload"]["player_id"]
+        room_code = res1["payload"]["room_code"]
+
+        room = manager.get_room(room_code)
+        room.state = RoomState.PLAYING
+
+        res2 = await manager.join_room("Bob", room_code, ws2, as_spectator=True)
+        spec_id = res2["payload"]["player_id"]
+        bob = room.get_player(spec_id)
+        assert bob.is_spectator is True
+        assert bob.become_player_requests_count == 0
+
+        # Spectator requests to become player
+        req_res = await manager.request_become_player(spec_id)
+        assert req_res["type"] == "become_player_request_pending"
+        assert req_res["payload"]["requests_remaining"] == 1
+        req_id = req_res["payload"]["request_id"]
+        assert req_id in room._pending_spectator_role_requests
+
+        # Host approves request
+        app_res = await manager.respond_spectator_role_request(host_id, req_id, "accept")
+        assert app_res["type"] == "spectator_role_request_resolved"
+        assert app_res["payload"]["status"] == "accepted"
+        assert bob.is_spectator is False
+        assert bob.score == 0
+        assert req_id not in room._pending_spectator_role_requests
+
+    async def test_spectator_become_player_max_2_attempts(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        host_id = res1["payload"]["player_id"]
+        room_code = res1["payload"]["room_code"]
+
+        room = manager.get_room(room_code)
+        room.state = RoomState.PLAYING
+
+        res2 = await manager.join_room("Bob", room_code, ws2, as_spectator=True)
+        spec_id = res2["payload"]["player_id"]
+        bob = room.get_player(spec_id)
+
+        # Request 1
+        req1 = await manager.request_become_player(spec_id)
+        assert req1["type"] == "become_player_request_pending"
+        assert req1["payload"]["requests_remaining"] == 1
+        dec1 = await manager.respond_spectator_role_request(host_id, req1["payload"]["request_id"], "decline")
+        assert dec1["type"] == "spectator_role_request_resolved"
+        assert dec1["payload"]["status"] == "declined"
+        assert bob.is_spectator is True
+
+        # Request 2
+        req2 = await manager.request_become_player(spec_id)
+        assert req2["type"] == "become_player_request_pending"
+        assert req2["payload"]["requests_remaining"] == 0
+        dec2 = await manager.respond_spectator_role_request(host_id, req2["payload"]["request_id"], "decline")
+        assert dec2["payload"]["status"] == "declined"
+        assert bob.is_spectator is True
+
+        # Request 3 - should fail due to limit reached
+        req3 = await manager.request_become_player(spec_id)
+        assert req3["type"] == "error"
+        assert req3["payload"]["code"] == "MAX_REQUESTS_EXCEEDED"
+
+    async def test_spectator_become_player_cancelled(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        room_code = res1["payload"]["room_code"]
+
+        room = manager.get_room(room_code)
+        room.state = RoomState.PLAYING
+
+        res2 = await manager.join_room("Bob", room_code, ws2, as_spectator=True)
+        spec_id = res2["payload"]["player_id"]
+        bob = room.get_player(spec_id)
+
+        req = await manager.request_become_player(spec_id)
+        assert req["type"] == "become_player_request_pending"
+        req_id = req["payload"]["request_id"]
+        assert req_id in room._pending_spectator_role_requests
+
+        # Spectator cancels
+        cancel_res = await manager.cancel_spectator_role_request(spec_id, req_id)
+        assert cancel_res["type"] == "spectator_role_request_resolved"
+        assert cancel_res["payload"]["status"] == "cancelled"
+        assert req_id not in room._pending_spectator_role_requests
+        assert bob.is_spectator is True
+
     async def test_start_game_requires_two_active_players(self, manager):
         ws1 = make_mock_ws()
         ws2 = make_mock_ws()

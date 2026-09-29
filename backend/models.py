@@ -39,6 +39,7 @@ class Player:
     fastest_guess_time: Optional[float] = None   # Lowest elapsed seconds for a correct guess
     drawer_points_earned: int = 0                # Total points earned while drawing
     is_spectator: bool = False                   # True if watching without playing
+    become_player_requests_count: int = 0        # Number of requests to transition from spectator to player (max 2)
     host_reassign_task: Optional[asyncio.Task] = None  # asyncio task that fires after 3s if host drops and does not reconnect
 
 

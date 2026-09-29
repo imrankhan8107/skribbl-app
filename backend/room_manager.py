@@ -60,6 +60,17 @@ class PendingJoinRequest:
 
 
 @dataclass
+class PendingSpectatorRoleRequest:
+    request_id: str
+    room_code: str
+    player_id: str
+    name: str
+    avatar: Optional[str]
+    created_at: float
+    timeout_task: Optional[asyncio.Task] = None
+
+
+@dataclass
 class VoteKickState:
     target_id: str
     target_name: str
@@ -78,6 +89,7 @@ class RoomManager:
         self.rooms: dict[str, Room] = {}  # room_code -> Room
         self._player_to_room: dict[str, str] = {}  # player_id -> room_code (O(1) lookup)
         self._pending_join_requests: dict[str, PendingJoinRequest] = {}  # request_id -> PendingJoinRequest
+        self._pending_spectator_role_requests: dict[str, PendingSpectatorRoleRequest] = {}  # request_id -> PendingSpectatorRoleRequest
         self._ws_to_pending_request: dict[object, str] = {}  # websocket -> request_id
         self._ws_to_player: dict[object, dict] = {}  # websocket -> {"player_id": str, "room_code": str}
         self._active_vote_kicks: dict[str, VoteKickState] = {}  # room_code -> VoteKickState
@@ -102,6 +114,13 @@ class RoomManager:
                 if req.timeout_task and not req.timeout_task.done():
                     req.timeout_task.cancel()
                 self._ws_to_pending_request.pop(req.websocket, None)
+
+        # Cancel and clean up any pending spectator role requests for this room
+        s_to_cancel = [rid for rid, req in self._pending_spectator_role_requests.items() if req.room_code == room_code]
+        for rid in s_to_cancel:
+            s_req = self._pending_spectator_role_requests.pop(rid, None)
+            if s_req and s_req.timeout_task and not s_req.timeout_task.done():
+                s_req.timeout_task.cancel()
 
         # Cancel and clean up any active vote-kick in this room
         vk = self._active_vote_kicks.pop(room_code, None)
@@ -984,6 +1003,285 @@ class RoomManager:
 
         return resolved_msg
 
+    async def request_become_player(self, player_id: str) -> dict:
+        """Allow a spectator in the room to request becoming an active player.
+
+        Enforces a hard limit of 2 requests per game to prevent spamming.
+        """
+        room = self._find_room_by_player(player_id)
+        if not room:
+            return {
+                "type": "error",
+                "payload": {"code": "ROOM_NOT_FOUND", "message": "Player is not in a room"},
+            }
+
+        player = room.get_player(player_id)
+        if not player or not player.is_connected:
+            return {
+                "type": "error",
+                "payload": {"code": "PLAYER_NOT_FOUND", "message": "Player not found or disconnected"},
+            }
+
+        if not getattr(player, "is_spectator", False):
+            return {
+                "type": "error",
+                "payload": {"code": "ALREADY_PLAYER", "message": "You are already an active player"},
+            }
+
+        # Check limit: maximum 2 requests per game
+        if getattr(player, "become_player_requests_count", 0) >= 2:
+            return {
+                "type": "error",
+                "payload": {
+                    "code": "MAX_REQUESTS_EXCEEDED",
+                    "message": "You have reached the maximum of 2 player join requests for this game.",
+                },
+            }
+
+        # Check if a request from this player is already pending
+        if not hasattr(room, "_pending_spectator_role_requests"):
+            room._pending_spectator_role_requests = {}
+        for r in room._pending_spectator_role_requests.values():
+            if r.player_id == player_id:
+                return {
+                    "type": "error",
+                    "payload": {
+                        "code": "REQUEST_ALREADY_PENDING",
+                        "message": "Your request to join as a player is already pending host approval.",
+                    },
+                }
+
+        # Check room active player capacity
+        active_count = sum(1 for p in room.players if not getattr(p, "is_spectator", False))
+        if active_count >= min(room.config.max_players, MAX_PLAYERS_HARD_CAP):
+            return {
+                "type": "error",
+                "payload": {
+                    "code": "ROOM_FULL",
+                    "message": "Room has reached maximum active players.",
+                },
+            }
+
+        player.become_player_requests_count = getattr(player, "become_player_requests_count", 0) + 1
+        request_id = str(uuid4())
+
+        # Auto-expire after 45 seconds if host doesn't respond
+        async def _expire_request():
+            try:
+                await asyncio.sleep(45)
+                req = self._pending_spectator_role_requests.pop(request_id, None)
+                if hasattr(room, "_pending_spectator_role_requests"):
+                    room._pending_spectator_role_requests.pop(request_id, None)
+                if req and player.websocket and player.is_connected:
+                    exp_msg = {
+                        "type": "spectator_role_request_declined",
+                        "payload": {
+                            "request_id": request_id,
+                            "reason": "expired",
+                            "message": "Host did not respond in time.",
+                            "requests_remaining": max(0, 2 - player.become_player_requests_count),
+                        },
+                    }
+                    try:
+                        if hasattr(player.websocket, "send_text"):
+                            await player.websocket.send_text(json_dumps(exp_msg))
+                        elif hasattr(player.websocket, "send_json"):
+                            await player.websocket.send_json(exp_msg)
+                    except Exception:
+                        pass
+                await self.broadcast(
+                    room.code,
+                    {
+                        "type": "spectator_role_request_resolved",
+                        "payload": {"request_id": request_id, "status": "expired"},
+                    },
+                )
+            except asyncio.CancelledError:
+                pass
+
+        timeout_task = asyncio.create_task(_expire_request())
+        req = PendingSpectatorRoleRequest(
+            request_id=request_id,
+            room_code=room.code,
+            player_id=player_id,
+            name=player.name,
+            avatar=player.avatar,
+            created_at=time.time(),
+            timeout_task=timeout_task,
+        )
+        self._pending_spectator_role_requests[request_id] = req
+        room._pending_spectator_role_requests[request_id] = req
+
+        # Send notification to host
+        host = room.get_player(room.host_id)
+        if host and host.websocket and host.is_connected:
+            h_msg = {
+                "type": "spectator_role_request_received",
+                "payload": {
+                    "request_id": request_id,
+                    "player_id": player.id,
+                    "player_name": player.name,
+                    "avatar": player.avatar,
+                    "room_code": room.code,
+                },
+            }
+            try:
+                if hasattr(host.websocket, "send_text"):
+                    await host.websocket.send_text(json_dumps(h_msg))
+                elif hasattr(host.websocket, "send_json"):
+                    await host.websocket.send_json(h_msg)
+            except Exception:
+                pass
+
+        return {
+            "type": "become_player_request_pending",
+            "payload": {
+                "request_id": request_id,
+                "requests_remaining": max(0, 2 - player.become_player_requests_count),
+            },
+        }
+
+    async def respond_spectator_role_request(
+        self, host_player_id: str, request_id: str, action: str
+    ) -> dict:
+        """Handle host approval or decline for a spectator requesting to become a player."""
+        req = self._pending_spectator_role_requests.get(request_id)
+        if not req:
+            return {
+                "type": "error",
+                "payload": {"code": "REQUEST_NOT_FOUND", "message": "Spectator request not found or expired"},
+            }
+
+        room = self.rooms.get(req.room_code)
+        if not room:
+            return {
+                "type": "error",
+                "payload": {"code": "ROOM_NOT_FOUND", "message": "Room not found"},
+            }
+
+        if room.host_id != host_player_id:
+            return {
+                "type": "error",
+                "payload": {"code": "PERMISSION_DENIED", "message": "Only the host can respond to requests"},
+            }
+
+        if req.timeout_task and not req.timeout_task.done():
+            req.timeout_task.cancel()
+        self._pending_spectator_role_requests.pop(request_id, None)
+        if hasattr(room, "_pending_spectator_role_requests"):
+            room._pending_spectator_role_requests.pop(request_id, None)
+
+        player = room.get_player(req.player_id)
+
+        if action == "decline":
+            if player and player.websocket and player.is_connected:
+                d_msg = {
+                    "type": "spectator_role_request_declined",
+                    "payload": {
+                        "request_id": request_id,
+                        "reason": "declined",
+                        "message": "The host declined your request to join as a player.",
+                        "requests_remaining": max(0, 2 - getattr(player, "become_player_requests_count", 0)),
+                    },
+                }
+                try:
+                    if hasattr(player.websocket, "send_text"):
+                        await player.websocket.send_text(json_dumps(d_msg))
+                    elif hasattr(player.websocket, "send_json"):
+                        await player.websocket.send_json(d_msg)
+                except Exception:
+                    pass
+
+            resolved_msg = {
+                "type": "spectator_role_request_resolved",
+                "payload": {"request_id": request_id, "status": "declined"},
+            }
+            await self.broadcast(room.code, resolved_msg)
+            return resolved_msg
+
+        # action == "accept"
+        if not player or not player.is_connected:
+            return {
+                "type": "error",
+                "payload": {"code": "PLAYER_NOT_FOUND", "message": "Player disconnected before approval"},
+            }
+
+        active_count = sum(1 for p in room.players if not getattr(p, "is_spectator", False))
+        if active_count >= min(room.config.max_players, MAX_PLAYERS_HARD_CAP):
+            return {
+                "type": "error",
+                "payload": {"code": "ROOM_FULL", "message": "Room has reached maximum active players."},
+            }
+
+        # Transition spectator to active player with 0 score
+        player.is_spectator = False
+        player.score = 0
+        player.has_guessed = False
+
+        # Broadcast updated player list so all clients reflect the change immediately
+        await self.broadcast(
+            room.code,
+            {
+                "type": "player_list",
+                "payload": {
+                    "players": [self._serialize_player(p, room=room) for p in room.players]
+                },
+            },
+        )
+
+        # Broadcast system chat announcement
+        await self.broadcast(
+            room.code,
+            {
+                "type": "chat_message",
+                "payload": {
+                    "id": str(uuid4()),
+                    "sender_id": "",
+                    "sender_name": "System",
+                    "text": f"🎮 {player.name} joined the game as an active player!",
+                    "type": "system",
+                },
+            },
+        )
+
+        resolved_msg = {
+            "type": "spectator_role_request_resolved",
+            "payload": {
+                "request_id": request_id,
+                "status": "accepted",
+                "player_id": player.id,
+            },
+        }
+        await self.broadcast(room.code, resolved_msg)
+        return resolved_msg
+
+    async def cancel_spectator_role_request(self, player_id: str, request_id: Optional[str] = None) -> dict:
+        """Allow a spectator to cancel their pending request to become a player."""
+        room = self._find_room_by_player(player_id)
+        if not room:
+            return {"type": "spectator_role_request_resolved", "payload": {"status": "cancelled"}}
+
+        req_to_cancel = None
+        if hasattr(room, "_pending_spectator_role_requests"):
+            for rid, req in list(room._pending_spectator_role_requests.items()):
+                if req.player_id == player_id and (request_id is None or rid == request_id):
+                    req_to_cancel = req
+                    room._pending_spectator_role_requests.pop(rid, None)
+                    self._pending_spectator_role_requests.pop(rid, None)
+                    break
+
+        if req_to_cancel:
+            if req_to_cancel.timeout_task and not req_to_cancel.timeout_task.done():
+                req_to_cancel.timeout_task.cancel()
+            resolved_msg = {
+                "type": "spectator_role_request_resolved",
+                "payload": {"request_id": req_to_cancel.request_id, "status": "cancelled"},
+            }
+            await self.broadcast(room.code, resolved_msg)
+            return resolved_msg
+
+        return {"type": "spectator_role_request_resolved", "payload": {"status": "cancelled"}}
+
     async def remove_player(self, player_id: str) -> None:
         """Remove a player from their room, handling host reassignment and cleanup.
 
@@ -1254,6 +1552,28 @@ class RoomManager:
                             await new_host.websocket.send_text(json_dumps(f_msg))
                         elif hasattr(new_host.websocket, "send_json"):
                             await new_host.websocket.send_json(f_msg)
+                    except Exception:
+                        pass
+
+        # Forward any pending spectator role requests to the new host
+        if hasattr(room, "_pending_spectator_role_requests"):
+            for s_req in room._pending_spectator_role_requests.values():
+                if new_host.websocket:
+                    try:
+                        sf_msg = {
+                            "type": "spectator_role_request_received",
+                            "payload": {
+                                "request_id": s_req.request_id,
+                                "player_id": s_req.player_id,
+                                "player_name": s_req.name,
+                                "avatar": s_req.avatar,
+                                "room_code": room.code,
+                            },
+                        }
+                        if hasattr(new_host.websocket, "send_text"):
+                            await new_host.websocket.send_text(json_dumps(sf_msg))
+                        elif hasattr(new_host.websocket, "send_json"):
+                            await new_host.websocket.send_json(sf_msg)
                     except Exception:
                         pass
 
@@ -1909,6 +2229,18 @@ class RoomManager:
                 action = payload.get("action", "") if isinstance(payload, dict) else ""
                 await self.respond_join_request(player_id, request_id, action)
 
+            elif msg_type == "request_become_player":
+                await self.request_become_player(player_id)
+
+            elif msg_type == "respond_spectator_role_request":
+                request_id = payload.get("request_id", "") if isinstance(payload, dict) else ""
+                action = payload.get("action", "") if isinstance(payload, dict) else ""
+                await self.respond_spectator_role_request(player_id, request_id, action)
+
+            elif msg_type == "cancel_spectator_role_request":
+                request_id = payload.get("request_id") if isinstance(payload, dict) else None
+                await self.cancel_spectator_role_request(player_id, request_id)
+
         except Exception as exc:
             logger.exception(
                 "Error handling forwarded message type '%s' for player %s in room %s: %s",
@@ -2118,6 +2450,7 @@ class RoomManager:
             player.correct_guesses_count = 0
             player.fastest_guess_time = None
             player.drawer_points_earned = 0
+            player.become_player_requests_count = 0
 
         # Reset round counter and drawer index
         room.current_round = 0
@@ -2260,6 +2593,28 @@ class RoomManager:
                             await target.websocket.send_text(json_dumps(f_msg))
                         elif hasattr(target.websocket, "send_json"):
                             await target.websocket.send_json(f_msg)
+                    except Exception:
+                        pass
+
+        # Forward any pending spectator role requests to the new host
+        if hasattr(room, "_pending_spectator_role_requests"):
+            for s_req in room._pending_spectator_role_requests.values():
+                if target.websocket:
+                    try:
+                        sf_msg = {
+                            "type": "spectator_role_request_received",
+                            "payload": {
+                                "request_id": s_req.request_id,
+                                "player_id": s_req.player_id,
+                                "player_name": s_req.name,
+                                "avatar": s_req.avatar,
+                                "room_code": room.code,
+                            },
+                        }
+                        if hasattr(target.websocket, "send_text"):
+                            await target.websocket.send_text(json_dumps(sf_msg))
+                        elif hasattr(target.websocket, "send_json"):
+                            await target.websocket.send_json(sf_msg)
                     except Exception:
                         pass
 
@@ -2864,9 +3219,10 @@ class RoomManager:
                 "payload": {"code": "INSUFFICIENT_PLAYERS", "message": "At least 2 active players are required to start the game"},
             }
 
-        # Reset all is_ready flags when game starts
+        # Reset all is_ready flags and spectator request counts when game starts
         for player in room.players:
             player.is_ready = False
+            player.become_player_requests_count = 0
 
         # Transition room state to WORD_SELECTION
         room.state = RoomState.WORD_SELECTION

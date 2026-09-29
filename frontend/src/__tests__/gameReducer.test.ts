@@ -37,6 +37,10 @@ const initialState: GameState = {
   joinRequestPending: false,
   pendingJoinRequestId: null,
   pendingJoinRequests: [],
+  spectatorRoleRequestPending: false,
+  pendingSpectatorRoleRequestId: null,
+  spectatorRequestsRemaining: 2,
+  pendingSpectatorRoleRequests: [],
   activeVoteKick: null,
 };
 
@@ -878,6 +882,147 @@ describe("gameReducer", () => {
       };
       const next = gameReducer(state, action);
       expect(next.errorMessage).toBeNull();
+    });
+  });
+
+  describe("SPECTATOR_ROLE_REQUEST actions", () => {
+    it("handles SPECTATOR_ROLE_REQUEST_PENDING", () => {
+      const state: GameState = {
+        ...initialState,
+        isSpectator: true,
+        localPlayerId: "spec-1",
+        spectatorRequestsRemaining: 2,
+      };
+      const action: Action = {
+        type: "SPECTATOR_ROLE_REQUEST_PENDING",
+        payload: { requestId: "req-123", requestsRemaining: 1 },
+      };
+      const next = gameReducer(state, action);
+      expect(next.spectatorRoleRequestPending).toBe(true);
+      expect(next.pendingSpectatorRoleRequestId).toBe("req-123");
+      expect(next.spectatorRequestsRemaining).toBe(1);
+    });
+
+    it("handles SPECTATOR_ROLE_REQUEST_RECEIVED for host", () => {
+      const state: GameState = {
+        ...initialState,
+        isHost: true,
+        localPlayerId: "host-1",
+        pendingSpectatorRoleRequests: [],
+      };
+      const action: Action = {
+        type: "SPECTATOR_ROLE_REQUEST_RECEIVED",
+        payload: {
+          requestId: "req-123",
+          playerId: "spec-1",
+          playerName: "SpectatorBob",
+          roomCode: "ABC123",
+        },
+      };
+      const next = gameReducer(state, action);
+      expect(next.pendingSpectatorRoleRequests).toHaveLength(1);
+      expect(next.pendingSpectatorRoleRequests?.[0].playerName).toBe("SpectatorBob");
+    });
+
+    it("handles SPECTATOR_ROLE_REQUEST_RESOLVED by removing request", () => {
+      const state: GameState = {
+        ...initialState,
+        isHost: true,
+        pendingSpectatorRoleRequests: [
+          {
+            requestId: "req-123",
+            playerId: "spec-1",
+            playerName: "SpectatorBob",
+            roomCode: "ABC123",
+          },
+        ],
+      };
+      const action: Action = {
+        type: "SPECTATOR_ROLE_REQUEST_RESOLVED",
+        payload: { requestId: "req-123", status: "accepted" },
+      };
+      const next = gameReducer(state, action);
+      expect(next.pendingSpectatorRoleRequests).toHaveLength(0);
+    });
+
+    it("handles SPECTATOR_ROLE_REQUEST_DECLINED for spectator", () => {
+      const state: GameState = {
+        ...initialState,
+        isSpectator: true,
+        localPlayerId: "spec-1",
+        spectatorRoleRequestPending: true,
+        pendingSpectatorRoleRequestId: "req-123",
+        spectatorRequestsRemaining: 1,
+      };
+      const action: Action = {
+        type: "SPECTATOR_ROLE_REQUEST_DECLINED",
+        payload: {
+          requestId: "req-123",
+          message: "Host declined your request to become a player.",
+          requestsRemaining: 1,
+        },
+      };
+      const next = gameReducer(state, action);
+      expect(next.spectatorRoleRequestPending).toBe(false);
+      expect(next.pendingSpectatorRoleRequestId).toBeNull();
+      expect(next.spectatorRequestsRemaining).toBe(1);
+      expect(next.errorMessage).toBe("Host declined your request to become a player.");
+    });
+
+    it("handles CANCEL_SPECTATOR_ROLE_REQUEST", () => {
+      const state: GameState = {
+        ...initialState,
+        spectatorRoleRequestPending: true,
+        pendingSpectatorRoleRequestId: "req-123",
+      };
+      const action: Action = {
+        type: "CANCEL_SPECTATOR_ROLE_REQUEST",
+      };
+      const next = gameReducer(state, action);
+      expect(next.spectatorRoleRequestPending).toBe(false);
+      expect(next.pendingSpectatorRoleRequestId).toBeNull();
+    });
+
+    it("updates isSpectator in PLAYER_LIST when player is promoted to active", () => {
+      const state: GameState = {
+        ...initialState,
+        localPlayerId: "spec-1",
+        isSpectator: true,
+        spectatorRoleRequestPending: true,
+        pendingSpectatorRoleRequestId: "req-123",
+        players: [
+          {
+            id: "spec-1",
+            name: "SpecBob",
+            score: 0,
+            hasGuessed: false,
+            isConnected: true,
+            isReady: false,
+            isHost: false,
+            isSpectator: true,
+          },
+        ],
+      };
+      const action: Action = {
+        type: "PLAYER_LIST",
+        payload: {
+          players: [
+            {
+              id: "spec-1",
+              name: "SpecBob",
+              score: 0,
+              hasGuessed: false,
+              isConnected: true,
+              isReady: false,
+              isHost: false,
+              isSpectator: false,
+            },
+          ],
+        },
+      };
+      const next = gameReducer(state, action);
+      expect(next.isSpectator).toBe(false);
+      expect(next.spectatorRoleRequestPending).toBe(false);
     });
   });
 });

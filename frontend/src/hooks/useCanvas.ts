@@ -546,10 +546,11 @@ export function useCanvas(
   }, [isDrawer, drawStroke, drawHighlighter, drawLine, drawRect, drawCircle, floodFill, send]);
 
   // ---------------------------------------------------------------------------
-  // Render remote stroke
+  // Render remote stroke (only for guessers/spectators; drawer already drew locally)
   // ---------------------------------------------------------------------------
   const renderRemoteStroke = useCallback(
     (stroke: { points: [number, number][]; color: string; size: number }) => {
+      if (isDrawer) return;
       drawStroke(stroke.points, stroke.color, stroke.size);
       actionHistoryRef.current.push({
         type: "stroke",
@@ -558,7 +559,7 @@ export function useCanvas(
         size: stroke.size,
       });
     },
-    [drawStroke]
+    [isDrawer, drawStroke]
   );
 
   // ---------------------------------------------------------------------------
@@ -566,6 +567,7 @@ export function useCanvas(
   // ---------------------------------------------------------------------------
   const renderRemoteHighlighter = useCallback(
     (highlighter: { points: [number, number][]; color: string; size: number }) => {
+      if (isDrawer) return;
       drawHighlighter(highlighter.points, highlighter.color, highlighter.size);
       actionHistoryRef.current.push({
         type: "highlighter",
@@ -574,7 +576,7 @@ export function useCanvas(
         size: highlighter.size,
       });
     },
-    [drawHighlighter]
+    [isDrawer, drawHighlighter]
   );
 
   // ---------------------------------------------------------------------------
@@ -588,6 +590,7 @@ export function useCanvas(
       color: string;
       size: number;
     }) => {
+      if (isDrawer) return;
       if (shape.shapeType === "line") {
         drawLine(shape.start, shape.end, shape.color, shape.size);
       } else if (shape.shapeType === "rect") {
@@ -603,7 +606,7 @@ export function useCanvas(
         size: shape.size,
       });
     },
-    [drawLine, drawRect, drawCircle]
+    [isDrawer, drawLine, drawRect, drawCircle]
   );
 
   // ---------------------------------------------------------------------------
@@ -611,6 +614,7 @@ export function useCanvas(
   // ---------------------------------------------------------------------------
   const renderRemoteFill = useCallback(
     (fill: { x: number; y: number; color: string }) => {
+      if (isDrawer) return;
       floodFill(fill.x, fill.y, fill.color);
       actionHistoryRef.current.push({
         type: "fill",
@@ -619,7 +623,7 @@ export function useCanvas(
         color: fill.color,
       });
     },
-    [floodFill]
+    [isDrawer, floodFill]
   );
 
   // ---------------------------------------------------------------------------
