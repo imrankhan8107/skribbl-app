@@ -76,9 +76,32 @@ drawer_bonus = round(average(all_guesser_scores_this_turn))
 
 If no one guesses correctly → drawer gets 0 points.
 
-### Cumulative Scores
+### Guess Streaks & First Guesser Bonus
 
-Scores only increase. Points are never deducted. Player scores accumulate across all rounds.
+- Each consecutive turn a player guesses correctly increases their `streak`.
+- The first correct guesser in a turn is flagged with `is_first_guesser = true` and receives a 1.5× multiplier.
+- Failing to guess the word before the timer expires resets `streak` to 0 (drawers preserve their streak).
+
+### Close Guess Detection
+
+- When an incorrect guess is submitted, the server calculates the Levenshtein distance against the target word:
+  - If $\text{length} \ge 3$ and $\text{distance} \le 2$:
+    - The guess is classified as **close**.
+    - The raw guess text is withheld from the room to prevent spoiling the answer.
+    - A system message `"{Player} is very close!"` is broadcast to the room.
+
+### Cumulative Session Scores & MVP Awards
+
+Session metrics persist across rematches within the same room:
+- `session_score`: Total points accumulated across all games.
+- `session_wins`: Total match victories.
+- `session_games`: Total games completed.
+
+At game over, automated MVP awards are calculated and displayed:
+- ⚡ **Speed Demon**: Lowest elapsed time for a correct guess.
+- 🎯 **Sniper**: Most first-guesser awards.
+- 🔥 **Streak Master**: Longest unbroken correct guess streak.
+- 🎨 **Master Artist**: Most total points earned while drawing.
 
 ## Hint Progression
 
@@ -102,23 +125,40 @@ Example: "ice cream" → `['_', '_', '_', ' ', '_', '_', '_', '_', '_']`
 - At least one character always remains hidden (never fully reveals)
 - Only unrevealed non-space characters are candidates for reveal
 
-## Word Selection
+## Word Selection & Themes
 
-### Word Pool
+### Curated Word Packs
 
-- Default word list: 200+ common nouns/objects
-- Per-game shuffled copy maintained in `Room.word_pool`
-- Used words tracked in `Room.used_words`
+The drawer is presented with 3 thematic packs (e.g., Animals, Food & Drink, Fantasy, Pop Culture, Everyday Objects) or custom words injected by the host.
+- Choosing a word applies its corresponding theme emoji and title to the round.
+- Guessers and spectators see the active `current_theme` badge throughout the turn.
+- If the drawer makes no selection within 15 seconds, the server auto-selects a word from the first pack.
 
-### Selection Process
+## Spectator Mode & Mid-Game Join
 
-1. Draw 3 unique words from the pool (not previously used in this session)
-2. Present choices to drawer
-3. On pool exhaustion → reshuffle full list and reuse
+### Joining Mid-Game
+- Players joining an in-progress match can enter directly as **Spectators** (`as_spectator = true`), bypassing game-blocking prompts.
+- Players requesting active participation trigger an interactive **Host Approval Banner**:
+  - `🎮 Accept as Player`: joins active rotation with initial score = 0.
+  - `👁️ Accept as Spectator`: joins as spectator.
+  - `✕ Decline`: rejects request.
 
-### Auto-Select
+### Spectator Role Promotion (Mid-Game)
+- Live spectators can click **"Join as Player"** to request the host promote them to active player status.
+- **Anti-Spam Constraint**: Spectators are strictly capped at **2 requests per game** (`become_player_requests_count`).
+- Host approval converts the spectator into an active player immediately with `score = 0`, announces the join in room chat, and broadcasts an updated player list.
+- Pending requests automatically migrate to the new host if the original host leaves or transfers leadership.
 
-If the drawer doesn't pick a word within 15 seconds, the server randomly assigns one of the 3 choices.
+## Moderation & Democratic Vote-to-Kick
+
+### Host Direct Kick
+- The room host can immediately kick any player from the lobby or active game.
+
+### Democratic Vote-Kick
+- Any active player can initiate a vote-to-kick against a disruptive player (the host cannot be vote-kicked).
+- Requires a calculated majority threshold ($\ge \lceil N / 2 \rceil$ of eligible voters).
+- An interactive banner is displayed to all players with a 30-second voting window.
+- Upon passing, the target is kicked and redirected with a clear notification; failed votes initiate a cooldown.
 
 ## Disconnection Handling
 
@@ -143,29 +183,30 @@ If the current drawer disconnects:
 - All players receive 0 points for that turn
 - Game advances to the next turn
 
-### Fewer Than 2 Players
+### Fewer Than 2 Active Players
 
-When fewer than 2 connected players remain:
+When fewer than 2 connected active players remain:
 1. Server starts a 20-second countdown
 2. Broadcasts `waiting_for_reconnect` to remaining players
-3. If someone reconnects → countdown cancelled, `reconnect_resumed` broadcast
+3. If someone reconnects or a spectator becomes a player → countdown cancelled, `reconnect_resumed` broadcast
 4. If countdown expires → game ends with `game_ended_insufficient_players`
 5. Host can send `end_game_now` to skip the countdown
 
 ## Drawer Rotation
 
 Players take turns as drawer in a consistent order:
-1. First drawer = first player in the room's player list
-2. After each turn, advance to the next connected player
-3. Skip any disconnected players
-4. When all players have drawn → round complete, start next round
+1. First drawer = first active player in the room's player list
+2. After each turn, advance to the next connected active player
+3. Spectators and disconnected players are skipped
+4. When all eligible players have drawn → round complete, start next round
 5. Same rotation order across all rounds
 
 ## Rematch
 
 When host initiates a rematch:
-1. All player scores reset to 0
-2. Round counter reset
-3. Used words and word pool reset (fresh shuffled pool)
-4. Room transitions back to LOBBY state
-5. `rematch_started` broadcast with reset state
+1. In-game scores reset to 0; cumulative session stats remain intact
+2. Spectator request counts reset to 0
+3. Round counter reset to 0
+4. Used words and word pool reset
+5. Room transitions back to LOBBY state
+6. `rematch_started` broadcast with fresh state

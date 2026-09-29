@@ -7,7 +7,7 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 ![React](https://img.shields.io/badge/React-18-61DAFB)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
 ![gRPC](https://img.shields.io/badge/gRPC-Bidirectional%20Streaming-244c5a)
-![Tests](https://img.shields.io/badge/Tests-290%20backend%20%2B%2065%20frontend%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-330%20backend%20%2B%20151%20frontend%20passing-brightgreen)
 ![Benchmark](https://img.shields.io/badge/Validated%20Scale-120%2C000%20VUs%20%40%2020Hz-purple)
 ![Throughput](https://img.shields.io/badge/Messages-400M%20Processed-blueviolet)
 ![Bandwidth](https://img.shields.io/badge/Peak%20Bandwidth-1.50%20Gbps-success)
@@ -16,36 +16,27 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 ## Features
 
 **Game Mechanics & Creative Canvas**
-- 🎨 Real-time collaborative canvas with pen, eraser, fill tool, expanded 16-color palette, and 5 brush sizes (XS, S, M, L, XL)
-- ↩️ Full Canvas Undo & Redo with synchronized remote replay and hotkeys (`Ctrl+Z`, `Ctrl+Y`, `B`, `E`, `F`)
-- 💬 Live chat with guessing — incorrect guesses visible to all, correct guesses hidden
-- 🔍 "Close Guess" assistance (notifies player when within Levenshtein distance $\le 2$) & automated chat profanity moderation
-- 🏆 Exponential scoring with position multiplier (first guesser earns most)
-- 🔄 Turn rotation — every player gets to draw each round
-- ⏱️ Configurable turn duration (30–180 seconds) with hint reveals at 40% and 70%
-- 🎯 Word selection — drawer picks from 3 word choices (auto-selects after 15s)
-- 🔁 Round transition animations between rounds
+- 🎨 **Real-Time Canvas:** Pen, Eraser, Flood Fill, Highlighter, and Geometric Shapes (Line, Rectangle, Circle) with interactive preview.
+- 📐 **Shape Snapping:** Hold `Shift` while dragging to constrain rectangles to perfect squares, ellipses to circles, and lines to 45°/90° angles.
+- ⚡ **60 FPS Stroke Batching & Smoothing:** Ultra-smooth quadratic Bézier curves and 16ms animation-frame batching for lag-free remote rendering.
+- ↩️ **Full Stroke Undo & Redo:** Canvas history operates per complete stroke or shape rather than intermediate packet fragments, synchronized room-wide.
+- 🎨 **Palette & Brushes:** 16 vibrant colors + custom HEX/RGB color picker, 5 brush sizes (XS, S, M, L, XL), and brush cursor preview.
+- 📚 **Theme Packs & Word Selection:** 3 thematic packs (Animals, Food, Fantasy, etc.) displayed in tabs during word selection + custom word injection.
+- 💬 **Live Chat & Close Guess:** Guessing chat with profanity filtering; guesses within Levenshtein distance $\le 2$ trigger private `"is very close!"` alerts.
+- 🏆 **Exponential Scoring & Streaks:** Speed-decay scoring with position multipliers (1st = 1.5x), consecutive guess streaks, and drawer bonuses.
+- 🔁 **Round Transitions & Replay Gallery:** Animated round overlays, end-of-game interactive time-lapse drawing replay with scrubbers and speed controls (0.5x–4x).
+- 📸 **Shareable Scorecards:** One-click image download and clipboard copy for post-game match result cards.
 
-**Room Management**
-- 🚪 Create/join rooms with 6-character codes
-- 👑 Host controls: kick players, configure settings, start game
-- ✅ Ready check system in lobby
-- 👋 Leave room voluntarily
-- 💬 Lobby chat before game starts
-
-**Resilience & Scale**
-- ⚡ **High-Speed Rust Serialization:** Integrated `orjson` with zero-copy Protobuf payload bytes.
-- 🚀 **High-Concurrency Go Gateway:** Dedicated epoll-based Go Gateways terminating 100,000 WebSockets with O(1) fan-out processing 223+ Million messages.
-- 🛡️ **Class-Aware Backpressure:** Bounded worker gRPC queue (`GRPC_SEND_QUEUE_MAXSIZE`) protects must-deliver control frames while shedding lossy strokes under 20 Hz load.
-- 🌐 **Distributed Load Generation:** Multi-runner in-VPC k6 generators with automatic `VU_OFFSET` partitioning to eliminate client event-loop saturation and ephemeral port exhaustion.
-- 🔌 Auto-reconnect on page refresh (120-second grace window)
-- ⏳ 20-second countdown before ending game on disconnect (with "End Now" option for host)
-- 🏠 Host reassignment on disconnect
-- 🔄 Consistent-hash load balancing for distributed room ownership
-
-**Social**
-- 😂 Emoji reactions (👍 😂 🔥 ❤️ 👏 😮)
-- 🏅 Final leaderboard with rematch option
+**Room Management & Social**
+- 🚪 **Flexible Room Access:** 6-character room codes, private rooms with password protection, and QR Code modals with Web Share API.
+- 👑 **Host Controls:** Settings configuration (rounds, duration, max players, custom words), player kicking, and host transfer.
+- 🗳️ **Democratic Vote Kick:** Players can initiate vote-kicks requiring a calculated majority, with real-time progress banners.
+- 👀 **Spectator Mode & Mid-Game Join:** Join ongoing matches as a spectator; request host promotion to active player (capped at 2 requests per game to prevent spam).
+- 🛡️ **Host Join Approval:** When players join an in-progress game, the host receives an approval prompt to accept as player, accept as spectator, or decline.
+- 🎭 **Custom Avatars & Profiles:** 8 persistent animal avatars with in-lobby profile editing and name customization.
+- 😂 **Floating Reactions & Typing:** Live floating emoji reaction burst engine and real-time typing indicators in chat and player list.
+- 🔊 **Web Audio Sound Effects:** Zero-external-asset synthesized audio engine for ticking timers, correct guesses, turn wins, and fanfares.
+- 🌓 **Theme Selector:** Client-side theming support with multiple color schemes.
 
 ## Tech Stack
 
@@ -116,10 +107,10 @@ Access from other devices: `http://<your-ip>:5173`
 ## Testing
 
 ```bash
-# Backend (290 tests — unit + property-based + integration + metrics + undo)
+# Backend (330 tests — unit + property-based + integration + metrics + undo + spectator)
 python -m pytest backend/tests/ -v
 
-# Frontend (65 tests — component + reducer + canvas + shortcuts)
+# Frontend (151 tests — component + reducer + canvas + shape tools + audio + spectator)
 cd frontend && npx vitest run
 
 # Performance test (simulates concurrent WebSocket clients)
@@ -323,51 +314,74 @@ All messages are JSON: `{ type: "...", payload: {...} }`
 
 | Client → Server | Description |
 |----------------|-------------|
-| `create_room` | Create a new room |
-| `join_room` | Join existing room |
+| `create_room` | Create a new room (supports password) |
+| `join_room` | Join existing room (supports password, spectator flag) |
 | `reconnect` | Reconnect to room after page refresh |
 | `start_game` | Host starts game |
-| `select_word` | Drawer picks word from 3 choices |
-| `stroke` | Drawing data (real-time) |
+| `select_word` | Drawer picks word from theme packs or custom list |
+| `stroke` | Freehand drawing batch (60fps smoothed) |
+| `shape` | Geometric shape (line, rectangle, circle) |
+| `highlighter` | Semitransparent highlighter stroke |
 | `fill` | Flood fill operation |
 | `clear_canvas` | Clear the canvas |
+| `undo` | Undo last stroke/shape |
 | `guess` | Submit a guess |
-| `chat` | Send chat message (lobby or in-game for drawer) |
+| `chat` | Send chat message (lobby or in-game for drawer/spectators) |
 | `reaction` | Emoji reaction |
+| `typing` | Typing indicator status |
 | `toggle_ready` | Ready status in lobby |
-| `kick_player` | Host kicks player |
+| `update_profile` | Change player name or avatar |
+| `transfer_host` | Host transfers room leadership |
+| `vote_kick` | Initiate a democratic vote-kick |
+| `vote_kick_cast` | Cast vote (yes/no) in active vote-kick |
+| `respond_join_request` | Host responds to mid-game join request (`accept_player`, `accept_spectator`, `decline`) |
+| `cancel_join_request` | Cancels pending mid-game join request |
+| `request_become_player` | Spectator requests host to become an active player (max 2 attempts) |
+| `respond_spectator_role_request` | Host accepts or declines spectator promotion |
+| `cancel_spectator_role_request` | Spectator cancels pending promotion request |
+| `kick_player` | Host kicks player directly |
 | `leave_room` | Leave voluntarily |
-| `rematch` | Host starts new game |
+| `rematch` | Host starts new game (preserves session stats) |
 | `end_game_now` | Host ends game immediately during disconnect countdown |
-| `update_settings` | Host changes game config |
+| `update_settings` | Host changes game config (rounds, duration, max players, custom words) |
 
 | Server → Client | Description |
 |-----------------|-------------|
 | `room_created` | Confirms room creation |
-| `room_joined` | Confirms join with full state |
+| `room_joined` | Confirms join with full state and spectator flag |
 | `reconnected` | Confirms reconnection with restored state |
 | `error` | Error response with code + message |
-| `player_list` | Updated player list broadcast |
+| `player_list` | Updated player list broadcast (with avatar, spectator status, streaks) |
 | `settings_updated` | Config change broadcast |
+| `profile_updated` | Confirms profile name/avatar update |
 | `game_started` | Game begins |
-| `word_choices` | Sent only to Drawer (3 words) |
+| `word_choices` | Sent only to Drawer (3 words + theme packs) |
 | `drawer_selecting` | Broadcast: drawer is choosing a word |
 | `word_assigned` | Sent to drawer on auto-select |
-| `turn_started` | Turn begins with hint + duration |
+| `turn_started` | Turn begins with hint + duration + theme |
 | `hint_update` | Partial reveal broadcast to Guessers |
-| `stroke` / `fill` / `clear_canvas` | Drawing broadcasts |
+| `stroke` / `shape` / `highlighter` / `fill` / `clear_canvas` / `undo` | Drawing broadcasts |
 | `guess_correct` | A guesser guessed correctly |
-| `chat_message` | Chat message broadcast |
+| `chat_message` | Chat message broadcast (with system / close guess alerts) |
+| `typing` | Typing indicator broadcast |
 | `turn_ended` | Turn over; word revealed, scores updated |
-| `game_over` | Final ranked scores |
+| `game_over` | Final ranked scores, MVP awards, and session stats |
 | `player_reconnected` | Reconnected player restored |
 | `waiting_for_reconnect` | Countdown before ending game on disconnect |
 | `reconnect_resumed` | Player reconnected, countdown cancelled |
-| `rematch_started` | New game starting |
+| `rematch_started` | New game starting (preserves cumulative stats) |
+| `host_transferred` / `host_changed` | Room host reassignment broadcast |
+| `join_request_pending` | Sent to joiner while waiting for host approval |
+| `join_request_received` | Sent to host with joiner details and action buttons |
+| `join_request_resolved` / `join_request_declined` | Join request resolution notifications |
+| `become_player_request_pending` | Sent to spectator with remaining attempts |
+| `spectator_role_request_received` | Sent to host when spectator requests player role |
+| `spectator_role_request_resolved` / `spectator_role_request_declined` | Spectator role resolution |
+| `vote_kick_started` / `vote_kick_updated` / `vote_kick_ended` | Real-time vote kick tally and result |
 | `kicked` | Player was kicked |
 | `left_room` | Player left confirmation |
 | `reaction` | Emoji reaction broadcast |
-| `game_ended_insufficient_players` | Game ended (< 2 players) |
+| `game_ended_insufficient_players` | Game ended (< 2 active players) |
 
 ## Pre-commit Hooks
 

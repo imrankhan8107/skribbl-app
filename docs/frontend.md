@@ -26,34 +26,48 @@ The frontend is a React 18 SPA built with Vite and TypeScript. It's a thin rende
 frontend/src/
 ├── main.tsx                    # Entry point: ReactDOM.createRoot + providers
 ├── App.tsx                     # React Router routes
-├── index.css                   # Global styles
-├── setupTests.ts              # Test configuration
+├── index.css                   # Global styles and theme tokens
+├── setupTests.ts              # Test configuration & mocks
 ├── context/
-│   └── WebSocketContext.tsx    # WebSocket + state management (the brain)
+│   ├── WebSocketContext.tsx    # WebSocket + state management (the brain)
+│   ├── drawingBus.ts           # Synchronous event bus for remote drawing stream
+│   └── reactionBus.ts          # Event bus for floating animated reactions
 ├── pages/
-│   ├── Landing.tsx            # Create/join room form
-│   ├── Lobby.tsx              # Pre-game waiting room
-│   ├── Game.tsx               # Active game view
-│   └── GameOver.tsx           # Final scores + rematch
+│   ├── Landing.tsx            # Create/join room form, spectator toggle, password input
+│   ├── Lobby.tsx              # Pre-game room, custom word creator, settings, presets
+│   ├── Game.tsx               # Active game view, themes, word packs, spectator banner
+│   └── GameOver.tsx           # Final scores, replay modal, MVP awards, scorecard
 ├── components/
-│   ├── Canvas.tsx             # Drawing canvas + toolbar
-│   ├── Chat.tsx               # Chat/guess input + message feed
-│   ├── PlayerList.tsx         # Player names, scores, status
+│   ├── Canvas.tsx             # Drawing canvas, toolbars, shape tools, color picker
+│   ├── Chat.tsx               # Chat/guess input, typing indicators, close guess
+│   ├── PlayerList.tsx         # Player names, scores, avatars, streaks, mute, vote-kick
 │   ├── TimerBar.tsx           # Countdown progress bar
-│   └── RoundTransition.tsx    # Animated round overlay
+│   ├── RoundTransition.tsx    # Animated round overlay
+│   ├── AvatarPicker.tsx       # 8-animal selectable avatar picker
+│   ├── ProfileModal.tsx       # In-lobby profile and name editor
+│   ├── QRCodeModal.tsx        # Dynamic SVG QR code modal for mobile invites
+│   ├── ReactionToolbar.tsx    # Floating emoji reaction trigger bar
+│   ├── FloatingReactions.tsx  # Canvas floating emote physics renderer
+│   ├── HeaderBar.tsx          # Minimalist game top bar
+│   ├── VoteKickBanner.tsx     # Democratic vote-kick tally banner
+│   ├── ScorecardModal.tsx     # Exportable PNG scorecard dialog
+│   ├── SoundToggle.tsx        # Client-side audio mute/unmute control
+│   ├── ThemeSelector.tsx      # Dark/Light/Custom theme picker
+│   └── Confetti.tsx           # Celebratory particle burst on win/correct guess
 ├── hooks/
-│   ├── useCanvas.ts           # Canvas drawing logic
+│   ├── useCanvas.ts           # Canvas drawing logic, 60fps batching, quadratic Bézier
+│   ├── useGameAudio.ts        # Automated sound triggers for game lifecycle
 │   └── useWebSocket.ts       # Context consumer hook
-├── types/
-│   └── index.ts               # Shared TypeScript interfaces
-└── __tests__/
-    ├── gameReducer.test.ts    # Reducer unit tests
-    ├── Landing.test.tsx       # Landing page tests
-    ├── Lobby.test.tsx         # Lobby page tests
-    ├── Game.test.tsx          # Game page tests
-    ├── Chat.test.tsx          # Chat component tests
-    ├── Canvas.test.tsx        # Canvas component tests
-    └── GameOver.test.tsx      # GameOver page tests
+├── utils/
+│   ├── soundEffects.ts        # Synthesized Web Audio API sound effects engine
+│   ├── shapeSnap.ts           # Shift-key geometric constraint calculations
+│   ├── shareCard.ts           # Graphical scorecard generator & clipboard copy
+│   ├── avatars.ts             # Animal avatar mapping & random generator
+│   ├── clipboard.ts           # Async clipboard API wrapper with fallbacks
+│   ├── qr.ts                  # Pure client-side SVG QR code generator
+│   └── theme.ts               # CSS custom properties theme manager
+└── types/
+    └── index.ts               # Shared TypeScript interfaces & Action unions
 ```
 
 ## State Management
@@ -70,134 +84,79 @@ Server message → mapKeys (snake→camel) → dispatch(action) → new GameStat
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `phase` | `GamePhase` | Current game phase (idle/lobby/word_selection/playing/game_over) |
+| `phase` | `GamePhase` | Current game phase (`idle`/`lobby`/`word_selection`/`playing`/`game_over`) |
 | `roomCode` | `string | null` | Current room code |
 | `localPlayerId` | `string | null` | This player's server-assigned ID |
 | `isHost` | `boolean` | Whether this player is the room host |
 | `isDrawer` | `boolean` | Whether this player is currently drawing |
-| `players` | `PlayerInfo[]` | All players with scores and status |
-| `config` | `GameConfig` | Game configuration (rounds, duration, max) |
-| `hint` | `string[]` | Current hint (array of chars / underscores) |
+| `isSpectator` | `boolean` | Whether this player is spectating without guessing |
+| `players` | `PlayerInfo[]` | All players with scores, avatar, streaks, and spectator state |
+| `config` | `GameConfig` | Game configuration (rounds, duration, max players, custom words) |
+| `hint` | `string[]` | Current hint (array of characters and underscores) |
+| `wordPacks` | `WordPackChoice[]` | 3 curated theme word packs for the drawer |
+| `currentTheme` | `RoundTheme | null` | Active theme for the ongoing round |
 | `timerSeconds` | `number` | Turn countdown (decremented locally via TICK) |
-| `chatMessages` | `ChatMessage[]` | Chat history |
-| `drawingEvent` | `object | null` | Latest remote drawing event to render |
+| `chatMessages` | `ChatMessage[]` | Chat history (chat, correct_guess, system) |
+| `artworkGallery` | `RoundArtwork[]` | Historical round drawings with full replay action streams |
+| `activeVoteKick` | `ActiveVoteKick | null` | Active vote-kick poll metadata and progress |
+| `joinRequestPending` | `boolean` | Whether local player is waiting for host approval to join |
+| `pendingJoinRequests` | `JoinRequest[]` | Host's queue of players requesting to join |
+| `spectatorRoleRequestPending`| `boolean` | Whether spectator's request to become a player is pending |
+| `spectatorRequestsRemaining` | `number` | Remaining attempts to request player role (max 2 per game) |
 
-### Local State: `useState` in Components
+### Synchronous Drawing Bus (`drawingBus.ts`)
 
-Component-specific state that doesn't need to be shared:
+Rapid bursts of drawing messages (`stroke`, `shape`, `highlighter`, `fill`, `undo`, `clear_canvas`) bypass React's asynchronous state batching. They publish directly to a dedicated pub/sub drawing bus, ensuring 60 FPS zero-latency drawing synchronization without dropped strokes or dashes.
 
-- Form inputs (player name, room code, guess text)
-- Drawing tool state (color, brush size, active tool)
-- UI toggles (showing/hiding elements)
+### Synthesized Sound Engine (`soundEffects.ts`)
 
-## Routing
+Zero external audio asset dependencies. Uses the native browser Web Audio API oscillator synthesis:
+- **Ticking countdown**: Ascending pitch warning below 10 seconds.
+- **Correct guess**: Cheerful two-tone chime.
+- **Turn win / Game over**: Victorious chord progression.
+- **Sound Toggle**: Remembers mute preference in `localStorage`.
 
-| Route | Page | Phase |
-|-------|------|-------|
-| `/` | `Landing.tsx` | `idle` |
-| `/lobby/:roomCode` | `Lobby.tsx` | `lobby` |
-| `/game/:roomCode` | `Game.tsx` | `word_selection` / `playing` |
-| `/gameover/:roomCode` | `GameOver.tsx` | `game_over` |
-
-Navigation is driven by `gameState.phase` changes — when the phase transitions, the page calls `useNavigate()` to push the new route.
-
-## WebSocket Connection
-
-### Connection Lifecycle
-
-1. `WebSocketProvider` mounts → creates WebSocket to `ws://<host>/ws`
-2. On `open` → checks `sessionStorage` for stored session, attempts reconnect
-3. On `message` → parses JSON, maps snake_case → camelCase, dispatches action
-4. On `close` → sets `isConnected = false`
-
-### Auto-Reconnect on Page Refresh
-
-Session info (player name + room code) is stored in `sessionStorage`. On WebSocket open:
-- If the URL is `/game/*` or `/lobby/*` → sends `reconnect` message
-- Server restores full game state in the `reconnected` response
-- Works within the 120-second grace window
-
-### Snake-to-CamelCase Mapping
-
-All incoming payloads are recursively converted:
-```
-room_code → roomCode
-player_id → playerId
-is_host → isHost
-```
+---
 
 ## Component Details
 
 ### Canvas (`Canvas.tsx` + `useCanvas.ts`)
 
-The drawing system uses HTML5 Canvas with these features:
+- **High-Performance Streaming**: `requestAnimationFrame` 60 FPS batching with quadratic Bézier curve interpolation.
+- **Tool Suite**: Pen, Eraser, Highlighter, Flood Fill (BFS), Line, Rectangle, Circle.
+- **Geometric Snapping**: Holding `Shift` constrains rectangles to 1:1 squares, ellipses to circles, and lines to 45°/90° angles.
+- **Full Stroke Undo/Redo**: History records whole strokes and shapes rather than fragmented chunks; drawer echo prevention protects local action stacks.
+- **Coordinate Normalization**: Automatically compensates for CSS container scaling and display pixel ratios.
 
-- **Real-time streaming**: Each `mousemove` emits a 2-point stroke segment immediately (not batched)
-- **Coordinate scaling**: Accounts for CSS responsive scaling via `canvas.width / rect.width`
-- **Tools**: Pen, eraser (white stroke), fill (BFS flood-fill), clear
-- **Remote rendering**: `renderRemoteStroke()` and `renderRemoteFill()` handle incoming server events
-- **Permission gating**: All pointer handlers are no-ops when `isDrawer === false`
+### Spectator Banner & Host Approval (`Game.tsx`)
 
-### Chat (`Chat.tsx`)
+- **Spectator Banner**: Displays live spectating badge, allows requesting active player role (capped at 2 attempts per game), and provides request cancellation.
+- **Host Approval Banner**: Displays card-based prompts when new players join mid-game (Accept as Player / Accept as Spectator / Decline) or when spectators request promotion.
 
-- Scrollable message feed with auto-scroll on new messages
-- Input sends `guess` (for guessers) or `chat` (for drawer/lobby)
-- Input disabled when `hasGuessed === true`
-- Three message styles: `chat`, `correct_guess`, `system`
+### Vote-Kick System (`VoteKickBanner.tsx`)
 
-### RoundTransition (`RoundTransition.tsx`)
+- Interactive non-intrusive floating banner when a vote-kick is initiated.
+- Displays live vote tally, required threshold (majority of eligible players), and vote cast buttons.
 
-Animated overlay between rounds:
-1. Slides up from bottom (400ms)
-2. Pauses showing "Round N / M" (500ms)
-3. Slides up and out (400ms)
-4. Calls `onComplete` callback
+### Interactive Replay Modal (`GameOver.tsx`)
 
-### PlayerList (`PlayerList.tsx`)
+- Re-renders any completed round's artwork stroke-by-stroke using the saved `replayActions` vector stream.
+- Includes play/pause, scrub slider, and speed toggles (0.5x, 1x, 2x, 4x).
 
-Pure presentational component showing:
-- Player names
-- Scores
-- Host indicator (crown)
-- Connection status (connected/disconnected)
-- Guessed status (checkmark during turns)
-- Ready status (in lobby)
+---
 
-## Build & Serve
-
-### Development
+## Build & Test
 
 ```bash
-npm run dev    # Vite dev server with HMR + WS proxy
+# Development server
+npm run dev
+
+# TypeScript type check
+npx tsc --noEmit
+
+# Vitest test suite (151 tests)
+npm test
+
+# Prettier format check
+npm run format
 ```
-
-### Production Build
-
-```bash
-npm run build  # tsc --noEmit && vite build → dist/
-```
-
-Output goes to `frontend/dist/` which FastAPI serves as static files:
-- `/assets/*` → static JS/CSS bundles
-- `/*` → `index.html` (SPA catch-all for client-side routing)
-
-## Testing Approach
-
-All component tests use a mock `WebSocketContext` provider:
-
-```tsx
-// Test wrapper provides mock gameState and send function
-const mockSend = vi.fn();
-const wrapper = ({ children }) => (
-  <WebSocketContext.Provider value={{ gameState: mockState, send: mockSend, dispatch: vi.fn(), isConnected: true }}>
-    <MemoryRouter initialEntries={['/game/ABC123']}>
-      {children}
-    </MemoryRouter>
-  </WebSocketContext.Provider>
-);
-```
-
-This isolates components from the real WebSocket and lets tests verify:
-- Correct elements render based on state
-- User interactions call `send()` with correct message types
-- Navigation happens on phase transitions
