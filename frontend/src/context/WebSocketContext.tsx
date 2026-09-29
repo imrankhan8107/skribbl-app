@@ -576,10 +576,6 @@ export function gameReducer(state: GameState, action: Action): GameState {
       };
     }
 
-    case "RESET": {
-      return { ...initialGameState };
-    }
-
     default: {
       // Handle custom local actions
       const act = action as unknown as { type: string; payload: unknown };

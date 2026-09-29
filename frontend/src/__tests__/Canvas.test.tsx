@@ -416,5 +416,59 @@ describe("Canvas", () => {
       });
       expect(mockCtx.strokeRect).toHaveBeenCalled();
     });
+
+    it("renders shape snap toggle button when a shape tool is active and toggles snap", async () => {
+      const user = userEvent.setup();
+      renderCanvas(true);
+
+      // Initially on pen tool - snap button is not rendered
+      expect(screen.queryByTestId("shape-snap-btn")).not.toBeInTheDocument();
+
+      // Switch to rect tool
+      await user.click(screen.getByTestId("tool-rect"));
+      const snapBtn = screen.getByTestId("shape-snap-btn");
+      expect(snapBtn).toBeInTheDocument();
+      expect(snapBtn).toHaveTextContent(/Snap OFF/i);
+
+      // Click to toggle on
+      await user.click(snapBtn);
+      expect(snapBtn).toHaveTextContent(/Snap ON/i);
+      expect(screen.getByTestId("shape-snap-badge")).toBeInTheDocument();
+      expect(screen.getByTestId("shape-snap-badge")).toHaveTextContent(/1:1 Square/i);
+    });
+
+    it("snaps rectangle to perfect square when Shift key is held during mouseup", async () => {
+      const user = userEvent.setup();
+      const { send } = renderCanvas(true);
+      const canvas = screen.getByTestId("drawing-canvas");
+
+      // Mock getBoundingClientRect so getCanvasCoords returns 1:1 values
+      canvas.getBoundingClientRect = vi.fn(
+        () =>
+          ({
+            left: 0,
+            top: 0,
+            width: 800,
+            height: 600,
+            right: 800,
+            bottom: 600,
+          }) as DOMRect
+      );
+
+      await user.click(screen.getByTestId("tool-rect"));
+
+      fireEvent.mouseDown(canvas, { clientX: 100, clientY: 100 });
+      fireEvent.mouseMove(canvas, { clientX: 200, clientY: 150 }); // dx = 100, dy = 50
+      fireEvent.mouseUp(canvas, { clientX: 200, clientY: 150, shiftKey: true });
+
+      expect(send).toHaveBeenCalledWith(
+        "shape",
+        expect.objectContaining({
+          shapeType: "rect",
+          start: [100, 100],
+          end: [200, 200], // max side = 100, constrained to 100x100
+        })
+      );
+    });
   });
 });

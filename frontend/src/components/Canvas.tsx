@@ -77,6 +77,8 @@ export default function Canvas({
     redo,
     canUndo,
     canRedo,
+    isSnapActive,
+    setSnapToggled,
     renderRemoteStroke,
     renderRemoteHighlighter,
     renderRemoteShape,
@@ -267,6 +269,34 @@ export default function Canvas({
           />
         )}
         <FloatingReactions />
+        {isDrawer && isSnapActive && (tool === "line" || tool === "rect" || tool === "circle") && (
+          <div
+            data-testid="shape-snap-badge"
+            style={{
+              position: "absolute",
+              top: 8,
+              left: "50%",
+              transform: "translateX(-50%)",
+              backgroundColor: "rgba(30, 41, 59, 0.88)",
+              color: "#fff",
+              padding: "4px 12px",
+              borderRadius: 20,
+              fontSize: "12px",
+              fontWeight: 600,
+              pointerEvents: "none",
+              zIndex: 25,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <span>📐 Shape Snap:</span>
+            <span style={{ color: "#a5b4fc" }}>
+              {tool === "line" ? "45°/90° Straight" : tool === "rect" ? "1:1 Square" : "1:1 Circle"}
+            </span>
+          </div>
+        )}
         {showRoundTransition && roundInfo && (
           <RoundTransition
             round={roundInfo.round}
@@ -435,6 +465,32 @@ export default function Canvas({
               active={tool === "circle"}
               onClick={() => setTool("circle")}
             />
+            {(tool === "line" || tool === "rect" || tool === "circle") && (
+              <button
+                type="button"
+                aria-label="Toggle shape snap constraint"
+                data-testid="shape-snap-btn"
+                onClick={() => setSnapToggled((prev) => !prev)}
+                style={{
+                  padding: "4px 8px",
+                  fontSize: "12px",
+                  border: isSnapActive ? "2px solid #6366f1" : "1px solid #ccc",
+                  backgroundColor: isSnapActive ? "#e0e7ff" : "transparent",
+                  color: isSnapActive ? "#4338ca" : "inherit",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  fontWeight: isSnapActive ? "bold" : "normal",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  margin: "2px",
+                }}
+                title="Hold Shift or click to snap perfect circles, squares, and 45°/90° straight lines"
+              >
+                <span>{isSnapActive ? "🔒" : "🔓"}</span>
+                <span>Snap {isSnapActive ? "ON" : "OFF"} (Shift)</span>
+              </button>
+            )}
           </div>
 
           {/* Undo / Redo Buttons */}

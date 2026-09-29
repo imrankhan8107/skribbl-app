@@ -9,6 +9,7 @@ export type DrawingTool = "pen" | "highlighter" | "eraser" | "fill" | "line" | "
 export type BrushSize = "xs" | "small" | "medium" | "large" | "xl";
 
 import type { DrawingAction } from "../types";
+import { getConstrainedEnd, type ConstrainableShape } from "../utils/shapeSnap";
 export type { DrawingAction };
 
 export interface UseCanvasReturn {
@@ -23,6 +24,9 @@ export interface UseCanvasReturn {
   redo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  isSnapActive: boolean;
+  snapToggled: boolean;
+  setSnapToggled: (val: boolean | ((prev: boolean) => boolean)) => void;
   renderRemoteStroke: (stroke: { points: [number, number][]; color: string; size: number }) => void;
   renderRemoteHighlighter: (highlighter: {
     points: [number, number][];
@@ -70,6 +74,8 @@ export function useCanvas(
   const [tool, setTool] = useState<DrawingTool>("pen");
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+  const [isShiftPressed, setIsShiftPressed] = useState(false);
+  const [snapToggled, setSnapToggled] = useState(false);
 
   // Drawing state (mutable refs to avoid re-renders on each event)
   const isDrawingRef = useRef(false);
@@ -78,6 +84,9 @@ export function useCanvas(
   // Shape dragging preview state
   const shapeStartRef = useRef<[number, number] | null>(null);
   const shapeSnapshotRef = useRef<ImageData | null>(null);
+  const lastCoordsRef = useRef<[number, number] | null>(null);
+  const isShiftPressedRef = useRef(false);
+  const snapToggledRef = useRef(false);
 
   // Action history for undo/redo
   const actionHistoryRef = useRef<DrawingAction[]>([]);
@@ -97,6 +106,9 @@ export function useCanvas(
   useEffect(() => {
     toolRef.current = tool;
   }, [tool]);
+  useEffect(() => {
+    snapToggledRef.current = snapToggled;
+  }, [snapToggled]);
 
   // Reset undo/redo when drawer role changes
   useEffect(() => {
@@ -262,6 +274,36 @@ export function useCanvas(
       ctx.restore();
     },
     [getCtx]
+  );
+
+  // ---------------------------------------------------------------------------
+  // Update Shape Preview (used during mouse/touch move and Shift key toggle)
+  // ---------------------------------------------------------------------------
+  const updateShapePreview = useCallback(
+    (currentPos: [number, number], snapped: boolean) => {
+      if (!shapeStartRef.current) return;
+      const ctx = getCtx();
+      const canvas = canvasRef.current;
+      if (!ctx || !canvas) return;
+      if (shapeSnapshotRef.current) {
+        ctx.putImageData(shapeSnapshotRef.current, 0, 0);
+      }
+      const currentTool = toolRef.current;
+      const strokeColor = colorRef.current;
+      const size = BRUSH_SIZES[brushSizeRef.current];
+      const end = snapped
+        ? getConstrainedEnd(shapeStartRef.current, currentPos, currentTool as ConstrainableShape)
+        : currentPos;
+
+      if (currentTool === "line") {
+        drawLine(shapeStartRef.current, end, strokeColor, size);
+      } else if (currentTool === "rect") {
+        drawRect(shapeStartRef.current, end, strokeColor, size);
+      } else if (currentTool === "circle") {
+        drawCircle(shapeStartRef.current, end, strokeColor, size);
+      }
+    },
+    [getCtx, canvasRef, drawLine, drawRect, drawCircle]
   );
 
   // ---------------------------------------------------------------------------
@@ -567,6 +609,20 @@ export function useCanvas(
         return;
       }
 
+      if (e.key === "Shift") {
+        isShiftPressedRef.current = true;
+        setIsShiftPressed(true);
+        if (
+          isDrawingRef.current &&
+          (toolRef.current === "line" ||
+            toolRef.current === "rect" ||
+            toolRef.current === "circle") &&
+          lastCoordsRef.current
+        ) {
+          updateShapePreview(lastCoordsRef.current, true);
+        }
+      }
+
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
         e.preventDefault();
         undo();
@@ -607,11 +663,29 @@ export function useCanvas(
       }
     };
 
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Shift") {
+        isShiftPressedRef.current = false;
+        setIsShiftPressed(false);
+        if (
+          isDrawingRef.current &&
+          (toolRef.current === "line" ||
+            toolRef.current === "rect" ||
+            toolRef.current === "circle") &&
+          lastCoordsRef.current
+        ) {
+          updateShapePreview(lastCoordsRef.current, snapToggledRef.current);
+        }
+      }
+    };
+
     window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [isDrawer, undo, redo, clearCanvas, send]);
+  }, [isDrawer, undo, redo, clearCanvas, send, updateShapePreview]);
 
   // ---------------------------------------------------------------------------
   // Pointer event handlers (attached only when isDrawer is true)
@@ -623,9 +697,10 @@ export function useCanvas(
     const handlePointerDown = (e: MouseEvent) => {
       e.preventDefault();
       const currentTool = toolRef.current;
+      const [x, y] = getCanvasCoords(e);
+      lastCoordsRef.current = [x, y];
 
       if (currentTool === "fill") {
-        const [x, y] = getCanvasCoords(e);
         const fillColor = colorRef.current;
         floodFill(x, y, fillColor);
         send("fill", { x, y, color: fillColor });
@@ -638,7 +713,6 @@ export function useCanvas(
 
       if (currentTool === "line" || currentTool === "rect" || currentTool === "circle") {
         isDrawingRef.current = true;
-        const [x, y] = getCanvasCoords(e);
         shapeStartRef.current = [x, y];
         const ctx = getCtx();
         if (ctx && canvas) {
@@ -652,7 +726,6 @@ export function useCanvas(
       }
 
       isDrawingRef.current = true;
-      const [x, y] = getCanvasCoords(e);
       pointsRef.current = [[x, y]];
 
       const strokeColor = currentTool === "eraser" ? CANVAS_BG : colorRef.current;
@@ -672,23 +745,11 @@ export function useCanvas(
       e.preventDefault();
       const currentTool = toolRef.current;
       const [x, y] = getCanvasCoords(e);
+      lastCoordsRef.current = [x, y];
 
       if (currentTool === "line" || currentTool === "rect" || currentTool === "circle") {
-        if (!shapeStartRef.current) return;
-        const ctx = getCtx();
-        if (!ctx || !canvas) return;
-        if (shapeSnapshotRef.current) {
-          ctx.putImageData(shapeSnapshotRef.current, 0, 0);
-        }
-        const strokeColor = colorRef.current;
-        const size = BRUSH_SIZES[brushSizeRef.current];
-        if (currentTool === "line") {
-          drawLine(shapeStartRef.current, [x, y], strokeColor, size);
-        } else if (currentTool === "rect") {
-          drawRect(shapeStartRef.current, [x, y], strokeColor, size);
-        } else if (currentTool === "circle") {
-          drawCircle(shapeStartRef.current, [x, y], strokeColor, size);
-        }
+        const isSnapped = e.shiftKey || isShiftPressedRef.current || snapToggledRef.current;
+        updateShapePreview([x, y], isSnapped);
         return;
       }
 
@@ -726,12 +787,19 @@ export function useCanvas(
       isDrawingRef.current = false;
 
       const currentTool = toolRef.current;
-      const [x, y] = getCanvasCoords(e);
+      const [rawX, rawY] = getCanvasCoords(e);
+      const coords: [number, number] =
+        e.clientX === 0 && e.clientY === 0 && lastCoordsRef.current
+          ? lastCoordsRef.current
+          : [rawX, rawY];
 
       if (currentTool === "line" || currentTool === "rect" || currentTool === "circle") {
         if (shapeStartRef.current) {
           const start = shapeStartRef.current;
-          const end: [number, number] = [x, y];
+          const isSnapped = e.shiftKey || isShiftPressedRef.current || snapToggledRef.current;
+          const end: [number, number] = isSnapped
+            ? getConstrainedEnd(start, coords, currentTool as ConstrainableShape)
+            : coords;
           const strokeColor = colorRef.current;
           const size = BRUSH_SIZES[brushSizeRef.current];
           const ctx = getCtx();
@@ -766,6 +834,7 @@ export function useCanvas(
         }
         shapeStartRef.current = null;
         shapeSnapshotRef.current = null;
+        lastCoordsRef.current = null;
         return;
       }
 
@@ -871,6 +940,7 @@ export function useCanvas(
     drawLine,
     drawRect,
     drawCircle,
+    updateShapePreview,
     send,
   ]);
 
@@ -886,6 +956,9 @@ export function useCanvas(
     redo,
     canUndo,
     canRedo,
+    isSnapActive: isShiftPressed || snapToggled,
+    snapToggled,
+    setSnapToggled,
     renderRemoteStroke,
     renderRemoteHighlighter,
     renderRemoteShape,
