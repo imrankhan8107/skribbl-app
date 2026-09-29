@@ -97,6 +97,14 @@ export function useCanvas(
   const brushSizeRef = useRef(brushSize);
   const toolRef = useRef(tool);
 
+  // 60 FPS (16ms) Stroke Point Batching
+  // Avoids blasting 120-140 WebSocket messages/sec over high-latency networks.
+  // Batches intermediate points into clean 60fps chunks while keeping local
+  // drawing completely instant.
+  const pendingStrokePointsRef = useRef<[number, number][]>([]);
+  const lastDispatchedPointRef = useRef<[number, number] | null>(null);
+  const strokeBatchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     colorRef.current = color;
   }, [color]);
@@ -160,12 +168,31 @@ export function useCanvas(
 
       ctx.beginPath();
       ctx.moveTo(points[0][0], points[0][1]);
-      for (let i = 1; i < points.length; i++) {
-        ctx.lineTo(points[i][0], points[i][1]);
-      }
       if (points.length === 1) {
         // Single dot
         ctx.lineTo(points[0][0] + 0.1, points[0][1] + 0.1);
+      } else if (points.length === 2) {
+        ctx.lineTo(points[1][0], points[1][1]);
+      } else {
+        // Quadratic Bézier curve smoothing through midpoints
+        let p1 = points[0];
+        let p2 = points[1];
+        let midX = (p1[0] + p2[0]) / 2;
+        let midY = (p1[1] + p2[1]) / 2;
+        ctx.lineTo(midX, midY);
+
+        for (let i = 1; i < points.length - 1; i++) {
+          p1 = points[i];
+          p2 = points[i + 1];
+          const nextMidX = (p1[0] + p2[0]) / 2;
+          const nextMidY = (p1[1] + p2[1]) / 2;
+          if (typeof ctx.quadraticCurveTo === "function") {
+            ctx.quadraticCurveTo(p1[0], p1[1], nextMidX, nextMidY);
+          } else {
+            ctx.lineTo(p1[0], p1[1]);
+          }
+        }
+        ctx.lineTo(points[points.length - 1][0], points[points.length - 1][1]);
       }
       ctx.stroke();
     },
@@ -189,11 +216,29 @@ export function useCanvas(
 
       ctx.beginPath();
       ctx.moveTo(points[0][0], points[0][1]);
-      for (let i = 1; i < points.length; i++) {
-        ctx.lineTo(points[i][0], points[i][1]);
-      }
       if (points.length === 1) {
         ctx.lineTo(points[0][0] + 0.1, points[0][1] + 0.1);
+      } else if (points.length === 2) {
+        ctx.lineTo(points[1][0], points[1][1]);
+      } else {
+        let p1 = points[0];
+        let p2 = points[1];
+        let midX = (p1[0] + p2[0]) / 2;
+        let midY = (p1[1] + p2[1]) / 2;
+        ctx.lineTo(midX, midY);
+
+        for (let i = 1; i < points.length - 1; i++) {
+          p1 = points[i];
+          p2 = points[i + 1];
+          const nextMidX = (p1[0] + p2[0]) / 2;
+          const nextMidY = (p1[1] + p2[1]) / 2;
+          if (typeof ctx.quadraticCurveTo === "function") {
+            ctx.quadraticCurveTo(p1[0], p1[1], nextMidX, nextMidY);
+          } else {
+            ctx.lineTo(p1[0], p1[1]);
+          }
+        }
+        ctx.lineTo(points[points.length - 1][0], points[points.length - 1][1]);
       }
       ctx.stroke();
       ctx.restore();
@@ -694,6 +739,36 @@ export function useCanvas(
     const canvas = canvasRef.current;
     if (!canvas || !isDrawer) return;
 
+    const flushPendingStrokePoints = () => {
+      if (strokeBatchTimerRef.current !== null) {
+        clearTimeout(strokeBatchTimerRef.current);
+        strokeBatchTimerRef.current = null;
+      }
+
+      if (pendingStrokePointsRef.current.length === 0) return;
+
+      const currentTool = toolRef.current;
+      if (currentTool !== "pen" && currentTool !== "eraser" && currentTool !== "highlighter") {
+        pendingStrokePointsRef.current = [];
+        return;
+      }
+
+      const strokeColor = currentTool === "eraser" ? CANVAS_BG : colorRef.current;
+      const size = BRUSH_SIZES[brushSizeRef.current];
+
+      // Ensure the batch seamlessly connects with the previous point
+      const batchPoints: [number, number][] = lastDispatchedPointRef.current
+        ? [lastDispatchedPointRef.current, ...pendingStrokePointsRef.current]
+        : [...pendingStrokePointsRef.current];
+
+      lastDispatchedPointRef.current =
+        pendingStrokePointsRef.current[pendingStrokePointsRef.current.length - 1];
+      pendingStrokePointsRef.current = [];
+
+      const msgType = currentTool === "highlighter" ? "highlighter" : "stroke";
+      send(msgType, { points: batchPoints, color: strokeColor, size });
+    };
+
     const handlePointerDown = (e: MouseEvent) => {
       e.preventDefault();
       const currentTool = toolRef.current;
@@ -727,6 +802,12 @@ export function useCanvas(
 
       isDrawingRef.current = true;
       pointsRef.current = [[x, y]];
+      lastDispatchedPointRef.current = [x, y];
+      pendingStrokePointsRef.current = [];
+      if (strokeBatchTimerRef.current !== null) {
+        clearTimeout(strokeBatchTimerRef.current);
+        strokeBatchTimerRef.current = null;
+      }
 
       const strokeColor = currentTool === "eraser" ? CANVAS_BG : colorRef.current;
       const size = BRUSH_SIZES[brushSizeRef.current];
@@ -758,26 +839,23 @@ export function useCanvas(
       const size = BRUSH_SIZES[brushSizeRef.current];
       const points = pointsRef.current;
 
-      if (currentTool === "highlighter") {
-        if (points.length >= 2) {
-          const seg: [number, number][] = [points[points.length - 2], points[points.length - 1]];
+      // 1. Draw intermediate stroke locally for 0ms instantaneous visual feedback
+      if (points.length >= 2) {
+        const seg: [number, number][] = [points[points.length - 2], points[points.length - 1]];
+        if (currentTool === "highlighter") {
           drawHighlighter(seg, strokeColor, size);
-          send("highlighter", {
-            points: seg,
-            color: strokeColor,
-            size,
-          });
+        } else {
+          drawStroke(seg, strokeColor, size);
         }
-      } else {
-        // Draw intermediate stroke for immediate visual feedback
-        if (points.length >= 2) {
-          drawStroke([points[points.length - 2], points[points.length - 1]], strokeColor, size);
-          send("stroke", {
-            points: [points[points.length - 2], points[points.length - 1]],
-            color: strokeColor,
-            size,
-          });
-        }
+      }
+
+      // 2. Queue point for 16ms (60 FPS) network batching
+      pendingStrokePointsRef.current.push([x, y]);
+      if (strokeBatchTimerRef.current === null) {
+        strokeBatchTimerRef.current = setTimeout(() => {
+          strokeBatchTimerRef.current = null;
+          flushPendingStrokePoints();
+        }, 16);
       }
     };
 
@@ -785,6 +863,17 @@ export function useCanvas(
       if (!isDrawingRef.current) return;
       e.preventDefault();
       isDrawingRef.current = false;
+
+      // Flush any queued points over WebSocket immediately on release
+      if (strokeBatchTimerRef.current !== null) {
+        clearTimeout(strokeBatchTimerRef.current);
+        strokeBatchTimerRef.current = null;
+      }
+      if (pendingStrokePointsRef.current.length > 0) {
+        flushPendingStrokePoints();
+      }
+      lastDispatchedPointRef.current = null;
+      pendingStrokePointsRef.current = [];
 
       const currentTool = toolRef.current;
       const [rawX, rawY] = getCanvasCoords(e);
@@ -921,6 +1010,10 @@ export function useCanvas(
     canvas.addEventListener("touchend", handleTouchEnd);
 
     return () => {
+      if (strokeBatchTimerRef.current !== null) {
+        clearTimeout(strokeBatchTimerRef.current);
+        strokeBatchTimerRef.current = null;
+      }
       canvas.removeEventListener("mousedown", handlePointerDown);
       canvas.removeEventListener("mousemove", handlePointerMove);
       canvas.removeEventListener("mouseup", handlePointerUp);

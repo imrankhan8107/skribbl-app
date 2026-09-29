@@ -34,11 +34,29 @@ function drawReplayStroke(
 
   ctx.beginPath();
   ctx.moveTo(points[0][0], points[0][1]);
-  for (let i = 1; i < points.length; i++) {
-    ctx.lineTo(points[i][0], points[i][1]);
-  }
   if (points.length === 1) {
     ctx.lineTo(points[0][0] + 0.1, points[0][1] + 0.1);
+  } else if (points.length === 2) {
+    ctx.lineTo(points[1][0], points[1][1]);
+  } else {
+    let p1 = points[0];
+    let p2 = points[1];
+    let midX = (p1[0] + p2[0]) / 2;
+    let midY = (p1[1] + p2[1]) / 2;
+    ctx.lineTo(midX, midY);
+
+    for (let i = 1; i < points.length - 1; i++) {
+      p1 = points[i];
+      p2 = points[i + 1];
+      const nextMidX = (p1[0] + p2[0]) / 2;
+      const nextMidY = (p1[1] + p2[1]) / 2;
+      if (typeof ctx.quadraticCurveTo === "function") {
+        ctx.quadraticCurveTo(p1[0], p1[1], nextMidX, nextMidY);
+      } else {
+        ctx.lineTo(p1[0], p1[1]);
+      }
+    }
+    ctx.lineTo(points[points.length - 1][0], points[points.length - 1][1]);
   }
   ctx.stroke();
 }
@@ -59,11 +77,29 @@ function drawReplayHighlighter(
 
   ctx.beginPath();
   ctx.moveTo(points[0][0], points[0][1]);
-  for (let i = 1; i < points.length; i++) {
-    ctx.lineTo(points[i][0], points[i][1]);
-  }
   if (points.length === 1) {
     ctx.lineTo(points[0][0] + 0.1, points[0][1] + 0.1);
+  } else if (points.length === 2) {
+    ctx.lineTo(points[1][0], points[1][1]);
+  } else {
+    let p1 = points[0];
+    let p2 = points[1];
+    let midX = (p1[0] + p2[0]) / 2;
+    let midY = (p1[1] + p2[1]) / 2;
+    ctx.lineTo(midX, midY);
+
+    for (let i = 1; i < points.length - 1; i++) {
+      p1 = points[i];
+      p2 = points[i + 1];
+      const nextMidX = (p1[0] + p2[0]) / 2;
+      const nextMidY = (p1[1] + p2[1]) / 2;
+      if (typeof ctx.quadraticCurveTo === "function") {
+        ctx.quadraticCurveTo(p1[0], p1[1], nextMidX, nextMidY);
+      } else {
+        ctx.lineTo(p1[0], p1[1]);
+      }
+    }
+    ctx.lineTo(points[points.length - 1][0], points[points.length - 1][1]);
   }
   ctx.stroke();
   ctx.restore();
