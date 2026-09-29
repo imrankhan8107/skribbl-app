@@ -37,6 +37,7 @@ const initialState: GameState = {
   joinRequestPending: false,
   pendingJoinRequestId: null,
   pendingJoinRequests: [],
+  activeVoteKick: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -732,6 +733,100 @@ describe("gameReducer", () => {
       const next = gameReducer(stateWithReq, action);
       expect(next.joinRequestPending).toBe(false);
       expect(next.pendingJoinRequestId).toBeNull();
+    });
+  });
+
+  describe("VOTE_KICK", () => {
+    it("handles VOTE_KICK_STARTED", () => {
+      const state: GameState = { ...initialState, localPlayerId: "p2" };
+      const action: Action = {
+        type: "VOTE_KICK_STARTED",
+        payload: {
+          initiator_id: "p1",
+          initiator_name: "Alice",
+          target_id: "p3",
+          target_name: "Charlie",
+          current_votes: 1,
+          required_votes: 2,
+          timeout_seconds: 30,
+        },
+      };
+      const next = gameReducer(state, action);
+      expect(next.activeVoteKick).toEqual({
+        targetId: "p3",
+        targetName: "Charlie",
+        initiatorId: "p1",
+        initiatorName: "Alice",
+        currentVotes: 1,
+        requiredVotes: 2,
+        timeoutSeconds: 30,
+        hasVoted: false,
+      });
+    });
+
+    it("marks hasVoted true if local player is initiator", () => {
+      const state: GameState = { ...initialState, localPlayerId: "p1" };
+      const action: Action = {
+        type: "VOTE_KICK_STARTED",
+        payload: {
+          initiator_id: "p1",
+          initiator_name: "Alice",
+          target_id: "p3",
+          target_name: "Charlie",
+          current_votes: 1,
+          required_votes: 2,
+          timeout_seconds: 30,
+        },
+      };
+      const next = gameReducer(state, action);
+      expect(next.activeVoteKick?.hasVoted).toBe(true);
+    });
+
+    it("handles VOTE_KICK_UPDATED", () => {
+      const state: GameState = {
+        ...initialState,
+        activeVoteKick: {
+          targetId: "p3",
+          targetName: "Charlie",
+          initiatorId: "p1",
+          initiatorName: "Alice",
+          currentVotes: 1,
+          requiredVotes: 2,
+          timeoutSeconds: 30,
+          hasVoted: false,
+        },
+      };
+      const action: Action = {
+        type: "VOTE_KICK_UPDATED",
+        payload: {
+          current_votes: 2,
+          required_votes: 2,
+        },
+      };
+      const next = gameReducer(state, action);
+      expect(next.activeVoteKick?.currentVotes).toBe(2);
+    });
+
+    it("handles VOTE_KICK_ENDED", () => {
+      const state: GameState = {
+        ...initialState,
+        activeVoteKick: {
+          targetId: "p3",
+          targetName: "Charlie",
+          initiatorId: "p1",
+          initiatorName: "Alice",
+          currentVotes: 2,
+          requiredVotes: 2,
+          timeoutSeconds: 30,
+          hasVoted: true,
+        },
+      };
+      const action: Action = {
+        type: "VOTE_KICK_ENDED",
+        payload: { target_id: "p3", result: "passed" },
+      };
+      const next = gameReducer(state, action);
+      expect(next.activeVoteKick).toBeNull();
     });
   });
 });

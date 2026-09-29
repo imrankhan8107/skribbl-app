@@ -46,6 +46,7 @@ const initialGameState: GameState = {
   joinRequestPending: false,
   pendingJoinRequestId: null,
   pendingJoinRequests: [],
+  activeVoteKick: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -576,6 +577,57 @@ export function gameReducer(state: GameState, action: Action): GameState {
       };
     }
 
+    case "VOTE_KICK_STARTED": {
+      const p = action.payload as unknown as Record<string, unknown>;
+      const initiatorId = (p.initiatorId ?? p.initiator_id) as string;
+      const targetId = (p.targetId ?? p.target_id) as string;
+      const targetName = (p.targetName ?? p.target_name) as string;
+      const initiatorName = (p.initiatorName ?? p.initiator_name) as string;
+      const currentVotes = (p.currentVotes ?? p.current_votes ?? 1) as number;
+      const requiredVotes = (p.requiredVotes ?? p.required_votes ?? 2) as number;
+      const timeoutSeconds = (p.timeoutSeconds ?? p.timeout_seconds ?? 30) as number;
+      const hasVoted = initiatorId === state.localPlayerId;
+      return {
+        ...state,
+        activeVoteKick: {
+          targetId,
+          targetName,
+          initiatorId,
+          initiatorName,
+          currentVotes,
+          requiredVotes,
+          timeoutSeconds,
+          hasVoted,
+        },
+      };
+    }
+
+    case "VOTE_KICK_UPDATED": {
+      if (!state.activeVoteKick) return state;
+      const p = action.payload as unknown as Record<string, unknown>;
+      const currentVotes = (p.currentVotes ??
+        p.current_votes ??
+        state.activeVoteKick.currentVotes) as number;
+      const requiredVotes = (p.requiredVotes ??
+        p.required_votes ??
+        state.activeVoteKick.requiredVotes) as number;
+      return {
+        ...state,
+        activeVoteKick: {
+          ...state.activeVoteKick,
+          currentVotes,
+          requiredVotes,
+        },
+      };
+    }
+
+    case "VOTE_KICK_ENDED": {
+      return {
+        ...state,
+        activeVoteKick: null,
+      };
+    }
+
     default: {
       // Handle custom local actions
       const act = action as unknown as { type: string; payload: unknown };
@@ -649,6 +701,8 @@ export interface WebSocketContextValue {
   send: (type: string, payload?: unknown) => void;
   dispatch: React.Dispatch<Action>;
   isConnected: boolean;
+  mutedPlayerIds: Set<string>;
+  toggleMutePlayer: (playerId: string) => void;
 }
 
 export const WebSocketContext = createContext<WebSocketContextValue>({
@@ -656,6 +710,8 @@ export const WebSocketContext = createContext<WebSocketContextValue>({
   send: () => {},
   dispatch: () => {},
   isConnected: false,
+  mutedPlayerIds: new Set(),
+  toggleMutePlayer: () => {},
 });
 
 // ---------------------------------------------------------------------------
@@ -692,6 +748,9 @@ function mapServerTypeToActionType(serverType: string): Action["type"] | null {
     join_request_received: "JOIN_REQUEST_RECEIVED",
     join_request_resolved: "JOIN_REQUEST_RESOLVED",
     join_request_declined: "JOIN_REQUEST_DECLINED",
+    vote_kick_started: "VOTE_KICK_STARTED",
+    vote_kick_updated: "VOTE_KICK_UPDATED",
+    vote_kick_ended: "VOTE_KICK_ENDED",
     error: "ERROR",
   };
   return mapping[serverType] ?? null;
@@ -728,6 +787,20 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const gameStateRef = useRef(gameState);
   gameStateRef.current = gameState;
   const [isConnected, setIsConnected] = useState(false);
+  const [mutedPlayerIds, setMutedPlayerIds] = useState<Set<string>>(() => new Set());
+
+  const toggleMutePlayer = useCallback((playerId: string) => {
+    setMutedPlayerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(playerId)) {
+        next.delete(playerId);
+      } else {
+        next.add(playerId);
+      }
+      return next;
+    });
+  }, []);
+
   // Bumping this nonce forces the connection effect to tear down the current
   // socket and reconnect — used to follow a room-sticky redirect.
   const [reconnectNonce, setReconnectNonce] = useState(0);
@@ -1000,7 +1073,16 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   }, [reconnectNonce]);
 
   return (
-    <WebSocketContext.Provider value={{ gameState, dispatch, send, isConnected }}>
+    <WebSocketContext.Provider
+      value={{
+        gameState,
+        dispatch,
+        send,
+        isConnected,
+        mutedPlayerIds,
+        toggleMutePlayer,
+      }}
+    >
       {children}
     </WebSocketContext.Provider>
   );

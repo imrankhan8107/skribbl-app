@@ -1011,5 +1011,88 @@ class TestPrivateRooms:
         assert clear_res["payload"]["config"]["is_private"] is False
 
 
+class TestVoteKick:
+    """Tests for Vote-to-Kick functionality."""
+
+    async def test_start_vote_kick_requires_at_least_3_players(self, manager):
+        ws1, ws2 = make_mock_ws(), make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        p1 = res1["payload"]["player_id"]
+        room_code = res1["payload"]["room_code"]
+
+        res2 = await manager.join_room("Bob", room_code, ws2)
+        p2 = res2["payload"]["player_id"]
+
+        # Only 2 players connected
+        kick_res = await manager.start_vote_kick(p1, p2)
+        assert kick_res["type"] == "error"
+        assert kick_res["payload"]["code"] == "NOT_ENOUGH_PLAYERS"
+
+    async def test_start_vote_kick_cannot_target_self(self, manager):
+        ws1, ws2, ws3 = make_mock_ws(), make_mock_ws(), make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        p1 = res1["payload"]["player_id"]
+        room_code = res1["payload"]["room_code"]
+        await manager.join_room("Bob", room_code, ws2)
+        await manager.join_room("Charlie", room_code, ws3)
+
+        kick_res = await manager.start_vote_kick(p1, p1)
+        assert kick_res["type"] == "error"
+        assert kick_res["payload"]["code"] == "INVALID_TARGET"
+
+    async def test_vote_kick_majority_kicks_player(self, manager):
+        ws1, ws2, ws3 = make_mock_ws(), make_mock_ws(), make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        p1 = res1["payload"]["player_id"]
+        room_code = res1["payload"]["room_code"]
+        res2 = await manager.join_room("Bob", room_code, ws2)
+        p2 = res2["payload"]["player_id"]
+        res3 = await manager.join_room("Charlie", room_code, ws3)
+        p3 = res3["payload"]["player_id"]
+
+        # Alice starts vote to kick Bob (Charlie & Alice eligible, need 2 votes)
+        res_start = await manager.start_vote_kick(p1, p2)
+        assert res_start["type"] == "vote_kick_started"
+        assert res_start["payload"]["current_votes"] == 1
+        assert res_start["payload"]["required_votes"] == 2
+
+        # Target (Bob) cannot vote
+        bob_vote = await manager.cast_vote_kick(p2, True)
+        assert bob_vote["type"] == "error"
+        assert bob_vote["payload"]["code"] == "INVALID_VOTER"
+
+        # Charlie votes yes -> majority reached -> Bob is kicked!
+        charlie_vote = await manager.cast_vote_kick(p3, True)
+        assert charlie_vote["type"] == "vote_kick_updated"
+        assert charlie_vote["payload"]["result"] == "passed"
+
+        # Check Bob is removed from room
+        room = manager.rooms[room_code]
+        assert room.get_player(p2) is None
+        assert len(room.players) == 2
+
+    async def test_vote_kick_can_kick_host_and_reassigns_host(self, manager):
+        ws1, ws2, ws3 = make_mock_ws(), make_mock_ws(), make_mock_ws()
+        res1 = await manager.create_room("HostAlice", ws1)
+        p1 = res1["payload"]["player_id"]
+        room_code = res1["payload"]["room_code"]
+        res2 = await manager.join_room("Bob", room_code, ws2)
+        p2 = res2["payload"]["player_id"]
+        res3 = await manager.join_room("Charlie", room_code, ws3)
+        p3 = res3["payload"]["player_id"]
+
+        room = manager.rooms[room_code]
+        assert room.host_id == p1
+
+        # Bob initiates vote to kick AFK host Alice
+        await manager.start_vote_kick(p2, p1)
+        # Charlie votes yes
+        await manager.cast_vote_kick(p3, True)
+
+        # Alice is kicked and room host is reassigned
+        assert room.get_player(p1) is None
+        assert room.host_id in (p2, p3)
+
+
 
 

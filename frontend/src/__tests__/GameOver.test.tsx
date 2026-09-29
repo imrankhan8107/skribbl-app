@@ -73,6 +73,8 @@ function renderGameOver(overrides: Partial<WebSocketContextValue> = {}) {
     send,
     dispatch: vi.fn(),
     isConnected: true,
+    mutedPlayerIds: new Set(),
+    toggleMutePlayer: vi.fn(),
     ...overrides,
   };
 

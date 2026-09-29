@@ -111,6 +111,8 @@ function renderGame(overrides: Partial<GameState> = {}) {
     send,
     dispatch,
     isConnected: true,
+    mutedPlayerIds: new Set(),
+    toggleMutePlayer: vi.fn(),
   };
 
   const utils = render(

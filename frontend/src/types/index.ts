@@ -83,6 +83,17 @@ export interface JoinRequest {
   roomCode: string;
 }
 
+export interface ActiveVoteKick {
+  targetId: string;
+  targetName: string;
+  initiatorId: string;
+  initiatorName: string;
+  currentVotes: number;
+  requiredVotes: number;
+  timeoutSeconds?: number;
+  hasVoted?: boolean;
+}
+
 export interface GameState {
   phase: GamePhase;
   roomCode: string | null;
@@ -114,6 +125,7 @@ export interface GameState {
   joinRequestPending?: boolean;
   pendingJoinRequestId?: string | null;
   pendingJoinRequests?: JoinRequest[];
+  activeVoteKick?: ActiveVoteKick | null;
 }
 
 export interface ChatMessage {
@@ -229,5 +241,35 @@ export type Action =
       payload: { requestId?: string; reason?: string; message: string };
     }
   | { type: "CANCEL_JOIN_REQUEST" }
+  | {
+      type: "VOTE_KICK_STARTED";
+      payload: {
+        target_id: string;
+        target_name: string;
+        initiator_id: string;
+        initiator_name: string;
+        current_votes: number;
+        required_votes: number;
+        timeout_seconds?: number;
+      };
+    }
+  | {
+      type: "VOTE_KICK_UPDATED";
+      payload: {
+        target_id?: string;
+        current_votes: number;
+        required_votes: number;
+        result?: string;
+      };
+    }
+  | {
+      type: "VOTE_KICK_ENDED";
+      payload: {
+        target_id: string;
+        target_name?: string;
+        result: string;
+        message?: string;
+      };
+    }
   | { type: "TICK" }
   | { type: "RESET" };

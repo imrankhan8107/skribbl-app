@@ -7,6 +7,10 @@ interface PlayerListProps {
   localPlayerId?: string | null;
   drawerId?: string | null;
   typingUsers?: Record<string, boolean>;
+  mutedPlayerIds?: Set<string>;
+  onToggleMute?: (playerId: string) => void;
+  onVoteKick?: (playerId: string) => void;
+  canVoteKick?: boolean;
   onKick?: (playerId: string) => void;
   onTransferHost?: (playerId: string) => void;
   onEditProfile?: () => void;
@@ -23,6 +27,10 @@ export default function PlayerList({
   localPlayerId = null,
   drawerId = null,
   typingUsers,
+  mutedPlayerIds,
+  onToggleMute,
+  onVoteKick,
+  canVoteKick = true,
   onKick,
   onTransferHost,
   onEditProfile,
@@ -157,6 +165,50 @@ export default function PlayerList({
                 aria-label={`Kick ${player.name}`}
               >
                 ✕
+              </button>
+            )}
+            {!isLocal && onToggleMute && (
+              <button
+                type="button"
+                className="player-mute-btn"
+                onClick={() => onToggleMute(player.id)}
+                title={
+                  mutedPlayerIds?.has(player.id) ? `Unmute ${player.name}` : `Mute ${player.name}`
+                }
+                aria-label={
+                  mutedPlayerIds?.has(player.id) ? `Unmute ${player.name}` : `Mute ${player.name}`
+                }
+                data-testid={`mute-player-${player.id}`}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "2px 4px",
+                  fontSize: "13px",
+                  opacity: mutedPlayerIds?.has(player.id) ? 1 : 0.6,
+                }}
+              >
+                {mutedPlayerIds?.has(player.id) ? "🔇" : "🔊"}
+              </button>
+            )}
+            {!isLocal && player.isConnected && canVoteKick && onVoteKick && (
+              <button
+                type="button"
+                className="player-vote-kick-btn"
+                onClick={() => onVoteKick(player.id)}
+                title={`Vote to kick ${player.name}`}
+                aria-label={`Vote to kick ${player.name}`}
+                data-testid={`vote-kick-${player.id}`}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "2px 4px",
+                  fontSize: "13px",
+                  opacity: 0.8,
+                }}
+              >
+                🗳️
               </button>
             )}
             <span className="player-score" data-testid="player-score">

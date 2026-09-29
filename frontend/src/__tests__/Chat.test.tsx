@@ -33,7 +33,10 @@ const defaultGameState: GameState = {
   reconnectCountdown: 0,
 };
 
-function renderChat(overrides: Partial<GameState> = {}) {
+function renderChat(
+  overrides: Partial<GameState> = {},
+  contextOverrides: Partial<WebSocketContextValue> = {}
+) {
   const send = vi.fn();
   const dispatch = vi.fn();
   const contextValue: WebSocketContextValue = {
@@ -41,6 +44,9 @@ function renderChat(overrides: Partial<GameState> = {}) {
     send,
     dispatch,
     isConnected: true,
+    mutedPlayerIds: new Set(),
+    toggleMutePlayer: vi.fn(),
+    ...contextOverrides,
   };
 
   const utils = render(
@@ -161,6 +167,31 @@ describe("Chat Component", () => {
       renderChat({ hasGuessed: true });
       const chip = screen.getByTestId("quick-chat-so-close-");
       expect(chip).toBeDisabled();
+    });
+  });
+
+  describe("Muted Players Filtering", () => {
+    it("filters out messages from muted players", () => {
+      const messages: ChatMessage[] = [
+        {
+          id: "msg-1",
+          senderId: "player-muted",
+          senderName: "Spammer",
+          text: "Spam message!",
+          type: "chat",
+        },
+        {
+          id: "msg-2",
+          senderId: "player-friend",
+          senderName: "Alice",
+          text: "Legit message",
+          type: "chat",
+        },
+      ];
+      renderChat({ chatMessages: messages }, { mutedPlayerIds: new Set(["player-muted"]) });
+      expect(screen.queryByText("Spam message!")).not.toBeInTheDocument();
+      expect(screen.getByText("Legit message")).toBeInTheDocument();
+      expect(screen.getByText(/1 player muted/i)).toBeInTheDocument();
     });
   });
 });

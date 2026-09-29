@@ -356,6 +356,18 @@ async def _handle_local_message(
         if result.get("type") == "error":
             await websocket.send_json(result)
 
+    elif msg_type == "vote_kick":
+        target_id = (payload.get("target_player_id") or payload.get("target_id", "")) if isinstance(payload, dict) else ""
+        result = await room_manager.start_vote_kick(player_id, target_id, game_engine)
+        if result.get("type") == "error":
+            await websocket.send_json(result)
+
+    elif msg_type == "vote_kick_cast":
+        vote = payload.get("vote", True) if isinstance(payload, dict) else True
+        result = await room_manager.cast_vote_kick(player_id, vote, game_engine)
+        if result.get("type") == "error":
+            await websocket.send_json(result)
+
     elif msg_type == "transfer_host":
         target_id = (payload.get("target_player_id") or payload.get("target_id", "")) if isinstance(payload, dict) else ""
         result = await room_manager.transfer_host(player_id, target_id)

@@ -6,6 +6,7 @@ import Canvas from "../components/Canvas";
 import Chat from "../components/Chat";
 import PlayerList from "../components/PlayerList";
 import TimerBar from "../components/TimerBar";
+import VoteKickBanner from "../components/VoteKickBanner";
 import { useGameAudio } from "../hooks/useGameAudio";
 import { HeaderBar } from "../components/HeaderBar";
 import { Confetti } from "../components/Confetti";
@@ -18,7 +19,7 @@ import { getAvatarForPlayer } from "../utils/avatars";
  */
 export default function Game() {
   const navigate = useNavigate();
-  const { gameState, send, dispatch } = useWebSocket();
+  const { gameState, send, dispatch, mutedPlayerIds, toggleMutePlayer } = useWebSocket();
   useGameAudio(gameState);
   const [countdown, setCountdown] = useState(0);
   const [showRoundTransition, setShowRoundTransition] = useState(false);
@@ -220,6 +221,14 @@ export default function Game() {
       </div>
     ) : null;
 
+  const handleVoteKick = (targetId: string) => {
+    const target = gameState.players.find((p) => p.id === targetId);
+    const name = target?.name || "this player";
+    if (window.confirm(`Initiate a vote to kick ${name}?`)) {
+      send("vote_kick", { target_player_id: targetId });
+    }
+  };
+
   if (gameState.phase === "word_selection") {
     return (
       <>
@@ -228,6 +237,7 @@ export default function Game() {
         <div className="game-page" data-testid="game-page">
           {reconnectBanner}
           {hostApprovalBanner}
+          <VoteKickBanner />
           <div className="game-header" data-testid="game-header">
             <span className="round-indicator" data-testid="round-indicator">
               Round {gameState.currentRound || 1} /{" "}
@@ -280,7 +290,15 @@ export default function Game() {
           )}
           <div className="game-content" data-testid="game-content">
             <div className="game-left">
-              <PlayerList players={gameState.players} drawerId={gameState.drawerId} />
+              <PlayerList
+                players={gameState.players}
+                drawerId={gameState.drawerId}
+                localPlayerId={gameState.localPlayerId}
+                mutedPlayerIds={mutedPlayerIds}
+                onToggleMute={toggleMutePlayer}
+                onVoteKick={handleVoteKick}
+                canVoteKick={gameState.players.filter((p) => p.isConnected).length >= 3}
+              />
             </div>
           </div>
         </div>
@@ -296,6 +314,7 @@ export default function Game() {
       <div className="game-page" data-testid="game-page">
         {reconnectBanner}
         {hostApprovalBanner}
+        <VoteKickBanner />
 
         {gameState.isSpectator && (
           <div className="spectator-banner" data-testid="spectator-banner">
@@ -344,6 +363,11 @@ export default function Game() {
               players={gameState.players}
               drawerId={gameState.drawerId}
               typingUsers={gameState.typingUsers}
+              localPlayerId={gameState.localPlayerId}
+              mutedPlayerIds={mutedPlayerIds}
+              onToggleMute={toggleMutePlayer}
+              onVoteKick={handleVoteKick}
+              canVoteKick={gameState.players.filter((p) => p.isConnected).length >= 3}
             />
           </div>
           <div className="game-center">

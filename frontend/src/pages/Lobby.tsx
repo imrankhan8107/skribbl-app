@@ -6,6 +6,7 @@ import Chat from "../components/Chat";
 import { HeaderBar } from "../components/HeaderBar";
 import QRCodeModal from "../components/QRCodeModal";
 import ProfileModal from "../components/ProfileModal";
+import VoteKickBanner from "../components/VoteKickBanner";
 import { copyToClipboard } from "../utils/clipboard";
 import { getStoredAvatarId, getStoredPlayerName } from "../utils/avatars";
 
@@ -23,7 +24,7 @@ const PRESET_PACKS = [
 ];
 
 export default function Lobby() {
-  const { gameState, send } = useWebSocket();
+  const { gameState, send, mutedPlayerIds, toggleMutePlayer } = useWebSocket();
   const { roomCode: routeRoomCode } = useParams<{ roomCode: string }>();
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
@@ -239,6 +240,14 @@ export default function Lobby() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleVoteKick = (targetId: string) => {
+    const target = gameState.players.find((p) => p.id === targetId);
+    const name = target?.name || "this player";
+    if (window.confirm(`Initiate a vote to kick ${name}?`)) {
+      send("vote_kick", { target_player_id: targetId });
+    }
+  };
+
   const localPlayer = gameState.players.find((p) => p.id === gameState.localPlayerId);
   const isReady = localPlayer?.isReady ?? false;
   const activePlayers = gameState.players.filter((p) => !p.isSpectator);
@@ -299,6 +308,8 @@ export default function Lobby() {
           </div>
         )}
 
+        <VoteKickBanner />
+
         <div className="lobby-content">
           {/* Left side: Players + Settings */}
           <div className="lobby-left">
@@ -306,6 +317,10 @@ export default function Lobby() {
               players={gameState.players}
               isHost={gameState.isHost}
               localPlayerId={gameState.localPlayerId}
+              mutedPlayerIds={mutedPlayerIds}
+              onToggleMute={toggleMutePlayer}
+              onVoteKick={handleVoteKick}
+              canVoteKick={gameState.players.filter((p) => p.isConnected).length >= 3}
               onKick={handleKickPlayer}
               onTransferHost={handleTransferHost}
               onEditProfile={() => setShowProfileModal(true)}

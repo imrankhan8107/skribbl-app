@@ -22,7 +22,7 @@ export const QUICK_CHAT_SHORTCUTS = [
  * Requirements: 6.1, 6.3, 6.5, 6.8
  */
 export default function Chat() {
-  const { gameState, send } = useWebSocket();
+  const { gameState, send, mutedPlayerIds } = useWebSocket();
   const [text, setText] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const prevMessagesCountRef = useRef(gameState.chatMessages.length);
@@ -110,10 +110,31 @@ export default function Chat() {
     }
   };
 
+  const visibleMessages = gameState.chatMessages.filter(
+    (msg) => !msg.senderId || !mutedPlayerIds?.has(msg.senderId)
+  );
+
   return (
     <div className="chat-container" data-testid="chat-container">
       <div className="chat-messages" data-testid="chat-messages">
-        {gameState.chatMessages.map((msg) => {
+        {mutedPlayerIds && mutedPlayerIds.size > 0 && (
+          <div
+            className="chat-muted-indicator"
+            data-testid="chat-muted-indicator"
+            style={{
+              fontSize: "11px",
+              textAlign: "center",
+              padding: "4px 8px",
+              color: "var(--color-text-secondary, #64748b)",
+              backgroundColor: "rgba(0,0,0,0.05)",
+              borderRadius: "4px",
+              marginBottom: "6px",
+            }}
+          >
+            🔇 {mutedPlayerIds.size} player{mutedPlayerIds.size > 1 ? "s" : ""} muted
+          </div>
+        )}
+        {visibleMessages.map((msg) => {
           const sender = gameState.players.find(
             (p) => p.id === msg.senderId || p.name === msg.senderName
           );

@@ -17,7 +17,7 @@ import random
 import string
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Any, Union
 from uuid import uuid4
 import re
@@ -59,6 +59,18 @@ class PendingJoinRequest:
     timeout_task: Optional[asyncio.Task] = None
 
 
+@dataclass
+class VoteKickState:
+    target_id: str
+    target_name: str
+    initiator_id: str
+    initiator_name: str
+    room_code: str
+    votes: set[str] = field(default_factory=set)
+    timeout_task: Optional[asyncio.Task] = None
+    created_at: float = field(default_factory=time.time)
+
+
 class RoomManager:
     """Manages all active rooms in memory."""
 
@@ -68,6 +80,8 @@ class RoomManager:
         self._pending_join_requests: dict[str, PendingJoinRequest] = {}  # request_id -> PendingJoinRequest
         self._ws_to_pending_request: dict[object, str] = {}  # websocket -> request_id
         self._ws_to_player: dict[object, dict] = {}  # websocket -> {"player_id": str, "room_code": str}
+        self._active_vote_kicks: dict[str, VoteKickState] = {}  # room_code -> VoteKickState
+        self._vote_kick_cooldowns: dict[str, dict[str, float]] = {}  # room_code -> {target_id: expire_ts}
 
     def _generate_room_code(self) -> str:
         """Generate a unique 6-character alphanumeric uppercase room code."""
@@ -88,6 +102,12 @@ class RoomManager:
                 if req.timeout_task and not req.timeout_task.done():
                     req.timeout_task.cancel()
                 self._ws_to_pending_request.pop(req.websocket, None)
+
+        # Cancel and clean up any active vote-kick in this room
+        vk = self._active_vote_kicks.pop(room_code, None)
+        if vk and vk.timeout_task and not vk.timeout_task.done():
+            vk.timeout_task.cancel()
+        self._vote_kick_cooldowns.pop(room_code, None)
 
         if redis_pubsub.is_redis_enabled():
             try:
@@ -1030,6 +1050,57 @@ class RoomManager:
         player.is_connected = False
         player.disconnect_time = time.time()
         player.websocket = None
+
+        # Check active vote-kick in this room
+        if room.code in self._active_vote_kicks:
+            vk = self._active_vote_kicks[room.code]
+            if vk.target_id == player_id:
+                if vk.timeout_task and not vk.timeout_task.done():
+                    vk.timeout_task.cancel()
+                self._active_vote_kicks.pop(room.code, None)
+                await self.broadcast(room.code, {
+                    "type": "vote_kick_ended",
+                    "payload": {
+                        "target_id": player_id,
+                        "target_name": vk.target_name,
+                        "result": "cancelled",
+                        "message": f"Vote to kick {vk.target_name} was cancelled (player disconnected).",
+                    },
+                })
+            else:
+                vk.votes.discard(player_id)
+                connected_voters = [p for p in room.players if p.is_connected and p.id != vk.target_id]
+                if len(connected_voters) < 2:
+                    if vk.timeout_task and not vk.timeout_task.done():
+                        vk.timeout_task.cancel()
+                    self._active_vote_kicks.pop(room.code, None)
+                    await self.broadcast(room.code, {
+                        "type": "vote_kick_ended",
+                        "payload": {
+                            "target_id": vk.target_id,
+                            "target_name": vk.target_name,
+                            "result": "cancelled",
+                            "message": f"Vote to kick {vk.target_name} was cancelled (not enough players).",
+                        },
+                    })
+                else:
+                    new_req = (len(connected_voters) // 2) + 1
+                    if len(vk.votes) >= new_req:
+                        if vk.timeout_task and not vk.timeout_task.done():
+                            vk.timeout_task.cancel()
+                        self._active_vote_kicks.pop(room.code, None)
+                        target = room.get_player(vk.target_id)
+                        if target:
+                            await self._execute_vote_kick_passed(room, target, game_engine)
+                    else:
+                        await self.broadcast(room.code, {
+                            "type": "vote_kick_updated",
+                            "payload": {
+                                "target_id": vk.target_id,
+                                "current_votes": len(vk.votes),
+                                "required_votes": new_req,
+                            },
+                        })
 
         # If disconnecting player is the host, schedule host reassignment after 3s grace window
         if room.host_id == player_id:
@@ -2267,6 +2338,298 @@ class RoomManager:
             "type": "player_kicked",
             "payload": {"target_player_id": target_player_id},
         }
+
+    async def start_vote_kick(self, initiator_id: str, target_id: str, game_engine=None) -> dict:
+        """Initiate a vote-to-kick against a player. Requires majority vote to kick."""
+        room = self._find_room_by_player(initiator_id)
+        if room is None:
+            return {
+                "type": "error",
+                "payload": {"code": "GAME_NOT_ACTIVE", "message": "Player is not in a room"},
+            }
+
+        # Check if vote already in progress
+        if room.code in self._active_vote_kicks:
+            return {
+                "type": "error",
+                "payload": {"code": "VOTE_ALREADY_ACTIVE", "message": "A vote-to-kick is already in progress"},
+            }
+
+        # Cannot target self
+        if initiator_id == target_id:
+            return {
+                "type": "error",
+                "payload": {"code": "INVALID_TARGET", "message": "Cannot vote to kick yourself"},
+            }
+
+        # Check target is in room
+        target = room.get_player(target_id)
+        if target is None:
+            return {
+                "type": "error",
+                "payload": {"code": "PLAYER_NOT_FOUND", "message": "Target player not found in room"},
+            }
+
+        # Target must be connected
+        if not target.is_connected:
+            return {
+                "type": "error",
+                "payload": {"code": "PLAYER_DISCONNECTED", "message": "Cannot vote to kick a disconnected player"},
+            }
+
+        # Check connected players count (minimum 3 required)
+        connected_players = [p for p in room.players if p.is_connected]
+        if len(connected_players) < 3:
+            return {
+                "type": "error",
+                "payload": {"code": "NOT_ENOUGH_PLAYERS", "message": "At least 3 connected players are required to initiate a vote-to-kick"},
+            }
+
+        # Check cooldown
+        cooldowns = self._vote_kick_cooldowns.get(room.code, {})
+        if cooldowns.get(target_id, 0) > time.time():
+            return {
+                "type": "error",
+                "payload": {"code": "COOLDOWN_ACTIVE", "message": "Vote-to-kick cooldown is active for this player"},
+            }
+
+        # Eligible voters: connected players excluding target
+        eligible_voters = [p for p in connected_players if p.id != target_id]
+        required_votes = (len(eligible_voters) // 2) + 1
+        votes = {initiator_id}
+
+        initiator = room.get_player(initiator_id)
+        initiator_name = initiator.name if initiator else "Player"
+
+        # If somehow required_votes reached immediately
+        if len(votes) >= required_votes:
+            await self._execute_vote_kick_passed(room, target, game_engine)
+            return {
+                "type": "vote_kick_started",
+                "payload": {"target_id": target_id, "result": "passed"},
+            }
+
+        vote_kick = VoteKickState(
+            target_id=target_id,
+            target_name=target.name,
+            initiator_id=initiator_id,
+            initiator_name=initiator_name,
+            room_code=room.code,
+            votes=votes,
+        )
+
+        async def _vote_timeout():
+            try:
+                await asyncio.sleep(30)
+                await self._handle_vote_kick_timeout(room.code, target_id)
+            except asyncio.CancelledError:
+                pass
+
+        vote_kick.timeout_task = asyncio.create_task(_vote_timeout())
+        self._active_vote_kicks[room.code] = vote_kick
+
+        await self.broadcast(room.code, {
+            "type": "vote_kick_started",
+            "payload": {
+                "target_id": target_id,
+                "target_name": target.name,
+                "initiator_id": initiator_id,
+                "initiator_name": initiator_name,
+                "current_votes": len(votes),
+                "required_votes": required_votes,
+                "timeout_seconds": 30,
+            },
+        })
+
+        await self.broadcast(room.code, {
+            "type": "chat_message",
+            "payload": {
+                "player_name": "System",
+                "text": f"🗳️ {initiator_name} started a vote to kick {target.name} ({len(votes)}/{required_votes} votes needed).",
+                "is_system": True,
+            },
+        })
+
+        return {
+            "type": "vote_kick_started",
+            "payload": {
+                "target_id": target_id,
+                "current_votes": len(votes),
+                "required_votes": required_votes,
+            },
+        }
+
+    async def cast_vote_kick(self, voter_id: str, vote: bool, game_engine=None) -> dict:
+        """Cast a vote (yes/no) on the active vote-to-kick in the player's room."""
+        room = self._find_room_by_player(voter_id)
+        if room is None:
+            return {
+                "type": "error",
+                "payload": {"code": "GAME_NOT_ACTIVE", "message": "Player is not in a room"},
+            }
+
+        vote_kick = self._active_vote_kicks.get(room.code)
+        if vote_kick is None:
+            return {
+                "type": "error",
+                "payload": {"code": "NO_ACTIVE_VOTE", "message": "No active vote-to-kick in progress"},
+            }
+
+        if voter_id == vote_kick.target_id:
+            return {
+                "type": "error",
+                "payload": {"code": "INVALID_VOTER", "message": "Target player cannot vote on their own kick"},
+            }
+
+        voter = room.get_player(voter_id)
+        if voter is None or not voter.is_connected:
+            return {
+                "type": "error",
+                "payload": {"code": "PLAYER_NOT_FOUND", "message": "Voter not found or disconnected"},
+            }
+
+        connected_voters = [p for p in room.players if p.is_connected and p.id != vote_kick.target_id]
+        required_votes = (len(connected_voters) // 2) + 1
+
+        if vote:
+            vote_kick.votes.add(voter_id)
+        else:
+            vote_kick.votes.discard(voter_id)
+
+        if len(vote_kick.votes) >= required_votes:
+            if vote_kick.timeout_task and not vote_kick.timeout_task.done():
+                vote_kick.timeout_task.cancel()
+            self._active_vote_kicks.pop(room.code, None)
+            target = room.get_player(vote_kick.target_id)
+            if target:
+                await self._execute_vote_kick_passed(room, target, game_engine)
+            return {"type": "vote_kick_updated", "payload": {"result": "passed"}}
+        else:
+            await self.broadcast(room.code, {
+                "type": "vote_kick_updated",
+                "payload": {
+                    "target_id": vote_kick.target_id,
+                    "current_votes": len(vote_kick.votes),
+                    "required_votes": required_votes,
+                },
+            })
+            return {
+                "type": "vote_kick_updated",
+                "payload": {
+                    "current_votes": len(vote_kick.votes),
+                    "required_votes": required_votes,
+                },
+            }
+
+    async def _execute_vote_kick_passed(self, room: Room, target: Player, game_engine=None) -> None:
+        target_id = target.id
+        target_name = target.name
+        was_host = (room.host_id == target_id)
+        was_drawer = (room.turn is not None and room.turn.drawer_id == target_id)
+
+        if target.websocket is not None and target.is_connected:
+            try:
+                kicked_msg = json_dumps({
+                    "type": "kicked",
+                    "payload": {"message": "You were kicked by majority vote"},
+                })
+                if hasattr(target.websocket, "send_text"):
+                    await target.websocket.send_text(kicked_msg)
+                elif hasattr(target.websocket, "send_json"):
+                    await target.websocket.send_json(json.loads(kicked_msg))
+            except Exception:
+                pass
+
+        room.remove_player(target_id)
+        self._player_to_room.pop(target_id, None)
+
+        if was_host:
+            eligible = [p for p in room.players if p.is_connected and not getattr(p, "is_spectator", False)]
+            if not eligible:
+                eligible = [p for p in room.players if p.is_connected]
+            if eligible:
+                new_host = eligible[0]
+                room.host_id = new_host.id
+                await self.broadcast(
+                    room.code,
+                    {
+                        "type": "host_changed",
+                        "payload": {
+                            "new_host_id": new_host.id,
+                            "new_host_name": new_host.name,
+                        },
+                    },
+                )
+
+        await self.broadcast(room.code, {
+            "type": "vote_kick_ended",
+            "payload": {
+                "target_id": target_id,
+                "target_name": target_name,
+                "result": "passed",
+                "message": f"{target_name} was kicked by majority vote.",
+            },
+        })
+
+        await self.broadcast(room.code, {
+            "type": "chat_message",
+            "payload": {
+                "player_name": "System",
+                "text": f"🗳️ {target_name} was kicked by majority vote.",
+                "is_system": True,
+            },
+        })
+
+        await self.broadcast(room.code, {
+            "type": "player_list",
+            "payload": {
+                "players": [self._serialize_player(p, room=room) for p in room.players]
+            },
+        })
+
+        if was_drawer and game_engine is not None:
+            from backend.models import TurnEndReason
+            await game_engine.end_turn(room, TurnEndReason.DRAWER_DISCONNECTED, self)
+
+        if room.state in (RoomState.PLAYING, RoomState.WORD_SELECTION):
+            connected_count = sum(1 for p in room.players if p.is_connected and not getattr(p, "is_spectator", False))
+            if connected_count < 2:
+                await self._end_game_insufficient_players(room)
+            elif not was_drawer and room.turn is not None and room.state == RoomState.PLAYING:
+                all_guessed = all(
+                    p.has_guessed
+                    for p in room.players
+                    if p.id != room.turn.drawer_id and p.is_connected and not getattr(p, "is_spectator", False)
+                )
+                if all_guessed and game_engine is not None:
+                    from backend.models import TurnEndReason
+                    await game_engine.end_turn(room, TurnEndReason.ALL_GUESSED, self)
+
+    async def _handle_vote_kick_timeout(self, room_code: str, target_id: str) -> None:
+        vote_kick = self._active_vote_kicks.get(room_code)
+        if vote_kick is not None and vote_kick.target_id == target_id:
+            self._active_vote_kicks.pop(room_code, None)
+            if room_code not in self._vote_kick_cooldowns:
+                self._vote_kick_cooldowns[room_code] = {}
+            self._vote_kick_cooldowns[room_code][target_id] = time.time() + 30
+
+            await self.broadcast(room_code, {
+                "type": "vote_kick_ended",
+                "payload": {
+                    "target_id": target_id,
+                    "target_name": vote_kick.target_name,
+                    "result": "failed",
+                    "message": f"Vote to kick {vote_kick.target_name} failed (timed out).",
+                },
+            })
+            await self.broadcast(room_code, {
+                "type": "chat_message",
+                "payload": {
+                    "player_name": "System",
+                    "text": f"🗳️ Vote to kick {vote_kick.target_name} failed (not enough votes).",
+                    "is_system": True,
+                },
+            })
 
     async def leave_room(self, player_id: str) -> dict:
         """Allow a player to voluntarily leave the room in LOBBY state.
