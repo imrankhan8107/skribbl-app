@@ -142,7 +142,28 @@ export interface ChatMessage {
 
 export type Action =
   | { type: "ROOM_CREATED"; payload: { roomCode: string; playerId: string; config?: GameConfig } }
-  | { type: "ROOM_JOINED"; payload: { roomCode: string; playerId: string; isHost: boolean } }
+  | {
+      type: "ROOM_JOINED";
+      payload: {
+        roomCode: string;
+        playerId: string;
+        isHost?: boolean;
+        config?: GameConfig;
+        totalRounds?: number;
+        total_rounds?: number;
+        currentRound?: number;
+        current_round?: number;
+        state?: string;
+        isSpectator?: boolean;
+        is_spectator?: boolean;
+        players?: PlayerInfo[];
+        drawerId?: string | null;
+        drawer_id?: string | null;
+        hint?: string[];
+        duration?: number;
+        theme?: RoundTheme;
+      };
+    }
   | { type: "PLAYER_LIST"; payload: { players: PlayerInfo[] } }
   | { type: "SETTINGS_UPDATED"; payload: { config: GameConfig } }
   | {

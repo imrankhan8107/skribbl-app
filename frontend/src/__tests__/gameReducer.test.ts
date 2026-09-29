@@ -81,6 +81,26 @@ describe("gameReducer", () => {
       expect(next.isHost).toBe(true);
     });
 
+    it("sets totalRounds, config, and phase when joining mid-game", () => {
+      const action: Action = {
+        type: "ROOM_JOINED",
+        payload: {
+          roomCode: "XYZ789",
+          playerId: "player-2",
+          isHost: false,
+          state: "playing",
+          current_round: 2,
+          total_rounds: 3,
+          config: { numRounds: 3, turnDuration: 80, maxPlayers: 8 },
+        },
+      };
+      const next = gameReducer(initialState, action);
+      expect(next.phase).toBe("playing");
+      expect(next.currentRound).toBe(2);
+      expect(next.totalRounds).toBe(3);
+      expect(next.config?.numRounds).toBe(3);
+    });
+
     it("sets isSpectator to true and preserves mid-game phase when joining in-progress match", () => {
       const action = {
         type: "ROOM_JOINED",

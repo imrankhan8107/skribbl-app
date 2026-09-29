@@ -127,6 +127,12 @@ export function gameReducer(state: GameState, action: Action): GameState {
 
       const hostId = (p.host_id as string) ?? (p.hostId as string);
       const isHost = action.payload.isHost ?? (hostId ? hostId === action.payload.playerId : false);
+      const config = (action.payload.config as typeof state.config) ?? state.config;
+      const totalRounds =
+        (p.total_rounds as number) ??
+        (p.totalRounds as number) ??
+        config?.numRounds ??
+        state.totalRounds;
 
       return {
         ...state,
@@ -138,6 +144,8 @@ export function gameReducer(state: GameState, action: Action): GameState {
         drawerId,
         isDrawer: !isSpectator && drawerId === action.payload.playerId,
         currentRound,
+        totalRounds,
+        config,
         hint,
         timerSeconds,
         currentTheme,

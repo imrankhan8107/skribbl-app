@@ -365,7 +365,8 @@ export default function Game() {
         {/* Round and turn indicators */}
         <div className="game-header" data-testid="game-header">
           <span className="round-indicator" data-testid="round-indicator">
-            Round {gameState.currentRound} / {gameState.totalRounds}
+            Round {gameState.currentRound} /{" "}
+            {gameState.totalRounds || gameState.config?.numRounds || 3}
           </span>
           {gameState.currentTheme && (
             <span className="round-theme-badge" data-testid="round-theme-badge">
@@ -413,7 +414,10 @@ export default function Game() {
             <Canvas
               isDrawer={gameState.isDrawer}
               showRoundTransition={showRoundTransition}
-              roundInfo={{ round: gameState.currentRound, totalRounds: gameState.totalRounds }}
+              roundInfo={{
+                round: gameState.currentRound,
+                totalRounds: gameState.totalRounds || gameState.config?.numRounds || 3,
+              }}
               onTransitionComplete={handleTransitionComplete}
             />
           </div>
