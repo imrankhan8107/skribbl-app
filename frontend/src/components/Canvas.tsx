@@ -205,9 +205,10 @@ export default function Canvas({
         style={{
           position: "relative",
           overflow: "hidden",
-          display: "inline-block",
+          display: "block",
           width: "100%",
           maxWidth: 800,
+          margin: "0 auto",
           touchAction: "none",
         }}
       >
@@ -314,11 +315,12 @@ export default function Canvas({
           aria-label="Drawing tools"
         >
           {/* Color Picker */}
-          <div className="toolbar-section" data-testid="color-picker">
+          <div className="toolbar-section toolbar-color-picker" data-testid="color-picker">
             {COLOR_PALETTE.map((c) => (
               <button
                 key={c}
                 type="button"
+                className="color-swatch-btn"
                 aria-label={`Color ${c}`}
                 data-testid={`color-${c}`}
                 onClick={() => {
@@ -335,7 +337,6 @@ export default function Canvas({
                       : "1px solid #ccc",
                   borderRadius: 4,
                   cursor: "pointer",
-                  margin: 2,
                 }}
               />
             ))}
