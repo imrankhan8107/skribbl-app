@@ -736,27 +736,28 @@ class RoomManager:
         except Exception:
             pass
 
-        # Notify host that request timed out so UI dismisses it
+        # Broadcast to room so host UI dismisses the card
         if room:
-            host = room.get_player(room.host_id)
-            if host and host.is_connected and host.websocket:
-                try:
-                    h_msg = {
-                        "type": "join_request_resolved",
-                        "payload": {"request_id": request_id, "status": "timeout"},
-                    }
-                    if hasattr(host.websocket, "send_text"):
-                        await host.websocket.send_text(json_dumps(h_msg))
-                    elif hasattr(host.websocket, "send_json"):
-                        await host.websocket.send_json(h_msg)
-                except Exception:
-                    pass
+            await self.broadcast(
+                room.code,
+                {
+                    "type": "join_request_resolved",
+                    "payload": {"request_id": request_id, "status": "timeout"},
+                },
+            )
 
     async def cancel_pending_join_request(self, identifier: Union[object, str]) -> None:
         """Cancel a pending join request when the joiner cancels or disconnects."""
         if isinstance(identifier, str):
             request_id = identifier
             req = self._pending_join_requests.pop(request_id, None)
+            if not req:
+                # Also check by websocket.player_id if identifier is player_id
+                for rid, r in list(self._pending_join_requests.items()):
+                    if getattr(r.websocket, "player_id", None) == identifier:
+                        req = self._pending_join_requests.pop(rid, None)
+                        request_id = rid
+                        break
         else:
             request_id = self._ws_to_pending_request.pop(identifier, None)
             req = self._pending_join_requests.pop(request_id, None) if request_id else None
@@ -772,25 +773,19 @@ class RoomManager:
         if room and hasattr(room, "_pending_join_requests"):
             room._pending_join_requests.pop(req.request_id, None)
 
-        # Notify host that request was cancelled
+        # Broadcast to room so host UI dismisses the card
         if room:
-            host = room.get_player(room.host_id)
-            if host and host.is_connected and host.websocket:
-                try:
-                    h_msg = {
-                        "type": "join_request_resolved",
-                        "payload": {
-                            "request_id": req.request_id,
-                            "status": "cancelled",
-                            "player_name": req.name,
-                        },
-                    }
-                    if hasattr(host.websocket, "send_text"):
-                        await host.websocket.send_text(json_dumps(h_msg))
-                    elif hasattr(host.websocket, "send_json"):
-                        await host.websocket.send_json(h_msg)
-                except Exception:
-                    pass
+            await self.broadcast(
+                room.code,
+                {
+                    "type": "join_request_resolved",
+                    "payload": {
+                        "request_id": req.request_id,
+                        "status": "cancelled",
+                        "player_name": req.name,
+                    },
+                },
+            )
 
     async def respond_join_request(self, host_player_id: str, request_id: str, action: str) -> dict:
         """Handle host approval response for a pending mid-game join request.
@@ -845,10 +840,12 @@ class RoomManager:
             except Exception:
                 pass
 
-            return {
+            resolved_msg = {
                 "type": "join_request_resolved",
                 "payload": {"request_id": request_id, "status": "declined"},
             }
+            await self.broadcast(room.code, resolved_msg)
+            return resolved_msg
 
         is_spectator = (action == "accept_spectator")
         active_count = sum(1 for p in room.players if not getattr(p, "is_spectator", False))
@@ -967,7 +964,11 @@ class RoomManager:
         except Exception as e:
             logger.warning("Failed to send room_joined to accepted player: %s", e)
 
-        return {
+        # Update VirtualTransport player_id if running via gRPC
+        if hasattr(req.websocket, "player_id"):
+            req.websocket.player_id = player_id
+
+        resolved_msg = {
             "type": "join_request_resolved",
             "payload": {
                 "request_id": request_id,
@@ -975,6 +976,11 @@ class RoomManager:
                 "player_id": player_id,
             },
         }
+
+        # Broadcast join_request_resolved to room so host approval card disappears immediately
+        await self.broadcast(room.code, resolved_msg)
+
+        return resolved_msg
 
     async def remove_player(self, player_id: str) -> None:
         """Remove a player from their room, handling host reassignment and cleanup.
@@ -1040,6 +1046,7 @@ class RoomManager:
         """
         room = self._find_room_by_player(player_id)
         if room is None:
+            await self.cancel_pending_join_request(player_id)
             return
 
         player = next((p for p in room.players if p.id == player_id), None)

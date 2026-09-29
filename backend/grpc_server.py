@@ -566,6 +566,60 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
                 if _TRACE_ENABLED:
                     logger.info("[grpc:out] player=%s type=error", player_id)
 
+        elif message_type == "respond_join_request":
+            request_id = payload.get("request_id", "") if isinstance(payload, dict) else ""
+            action = payload.get("action", "") if isinstance(payload, dict) else ""
+            result = await room_manager.respond_join_request(player_id, request_id, action)
+            await transport.send_json(result)
+            if _TRACE_ENABLED:
+                logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type"))
+            return result
+
+        elif message_type == "cancel_join_request":
+            request_id = payload.get("request_id") if isinstance(payload, dict) else None
+            await room_manager.cancel_pending_join_request(request_id or transport)
+
+        elif message_type == "shape":
+            room = room_manager._find_room_by_player(player_id)
+            if room is not None and room.turn and room.turn.drawer_id == player_id:
+                await room_manager.broadcast(room.code, {
+                    "type": "shape",
+                    "payload": payload,
+                })
+
+        elif message_type == "highlighter":
+            room = room_manager._find_room_by_player(player_id)
+            if room is not None and room.turn and room.turn.drawer_id == player_id:
+                await room_manager.broadcast(room.code, {
+                    "type": "highlighter",
+                    "payload": payload,
+                })
+
+        elif message_type == "vote_kick":
+            target_id = (payload.get("target_player_id") or payload.get("target_id", "")) if isinstance(payload, dict) else ""
+            result = await room_manager.start_vote_kick(player_id, target_id, game_engine)
+            if result.get("type") == "error":
+                await transport.send_json(result)
+                if _TRACE_ENABLED:
+                    logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type"))
+
+        elif message_type == "vote_kick_cast":
+            vote = payload.get("vote", True) if isinstance(payload, dict) else True
+            result = await room_manager.cast_vote_kick(player_id, vote, game_engine)
+            if result.get("type") == "error":
+                await transport.send_json(result)
+                if _TRACE_ENABLED:
+                    logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type"))
+
+        elif message_type == "update_profile":
+            name = payload.get("name") if isinstance(payload, dict) else None
+            avatar = payload.get("avatar") if isinstance(payload, dict) else None
+            result = await room_manager.update_profile(player_id, name=name, avatar=avatar)
+            if result.get("type") == "error":
+                await transport.send_json(result)
+                if _TRACE_ENABLED:
+                    logger.info("[grpc:out] player=%s type=%s", player_id, result.get("type"))
+
         else:
             await transport.send_json({
                 "type": "error",
@@ -573,6 +627,7 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             })
             if _TRACE_ENABLED:
                 logger.info("[grpc:out] player=%s type=error", player_id)
+
 
     async def _cleanup_stream(
         self,

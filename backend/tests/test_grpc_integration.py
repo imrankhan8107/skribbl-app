@@ -602,3 +602,87 @@ class TestGRPCGatewayMessageFormat:
 
         await host_stream.done_writing()
         await p2_stream.done_writing()
+
+    @pytest.mark.asyncio
+    async def test_grpc_mid_game_join_approval(self, stub):
+        """Verify that mid-game join approval works seamlessly via gRPC streams."""
+        host_stream = stub.RoomStream()
+        p2_stream = stub.RoomStream()
+        p3_stream = stub.RoomStream()
+
+        # Host creates room
+        await host_stream.write(_make_gateway_message(
+            player_id="temp_host",
+            room_code="",
+            message_type="create_room",
+            payload={"name": "HostPlayer"},
+        ))
+        msg = await _read_until_type(host_stream, "room_created", timeout=5.0)
+        payload = _decode_payload(msg)
+        room_code = payload["payload"]["room_code"]
+        actual_host_id = payload["payload"]["player_id"]
+
+        # Player 2 joins room
+        await p2_stream.write(_make_gateway_message(
+            player_id="temp_p2",
+            room_code=room_code,
+            message_type="join_room",
+            payload={"name": "Player2", "room_code": room_code},
+        ))
+        msg = await _read_until_type(p2_stream, "room_joined", timeout=5.0)
+
+        # Toggle ready and start game
+        await host_stream.write(_make_gateway_message(actual_host_id, room_code, "toggle_ready", {}))
+        await p2_stream.write(_make_gateway_message(
+            _decode_payload(msg)["payload"]["player_id"], room_code, "toggle_ready", {}
+        ))
+        await host_stream.write(_make_gateway_message(actual_host_id, room_code, "start_game", {}))
+
+        # Wait for game to enter word_selection/turn
+        await _read_until_type(host_stream, "game_started", timeout=5.0)
+
+        # Player 3 attempts to join mid-game
+        await p3_stream.write(_make_gateway_message(
+            player_id="temp_p3",
+            room_code=room_code,
+            message_type="join_room",
+            payload={"name": "JoinerPlayer", "room_code": room_code},
+        ))
+
+        # Player 3 should receive join_request_pending
+        msg = await _read_until_type(p3_stream, "join_request_pending", timeout=5.0)
+        p3_pending = _decode_payload(msg)["payload"]
+        req_id = p3_pending["request_id"]
+        assert req_id != ""
+
+        # Host should receive join_request_received
+        msg = await _read_until_type(host_stream, "join_request_received", timeout=5.0)
+        host_notif = _decode_payload(msg)["payload"]
+        assert host_notif["request_id"] == req_id
+        assert host_notif["player_name"] == "JoinerPlayer"
+
+        # Host approves the join request as player
+        await host_stream.write(_make_gateway_message(
+            actual_host_id,
+            room_code,
+            "respond_join_request",
+            {"request_id": req_id, "action": "accept_player"},
+        ))
+
+        # Host receives join_request_resolved
+        msg = await _read_until_type(host_stream, "join_request_resolved", timeout=5.0)
+        resolved = _decode_payload(msg)["payload"]
+        assert resolved["request_id"] == req_id
+        assert resolved["status"] == "accepted_player"
+
+        # Player 3 receives room_joined
+        msg = await _read_until_type(p3_stream, "room_joined", timeout=5.0)
+        p3_joined = _decode_payload(msg)["payload"]
+        assert p3_joined["room_code"] == room_code
+        assert p3_joined["player_id"] != ""
+        assert p3_joined["is_spectator"] is False
+
+        await host_stream.done_writing()
+        await p2_stream.done_writing()
+        await p3_stream.done_writing()
+
