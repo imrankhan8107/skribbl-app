@@ -49,8 +49,8 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 | Multi-Worker State | Redis 7 (AOF persistence, local-first pub/sub bypass, worker discovery) |
 | Reverse Proxy | Nginx (consistent hashing by room and client ID) |
 | Observability | 1-second `/proc` cluster metrics monitor, k6 telemetry, structured logs |
-| Testing | pytest + Hypothesis (284 tests), Vitest, k6 distributed suite |
-| Cloud IaC | Terraform (AWS, Azure, OCI) |
+| Testing | pytest + Hypothesis (330 tests), Vitest (151 tests), k6 distributed suite |
+| Cloud IaC | Terraform (AWS: EC2, VPC, Nginx, Redis, Go Gateways, Python Workers) |
 
 ## Architecture
 
@@ -165,41 +165,49 @@ See the full [Performance Test Report](docs/performance-test-report.md) for deta
 
 ## Deployment
 
-### Oracle Cloud (Always Free Tier)
+### AWS Multi-Host Distributed Cluster (Terraform)
 
-Deploy on OCI A1.Flex (ARM) with Docker Compose — $0/month:
+Deploy a production-grade, distributed cluster on **Amazon Web Services (AWS)** using Terraform in [infra/aws/](infra/aws/README.md).
+
+The cluster separates concerns across dedicated EC2 instances:
+- **Nginx Reverse Proxy / Load Balancer** (`c5a.4xlarge`): Public entrypoint on ports 80/443, consistent hash routing (`hash "$arg_gw$arg_room$arg_cid"`).
+- **Go Edge Gateways** (`c5a.2xlarge`): Epoll-based WebSocket termination (`:9000`), client state handling, and coordination (`:9100`).
+- **Python Game Workers** (`c5a.2xlarge`): FastAPI game logic engine, gRPC bidirectional streaming (`:50051`), in-memory room management.
+- **Dedicated Redis Instance** (`c5a.xlarge`): AOF persistence, room registry, worker discovery, and cross-gateway pub/sub relay.
+
+#### Security & Firewall Constraints
+- **Zero Public Exposure for Inter-Tier Traffic**: All internal traffic between Nginx, Gateways, Workers, and Redis is strictly confined to the cluster Security Group (`self = true`).
+- **Restricted Public Ingress**: Public ports (SSH 22, HTTP/HTTPS 80/443, Gateways 9000, Coord 9100) are locked exclusively to `allowed_cidrs` (your local IP/32 and CI/CD/Cloud9 IP/32).
+
+#### Quick Start
 
 ```bash
-cd infra/oci
+cd infra/aws
 
-# Copy and edit variables
+# 1. Create your variables file
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your OCI credentials
 
+# 2. Configure terraform.tfvars (set your public IP, SSH key, and desired cluster sizing)
+# aws_region     = "us-east-1"
+# allowed_cidrs  = ["YOUR_LOCAL_IP/32"]
+# ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
+
+# 3. Provision the cluster
 terraform init
 terraform plan
 terraform apply
 ```
 
-App is live at `http://<public-ip>` after ~5 minutes (cloud-init builds from source).
+Cloud-init provisions Docker, systemd services, kernel network tuning (`net.core.somaxconn = 65535`, `sysctl fs.file-max`), and starts all containers automatically in ~3–5 minutes.
 
-See [infra/oci/README.md](infra/oci/README.md) for full instructions.
-
-### Azure Container Apps
-
+Outputs will provide the Nginx public IP, Gateway URLs, and SSH access strings for each node:
 ```bash
-cd infra/azure
-terraform init
-terraform apply
+terraform output
 ```
 
-Or use the PowerShell deploy script: `.\infra\azure\deploy.ps1`
+See the full [AWS Multi-Host Deployment Guide](infra/aws/README.md) for sizing options, benchmark runbooks, and troubleshooting.
 
-Supports scaling to multiple replicas with Azure Cache for Redis for cross-worker synchronization.
-
-See [infra/azure/README.md](infra/azure/README.md) for full instructions.
-
-## Docker
+### Docker (Single Container)
 
 Multi-stage Dockerfile builds both frontend and backend into a single image:
 
@@ -265,7 +273,7 @@ skribbl-app/
 │   ├── heartbeat.py         # Ping/pong connection health
 │   ├── redis_pubsub.py      # Redis adapter (pub/sub, room registry)
 │   ├── words.py             # 200+ word list
-│   └── tests/               # 213 tests (unit + property + integration)
+│   └── tests/               # 330 tests (unit + property + integration)
 ├── frontend/
 │   ├── src/
 │   │   ├── context/         # WebSocketContext + gameReducer
@@ -273,18 +281,18 @@ skribbl-app/
 │   │   ├── components/      # Canvas, Chat, PlayerList, TimerBar, RoundTransition
 │   │   ├── hooks/           # useCanvas, useWebSocket
 │   │   └── types/           # TypeScript interfaces
-│   └── __tests__/           # 62 component + reducer tests
+│   └── __tests__/           # 151 component + reducer tests
+├── gateway/                 # Go Edge Gateway (:9000, :9100)
+│   ├── cmd/gateway/main.go  # Entrypoint & epoll event loop
+│   └── internal/            # Hub, client, gRPC streaming client, coordinator
 ├── infra/
-│   ├── oci/                 # Oracle Cloud terraform (Always Free)
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   ├── outputs.tf
-│   │   ├── cloud-init.tftpl
-│   │   └── README.md
-│   └── azure/               # Azure Container Apps terraform
-│       ├── main.tf
-│       ├── deploy.ps1
-│       └── README.md
+│   └── aws/                 # AWS Multi-Host Distributed Cluster (Terraform)
+│       ├── main.tf          # VPC, Subnets, SG rules, EC2 compute (Nginx, Gateways, Workers, Redis)
+│       ├── variables.tf     # Cluster sizing, instance types, allowed_cidrs
+│       ├── outputs.tf       # Cluster IP map & connection commands
+│       ├── terraform.tfvars.example
+│       ├── templates/       # Cloud-init scripts for each tier
+│       └── README.md        # Detailed AWS deployment guide
 ├── scripts/
 │   ├── perf_test.py         # WebSocket performance benchmark
 │   └── perf_test_sticky.py  # Sticky session performance test

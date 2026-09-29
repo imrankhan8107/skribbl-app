@@ -63,51 +63,132 @@ Browser → nginx (port 80, sticky sessions) → Worker 1/2/3
 
 ---
 
-## Oracle Cloud (Always Free Tier)
+## AWS Multi-Host Distributed Deployment (Terraform)
 
-Deploy on OCI A1.Flex ARM instance — $0/month.
+For production scale (handling up to 150,000+ concurrent players), the application deploys across dedicated AWS EC2 instances managed via Terraform in `infra/aws/`.
+
+### Architecture Topology
+
+```
+                              Internet (Browser Clients & k6)
+                                             │
+                                             ▼
+                     ┌────────────────────────────────────────────────┐
+                     │          Nginx Reverse Proxy / LB              │
+                     │          (Public Subnet, Port 80/443)          │
+                     │   hash "$arg_gw$arg_room$arg_cid" consistent   │
+                     └───────────────┬────────────────┬───────────────┘
+                                     │                │
+                     ┌───────────────▼┐              ┌▼───────────────┐
+                     │ Go Gateway 1   │              │ Go Gateway N   │
+                     │ (EC2, :9000)   │  ...         │ (EC2, :9000)   │
+                     │ + Coord :9100  │              │ + Coord :9100  │
+                     └───────┬────────┘              └────────┬───────┘
+                             │                                │
+                             │  gRPC RoomStream (:50051)      │
+                             └───────────────┬────────────────┘
+                                             ▼
+                     ┌────────────────────────────────────────────────┐
+                     │           Python Worker Tier                   │
+                     │   Worker 1 (:50051) ... Worker M (:50051)      │
+                     │   (FastAPI + gRPC Servicer + VirtualTransport) │
+                     └───────────────────────┬────────────────────────┘
+                                             │
+                                             ▼
+                     ┌────────────────────────────────────────────────┐
+                     │          Redis Tier (:6379)                    │
+                     │   Dedicated EC2 Instance with AOF persistence  │
+                     │   (Room registry, worker discovery, snapshots) │
+                     └────────────────────────────────────────────────┘
+```
+
+### Tier Responsibilities
+
+1. **Nginx Reverse Proxy / Load Balancer** (`c5a.4xlarge`):
+   - Terminates public HTTP/HTTPS traffic.
+   - Consistent hashing via `hash "$arg_gw$arg_room$arg_cid"` ensures all clients in a game room land on the same Go Gateway instance.
+   - Kernel TCP tuning (`net.core.somaxconn = 65535`, file descriptor limits > 200,000).
+
+2. **Go Edge Gateways** (`c5a.2xlarge`):
+   - High-throughput epoll-based WebSocket termination on port `9000`.
+   - Handles client heartbeats (ping/pong), binary frame chunking, and backpressure queues.
+   - Maintains gRPC bidirectional streaming (`RoomStream`) on port `50051` to Python workers.
+   - Inter-gateway coordinator on port `9100`.
+
+3. **Python Game Workers** (`c5a.2xlarge`):
+   - Executes game logic (turns, canvas stroke validation, scoring, hints, word selection).
+   - In-memory room manager backed by `VirtualTransport` abstraction.
+   - Serves gRPC servicer streams (`:50051`) with zero HTTP overhead.
+
+4. **Redis Data Tier** (`c5a.xlarge`):
+   - Room registry and active worker discovery.
+   - Append-Only File (AOF) persistence for reliable recovery.
+   - Cross-gateway pub/sub relay for room broadcasts.
+
+### Security & Firewall Constraints
+
+In accordance with strict security standards, **zero ports are exposed to `0.0.0.0/0`**:
+
+1. **Internal Inter-Tier Communication**: All traffic between Nginx, Gateways, Workers, and Redis is locked strictly to `self = true` (only instances within the cluster security group can communicate across private IPs).
+2. **External Traffic (SSH, HTTP, Gateways, Coord)**: External ingress on ports 22, 80, 443, 9000, and 9100 is strictly locked down to `var.allowed_cidrs` (your local public IP/32 and CI/CD/Cloud9 IP/32).
 
 ### Prerequisites
 
-- OCI account with Always Free tier
-- Terraform ≥ 1.5
-- OCI CLI configured with API key
-- SSH key pair
+1. **AWS CLI** installed and configured (`aws configure`).
+2. **Terraform** >= 1.5.0 installed (`terraform --version`).
+3. An SSH public key on your local machine (`~/.ssh/id_ed25519.pub` or `~/.ssh/id_rsa.pub`).
+4. Your current public IP address (`curl ifconfig.me`).
 
-### Deploy
+### Step-by-Step Deployment
 
 ```bash
-cd infra/oci
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your OCI credentials
+cd infra/aws
 
+# 1. Copy example configuration
+cp terraform.tfvars.example terraform.tfvars
+```
+
+Edit `terraform.tfvars`:
+```hcl
+aws_region    = "us-east-1"
+allowed_cidrs = [
+  "YOUR_LOCAL_IP/32",     # Your local machine (from curl ifconfig.me)
+]
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
+
+# Cluster sizing
+gateway_count     = 2
+gateways_per_host = 1
+worker_count      = 2
+workers_per_host  = 2
+```
+
+Provision the infrastructure:
+```bash
+# 2. Initialize and deploy
 terraform init
 terraform plan
 terraform apply
 ```
 
-### After Deployment
+Deployment takes ~3–5 minutes for cloud-init to provision packages, compile container images, and start the services across all EC2 instances.
 
-App takes 3–5 minutes to start (Docker builds from source via cloud-init).
+### Verification & Monitoring
 
-```bash
-# Check progress
-ssh ubuntu@<public_ip>
-tail -f /var/log/skribbl-deploy.log
-```
+1. **Get cluster connection info**:
+   ```bash
+   terraform output
+   ```
 
-Access:
-- Via nginx: `http://<public_ip>:8080`
-- Direct: `http://<public_ip>:8000`
+2. **Verify Nginx health**:
+   ```bash
+   curl -I http://<nginx_public_ip>/health
+   ```
 
-### Update
-
-```bash
-ssh ubuntu@<public_ip>
-cd /home/ubuntu/skribbl-app
-git pull
-docker compose up -d --build
-```
+3. **Check cloud-init deployment logs on any instance**:
+   ```bash
+   ssh -i ~/.ssh/id_ed25519 ubuntu@<node_ip> "tail -f /var/log/cloud-init-output.log"
+   ```
 
 ### Teardown
 
@@ -115,42 +196,7 @@ docker compose up -d --build
 terraform destroy
 ```
 
-### Resource Usage
-
-| Resource | Free Allowance | This Deployment |
-|----------|---------------|-----------------|
-| A1.Flex OCPUs | 4 | 1 |
-| Memory | 24 GB | 6 GB |
-| Boot Volume | 200 GB | 50 GB |
-| Public IPs | 2 | 1 |
-
----
-
-## Azure Container Apps
-
-### Single Replica (Simple)
-
-```bash
-cd infra/azure
-terraform init
-terraform apply
-```
-
-Or use the PowerShell script: `.\infra\azure\deploy.ps1`
-
-Cost: ~$11/month (Container Apps + Registry).
-
-### Multi-Replica with Redis
-
-For scaling to 2–4 replicas:
-
-1. Create Azure Cache for Redis (Basic C0)
-2. Deploy with `REDIS_URL` environment variable
-3. Enable session affinity (sticky sessions)
-
-Cost: ~$33–45/month.
-
-See [infra/azure/README.md](../infra/azure/README.md) for step-by-step instructions.
+See [infra/aws/README.md](../infra/aws/README.md) for full operational runbooks, k6 distributed load testing procedures, and troubleshooting.
 
 ---
 
@@ -182,10 +228,10 @@ Tests multi-worker deployment with cookie-based routing:
 
 ## Capacity Planning
 
-| Deployment | Concurrent Players | Cost |
-|------------|-------------------|------|
-| Single worker (no Redis) | 100–500 | Free (OCI) |
-| 3 workers + Redis | 500–2000 | $0 (OCI) or ~$33/mo (Azure) |
-| 5+ workers + Redis | 2000–5000+ | Scale Azure replicas |
+| Deployment | Target Concurrent Users (VUs) | Architecture Topology | Verified Telemetry & Limits |
+|------------|-------------------------------|-----------------------|------------------------------|
+| **Single Container (Docker)** | 100–500 | Single container (FastAPI + built React) | 500 connections, 6,781 msgs/sec |
+| **Local Multi-Worker (Compose)** | 500–2,000 | Nginx LB + 3 App Workers + Redis | Sticky sessions with cookie routing |
+| **AWS Distributed Cluster (Terraform)** | **10,000–150,000+** | **Nginx (`c5a.4xlarge`) + Go Gateways (`c5a.2xlarge`) + Python Workers (`c5a.2xlarge`) + Redis (`c5a.xlarge`)** | **150,000 VUs, 512M messages, 4.00 Gbps, 0 control drops** ✅ |
 
-Each worker holds rooms in-memory. With sticky sessions, most rooms stay on a single worker (fast local broadcast). Redis relay handles the edge case of players landing on different workers.
+Each Python worker holds rooms in-memory with the game engine. The Go edge gateway offloads high-concurrency WebSocket I/O, epoll connection state, and frame buffering, while dedicated Redis synchronizes cross-gateway state and room discovery.
