@@ -17,7 +17,8 @@ import random
 import string
 import time
 from collections import deque
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, Any, Union
 from uuid import uuid4
 import re
 
@@ -47,12 +48,26 @@ MIN_NAME_LENGTH = 1
 MAX_NAME_LENGTH = 20
 
 
+@dataclass
+class PendingJoinRequest:
+    request_id: str
+    room_code: str
+    name: str
+    avatar: Optional[str]
+    websocket: object
+    created_at: float
+    timeout_task: Optional[asyncio.Task] = None
+
+
 class RoomManager:
     """Manages all active rooms in memory."""
 
     def __init__(self) -> None:
         self.rooms: dict[str, Room] = {}  # room_code -> Room
         self._player_to_room: dict[str, str] = {}  # player_id -> room_code (O(1) lookup)
+        self._pending_join_requests: dict[str, PendingJoinRequest] = {}  # request_id -> PendingJoinRequest
+        self._ws_to_pending_request: dict[object, str] = {}  # websocket -> request_id
+        self._ws_to_player: dict[object, dict] = {}  # websocket -> {"player_id": str, "room_code": str}
 
     def _generate_room_code(self) -> str:
         """Generate a unique 6-character alphanumeric uppercase room code."""
@@ -64,6 +79,16 @@ class RoomManager:
     async def _delete_room(self, room_code: str) -> None:
         """Delete a room and clean up Redis registrations."""
         self.rooms.pop(room_code, None)
+
+        # Cancel and clean up any pending join requests for this room
+        to_cancel = [rid for rid, req in self._pending_join_requests.items() if req.room_code == room_code]
+        for rid in to_cancel:
+            req = self._pending_join_requests.pop(rid, None)
+            if req:
+                if req.timeout_task and not req.timeout_task.done():
+                    req.timeout_task.cancel()
+                self._ws_to_pending_request.pop(req.websocket, None)
+
         if redis_pubsub.is_redis_enabled():
             try:
                 await redis_pubsub.unsubscribe_room(room_code)
@@ -457,20 +482,82 @@ class RoomManager:
                     },
                 }
 
-        if room.state != RoomState.LOBBY and not as_spectator:
-            return {
-                "type": "error",
-                "payload": {
-                    "code": "ROOM_IN_PROGRESS",
-                    "message": "Room is not accepting new players",
-                },
-            }
-
         is_spectator = as_spectator
 
         # Active player limit & spectator limit
         active_count = sum(1 for p in room.players if not getattr(p, "is_spectator", False))
         spectator_count = sum(1 for p in room.players if getattr(p, "is_spectator", False))
+
+        # Mid-game join with host approval:
+        # If room is in active match (not in lobby) and not explicitly joining as spectator:
+        if room.state != RoomState.LOBBY and not as_spectator:
+            # Check if both player capacity and spectator capacity are full
+            if active_count >= min(room.config.max_players, MAX_PLAYERS_HARD_CAP) and spectator_count >= 50:
+                return {
+                    "type": "error",
+                    "payload": {"code": "ROOM_FULL", "message": "Room is full"},
+                }
+
+            host = room.get_player(room.host_id)
+            if not host or not host.is_connected or not host.websocket:
+                return {
+                    "type": "error",
+                    "payload": {
+                        "code": "HOST_UNAVAILABLE",
+                        "message": "Room host is currently unavailable to approve join requests.",
+                    },
+                }
+
+            request_id = str(uuid4())
+            req = PendingJoinRequest(
+                request_id=request_id,
+                room_code=room_code,
+                name=name,
+                avatar=avatar,
+                websocket=websocket,
+                created_at=time.time(),
+            )
+            self._pending_join_requests[request_id] = req
+            self._ws_to_pending_request[websocket] = request_id
+            if not hasattr(room, "_pending_join_requests"):
+                room._pending_join_requests = {}
+            room._pending_join_requests[request_id] = req
+
+            async def _timeout_request():
+                try:
+                    await asyncio.sleep(30.0)
+                    await self._handle_join_request_timeout(request_id)
+                except asyncio.CancelledError:
+                    pass
+
+            req.timeout_task = asyncio.create_task(_timeout_request())
+
+            # Notify the host
+            try:
+                msg = {
+                    "type": "join_request_received",
+                    "payload": {
+                        "request_id": request_id,
+                        "player_name": name,
+                        "avatar": avatar,
+                        "room_code": room_code,
+                    },
+                }
+                if hasattr(host.websocket, "send_text"):
+                    await host.websocket.send_text(json_dumps(msg))
+                elif hasattr(host.websocket, "send_json"):
+                    await host.websocket.send_json(msg)
+            except Exception as e:
+                logger.warning("Failed to send join_request_received to host: %s", e)
+
+            return {
+                "type": "join_request_pending",
+                "payload": {
+                    "request_id": request_id,
+                    "room_code": room_code,
+                    "message": "Waiting for host approval...",
+                },
+            }
 
         if not is_spectator and active_count >= min(room.config.max_players, MAX_PLAYERS_HARD_CAP):
             return {
@@ -489,6 +576,7 @@ class RoomManager:
         player = Player(id=player_id, name=name, websocket=websocket, avatar=avatar, is_spectator=is_spectator)
         room.add_player(player)
         self._player_to_room[player_id] = room_code
+        self._ws_to_player[websocket] = {"player_id": player_id, "room_code": room_code}
 
         # Update room info in Redis
         if redis_pubsub.is_redis_enabled():
@@ -600,6 +688,273 @@ class RoomManager:
         self._player_to_room[player_id] = room_code
 
         return response
+
+    async def _handle_join_request_timeout(self, request_id: str) -> None:
+        """Handle 30s timeout on an unapproved join request."""
+        req = self._pending_join_requests.pop(request_id, None)
+        if not req:
+            return
+        self._ws_to_pending_request.pop(req.websocket, None)
+        room = self.rooms.get(req.room_code)
+        if room and hasattr(room, "_pending_join_requests"):
+            room._pending_join_requests.pop(request_id, None)
+
+        # Notify joiner
+        try:
+            msg = {
+                "type": "join_request_declined",
+                "payload": {
+                    "request_id": request_id,
+                    "reason": "timeout",
+                    "message": "Host did not respond to your join request.",
+                },
+            }
+            if hasattr(req.websocket, "send_text"):
+                await req.websocket.send_text(json_dumps(msg))
+            elif hasattr(req.websocket, "send_json"):
+                await req.websocket.send_json(msg)
+        except Exception:
+            pass
+
+        # Notify host that request timed out so UI dismisses it
+        if room:
+            host = room.get_player(room.host_id)
+            if host and host.is_connected and host.websocket:
+                try:
+                    h_msg = {
+                        "type": "join_request_resolved",
+                        "payload": {"request_id": request_id, "status": "timeout"},
+                    }
+                    if hasattr(host.websocket, "send_text"):
+                        await host.websocket.send_text(json_dumps(h_msg))
+                    elif hasattr(host.websocket, "send_json"):
+                        await host.websocket.send_json(h_msg)
+                except Exception:
+                    pass
+
+    async def cancel_pending_join_request(self, identifier: Union[object, str]) -> None:
+        """Cancel a pending join request when the joiner cancels or disconnects."""
+        if isinstance(identifier, str):
+            request_id = identifier
+            req = self._pending_join_requests.pop(request_id, None)
+        else:
+            request_id = self._ws_to_pending_request.pop(identifier, None)
+            req = self._pending_join_requests.pop(request_id, None) if request_id else None
+
+        if not req:
+            return
+
+        if req.timeout_task and not req.timeout_task.done():
+            req.timeout_task.cancel()
+
+        self._ws_to_pending_request.pop(req.websocket, None)
+        room = self.rooms.get(req.room_code)
+        if room and hasattr(room, "_pending_join_requests"):
+            room._pending_join_requests.pop(req.request_id, None)
+
+        # Notify host that request was cancelled
+        if room:
+            host = room.get_player(room.host_id)
+            if host and host.is_connected and host.websocket:
+                try:
+                    h_msg = {
+                        "type": "join_request_resolved",
+                        "payload": {
+                            "request_id": req.request_id,
+                            "status": "cancelled",
+                            "player_name": req.name,
+                        },
+                    }
+                    if hasattr(host.websocket, "send_text"):
+                        await host.websocket.send_text(json_dumps(h_msg))
+                    elif hasattr(host.websocket, "send_json"):
+                        await host.websocket.send_json(h_msg)
+                except Exception:
+                    pass
+
+    async def respond_join_request(self, host_player_id: str, request_id: str, action: str) -> dict:
+        """Handle host approval response for a pending mid-game join request.
+
+        Args:
+            host_player_id: ID of the host responding to the request.
+            request_id: UUID of the pending join request.
+            action: One of 'accept_player', 'accept_spectator', or 'decline'.
+        """
+        req = self._pending_join_requests.get(request_id)
+        if not req:
+            return {
+                "type": "error",
+                "payload": {"code": "REQUEST_NOT_FOUND", "message": "Join request not found or expired"},
+            }
+
+        room = self.rooms.get(req.room_code)
+        if not room:
+            return {
+                "type": "error",
+                "payload": {"code": "ROOM_NOT_FOUND", "message": "Room not found"},
+            }
+
+        if room.host_id != host_player_id:
+            return {
+                "type": "error",
+                "payload": {"code": "PERMISSION_DENIED", "message": "Only the host can respond to join requests"},
+            }
+
+        if action == "decline":
+            if req.timeout_task and not req.timeout_task.done():
+                req.timeout_task.cancel()
+            self._pending_join_requests.pop(request_id, None)
+            self._ws_to_pending_request.pop(req.websocket, None)
+            if hasattr(room, "_pending_join_requests"):
+                room._pending_join_requests.pop(request_id, None)
+
+            # Notify requester
+            try:
+                d_msg = {
+                    "type": "join_request_declined",
+                    "payload": {
+                        "request_id": request_id,
+                        "reason": "declined",
+                        "message": "The host declined your join request.",
+                    },
+                }
+                if hasattr(req.websocket, "send_text"):
+                    await req.websocket.send_text(json_dumps(d_msg))
+                elif hasattr(req.websocket, "send_json"):
+                    await req.websocket.send_json(d_msg)
+            except Exception:
+                pass
+
+            return {
+                "type": "join_request_resolved",
+                "payload": {"request_id": request_id, "status": "declined"},
+            }
+
+        is_spectator = (action == "accept_spectator")
+        active_count = sum(1 for p in room.players if not getattr(p, "is_spectator", False))
+        spectator_count = sum(1 for p in room.players if getattr(p, "is_spectator", False))
+
+        if not is_spectator and active_count >= min(room.config.max_players, MAX_PLAYERS_HARD_CAP):
+            return {
+                "type": "error",
+                "payload": {
+                    "code": "ROOM_FULL",
+                    "message": "Room has reached maximum active players. You can accept them as spectator.",
+                },
+            }
+
+        if is_spectator and spectator_count >= 50:
+            return {
+                "type": "error",
+                "payload": {"code": "ROOM_FULL", "message": "Spectator capacity reached"},
+            }
+
+        # Cancel timeout and pop request
+        if req.timeout_task and not req.timeout_task.done():
+            req.timeout_task.cancel()
+        self._pending_join_requests.pop(request_id, None)
+        self._ws_to_pending_request.pop(req.websocket, None)
+        if hasattr(room, "_pending_join_requests"):
+            room._pending_join_requests.pop(request_id, None)
+
+        player_id = str(uuid4())
+        player = Player(
+            id=player_id,
+            name=req.name,
+            websocket=req.websocket,
+            avatar=req.avatar,
+            score=0,
+            is_spectator=is_spectator,
+            is_connected=True,
+            has_guessed=False,
+        )
+        room.add_player(player)
+        self._player_to_room[player_id] = room.code
+        self._ws_to_player[req.websocket] = {"player_id": player_id, "room_code": room.code}
+
+        # Cancel insufficient players countdown if now >= 2 connected players
+        connected = sum(1 for p in room.players if p.is_connected)
+        if connected >= 2:
+            task = getattr(room, '_insufficient_players_task', None)
+            if task and not task.done():
+                task.cancel()
+                room._insufficient_players_task = None
+
+        if redis_pubsub.is_redis_enabled():
+            await redis_pubsub.set_room_info(room.code, {
+                "state": room.state.value,
+                "player_count": len(room.players),
+                "config": self._serialize_config(room.config),
+                "host_id": room.host_id,
+            })
+
+        # Broadcast updated player list
+        await self.broadcast(
+            room.code,
+            {
+                "type": "player_list",
+                "payload": {
+                    "players": [self._serialize_player(p, room=room) for p in room.players]
+                },
+            },
+        )
+
+        # Broadcast system chat announcement
+        join_msg = (
+            f"👁️ {player.name} joined as a spectator."
+            if is_spectator
+            else f"🎮 {player.name} joined the game!"
+        )
+        await self.broadcast(
+            room.code,
+            {
+                "type": "chat_message",
+                "payload": {
+                    "sender_id": "",
+                    "sender_name": "System",
+                    "text": join_msg,
+                    "type": "system",
+                },
+            },
+        )
+
+        resp_payload = {
+            "room_code": room.code,
+            "player_id": player_id,
+            "players": [self._serialize_player(p, room=room) for p in room.players],
+            "config": self._serialize_config(room.config),
+            "state": room.state.value,
+            "is_spectator": is_spectator,
+            "current_round": room.current_round,
+            "host_id": room.host_id,
+            "drawer_id": room.turn.drawer_id if room.turn else None,
+            "hint": room.turn.hint if room.turn else [],
+        }
+        if room.turn is not None and room.state == RoomState.PLAYING:
+            elapsed = time.time() - room.turn.start_time
+            remaining = max(0, int(room.config.turn_duration - elapsed))
+            resp_payload["duration"] = remaining
+            if getattr(room.turn, "theme", None):
+                resp_payload["theme"] = room.turn.theme
+
+        # Send room_joined to requester
+        joined_msg = {"type": "room_joined", "payload": resp_payload}
+        try:
+            if hasattr(req.websocket, "send_text"):
+                await req.websocket.send_text(json_dumps(joined_msg))
+            elif hasattr(req.websocket, "send_json"):
+                await req.websocket.send_json(joined_msg)
+        except Exception as e:
+            logger.warning("Failed to send room_joined to accepted player: %s", e)
+
+        return {
+            "type": "join_request_resolved",
+            "payload": {
+                "request_id": request_id,
+                "status": "accepted_spectator" if is_spectator else "accepted_player",
+                "player_id": player_id,
+            },
+        }
 
     async def remove_player(self, player_id: str) -> None:
         """Remove a player from their room, handling host reassignment and cleanup.
@@ -800,6 +1155,27 @@ class RoomManager:
                 "config": self._serialize_config(room.config),
                 "host_id": room.host_id,
             })
+
+        # Forward any pending join requests to the new host
+        if hasattr(room, "_pending_join_requests"):
+            for req in room._pending_join_requests.values():
+                if new_host.websocket:
+                    try:
+                        f_msg = {
+                            "type": "join_request_received",
+                            "payload": {
+                                "request_id": req.request_id,
+                                "player_name": req.name,
+                                "avatar": req.avatar,
+                                "room_code": room.code,
+                            },
+                        }
+                        if hasattr(new_host.websocket, "send_text"):
+                            await new_host.websocket.send_text(json_dumps(f_msg))
+                        elif hasattr(new_host.websocket, "send_json"):
+                            await new_host.websocket.send_json(f_msg)
+                    except Exception:
+                        pass
 
     async def handle_reconnect(self, name: str, room_code: str, websocket, avatar: Optional[str] = None) -> dict:
         """Handle a player reconnecting within the 120-second grace window.
@@ -1447,6 +1823,11 @@ class RoomManager:
                         room._insufficient_players_task = None
                     await self._end_game_insufficient_players_immediate(room)
 
+            elif msg_type == "respond_join_request":
+                request_id = payload.get("request_id", "") if isinstance(payload, dict) else ""
+                action = payload.get("action", "") if isinstance(payload, dict) else ""
+                await self.respond_join_request(player_id, request_id, action)
+
         except Exception as exc:
             logger.exception(
                 "Error handling forwarded message type '%s' for player %s in room %s: %s",
@@ -1779,6 +2160,27 @@ class RoomManager:
                 },
             },
         )
+
+        # Forward any pending join requests to the new host
+        if hasattr(room, "_pending_join_requests"):
+            for req in room._pending_join_requests.values():
+                if target.websocket:
+                    try:
+                        f_msg = {
+                            "type": "join_request_received",
+                            "payload": {
+                                "request_id": req.request_id,
+                                "player_name": req.name,
+                                "avatar": req.avatar,
+                                "room_code": room.code,
+                            },
+                        }
+                        if hasattr(target.websocket, "send_text"):
+                            await target.websocket.send_text(json_dumps(f_msg))
+                        elif hasattr(target.websocket, "send_json"):
+                            await target.websocket.send_json(f_msg)
+                    except Exception:
+                        pass
 
         return {
             "type": "host_transferred",

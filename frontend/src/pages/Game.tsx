@@ -9,6 +9,7 @@ import TimerBar from "../components/TimerBar";
 import { useGameAudio } from "../hooks/useGameAudio";
 import { HeaderBar } from "../components/HeaderBar";
 import { Confetti } from "../components/Confetti";
+import { getAvatarForPlayer } from "../utils/avatars";
 
 /**
  * Game page — renders the active game view with canvas, chat, player list,
@@ -110,19 +111,114 @@ export default function Game() {
 
   // Reconnection banner component
   const reconnectBanner = gameState.waitingForReconnect ? (
-    <div className="reconnect-banner" data-testid="reconnect-banner">
+    <div
+      className="reconnect-banner"
+      data-testid="reconnect-banner"
+      style={{
+        background: "#fff3cd",
+        border: "1px solid #ffc107",
+        borderRadius: "8px",
+        padding: "12px 16px",
+        margin: "8px 0",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "12px",
+      }}
+    >
       <span>Player disconnected — waiting for reconnection ({countdown}s remaining)...</span>
       {gameState.isHost && (
         <button
           className="end-game-now-btn"
           data-testid="end-game-now-btn"
           onClick={() => send("end_game_now", {})}
+          style={{
+            background: "#dc3545",
+            color: "white",
+            border: "none",
+            borderRadius: "4px",
+            padding: "6px 12px",
+            cursor: "pointer",
+          }}
         >
           End Game Now
         </button>
       )}
     </div>
   ) : null;
+
+  // Host Join Approval Banner
+  const hostJoinRequests =
+    gameState.isHost && gameState.pendingJoinRequests && gameState.pendingJoinRequests.length > 0
+      ? gameState.pendingJoinRequests
+      : [];
+
+  const hostApprovalBanner =
+    hostJoinRequests.length > 0 ? (
+      <div className="host-join-approval-container" data-testid="host-join-approval-container">
+        {hostJoinRequests.map((req) => {
+          const avatarInfo = getAvatarForPlayer(req.playerName, req.avatar);
+          return (
+            <div
+              key={req.requestId}
+              className="host-join-approval-card"
+              data-testid={`join-request-${req.requestId}`}
+            >
+              <div className="host-join-info">
+                <span className="host-join-avatar">{avatarInfo?.emoji || "👋"}</span>
+                <div className="host-join-text">
+                  <span className="host-join-title">
+                    <strong>{req.playerName}</strong> wants to join the match!
+                  </span>
+                  <span className="host-join-subtitle">Choose how they should join:</span>
+                </div>
+              </div>
+              <div className="host-join-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm join-approve-player-btn"
+                  data-testid={`approve-player-${req.requestId}`}
+                  onClick={() =>
+                    send("respond_join_request", {
+                      request_id: req.requestId,
+                      action: "accept_player",
+                    })
+                  }
+                >
+                  🎮 Accept as Player
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm join-approve-spectator-btn"
+                  data-testid={`approve-spectator-${req.requestId}`}
+                  onClick={() =>
+                    send("respond_join_request", {
+                      request_id: req.requestId,
+                      action: "accept_spectator",
+                    })
+                  }
+                >
+                  👁️ Accept as Spectator
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger btn-sm join-decline-btn"
+                  data-testid={`decline-request-${req.requestId}`}
+                  onClick={() =>
+                    send("respond_join_request", {
+                      request_id: req.requestId,
+                      action: "decline",
+                    })
+                  }
+                >
+                  ✕ Decline
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    ) : null;
 
   if (gameState.phase === "word_selection") {
     return (
@@ -131,6 +227,7 @@ export default function Game() {
         <HeaderBar roomCode={gameState.roomCode} phase={gameState.phase} />
         <div className="game-page" data-testid="game-page">
           {reconnectBanner}
+          {hostApprovalBanner}
           <div className="game-header" data-testid="game-header">
             <span className="round-indicator" data-testid="round-indicator">
               Round {gameState.currentRound || 1} /{" "}
@@ -198,6 +295,7 @@ export default function Game() {
       <HeaderBar roomCode={gameState.roomCode} phase={gameState.phase} />
       <div className="game-page" data-testid="game-page">
         {reconnectBanner}
+        {hostApprovalBanner}
 
         {gameState.isSpectator && (
           <div className="spectator-banner" data-testid="spectator-banner">

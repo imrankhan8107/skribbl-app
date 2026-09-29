@@ -34,6 +34,9 @@ const initialState: GameState = {
   typingUsers: {},
   mvpAwards: [],
   sessionStats: [],
+  joinRequestPending: false,
+  pendingJoinRequestId: null,
+  pendingJoinRequests: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -655,6 +658,80 @@ describe("gameReducer", () => {
       expect(next.isHost).toBe(true);
       expect(next.players.find((p) => p.id === "p1")?.isHost).toBe(false);
       expect(next.players.find((p) => p.id === "p2")?.isHost).toBe(true);
+    });
+  });
+
+  describe("JOIN_REQUEST actions", () => {
+    it("handles JOIN_REQUEST_PENDING", () => {
+      const action: Action = {
+        type: "JOIN_REQUEST_PENDING",
+        payload: { requestId: "req-1", roomCode: "ROOM1" },
+      };
+      const next = gameReducer(initialState, action);
+      expect(next.joinRequestPending).toBe(true);
+      expect(next.pendingJoinRequestId).toBe("req-1");
+      expect(next.errorMessage).toBeNull();
+    });
+
+    it("handles JOIN_REQUEST_RECEIVED by appending request", () => {
+      const action: Action = {
+        type: "JOIN_REQUEST_RECEIVED",
+        payload: { requestId: "req-1", playerName: "Charlie", roomCode: "ROOM1" },
+      };
+      const next = gameReducer(initialState, action);
+      expect(next.pendingJoinRequests).toHaveLength(1);
+      expect(next.pendingJoinRequests![0].playerName).toBe("Charlie");
+    });
+
+    it("handles JOIN_REQUEST_RESOLVED for host and requester", () => {
+      const stateWithReq: GameState = {
+        ...initialState,
+        joinRequestPending: true,
+        pendingJoinRequestId: "req-1",
+        pendingJoinRequests: [{ requestId: "req-1", playerName: "Charlie", roomCode: "ROOM1" }],
+      };
+      const action: Action = {
+        type: "JOIN_REQUEST_RESOLVED",
+        payload: { requestId: "req-1", status: "accepted_player" },
+      };
+      const next = gameReducer(stateWithReq, action);
+      expect(next.pendingJoinRequests).toHaveLength(0);
+      expect(next.joinRequestPending).toBe(false);
+      expect(next.pendingJoinRequestId).toBeNull();
+    });
+
+    it("handles JOIN_REQUEST_DECLINED with error message", () => {
+      const stateWithReq: GameState = {
+        ...initialState,
+        joinRequestPending: true,
+        pendingJoinRequestId: "req-1",
+      };
+      const action: Action = {
+        type: "JOIN_REQUEST_DECLINED",
+        payload: {
+          requestId: "req-1",
+          reason: "declined",
+          message: "Host declined your join request.",
+        },
+      };
+      const next = gameReducer(stateWithReq, action);
+      expect(next.joinRequestPending).toBe(false);
+      expect(next.pendingJoinRequestId).toBeNull();
+      expect(next.errorMessage).toBe("Host declined your join request.");
+    });
+
+    it("handles CANCEL_JOIN_REQUEST", () => {
+      const stateWithReq: GameState = {
+        ...initialState,
+        joinRequestPending: true,
+        pendingJoinRequestId: "req-1",
+      };
+      const action: Action = {
+        type: "CANCEL_JOIN_REQUEST",
+      };
+      const next = gameReducer(stateWithReq, action);
+      expect(next.joinRequestPending).toBe(false);
+      expect(next.pendingJoinRequestId).toBeNull();
     });
   });
 });

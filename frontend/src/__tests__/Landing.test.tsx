@@ -36,17 +36,19 @@ const defaultGameState: GameState = {
 };
 
 function renderLanding(
-  overrides: Partial<WebSocketContextValue> = {},
+  overrides: Omit<Partial<WebSocketContextValue>, "gameState"> & {
+    gameState?: Partial<GameState>;
+  } = {},
   initialEntries: string[] = ["/"]
 ) {
   const send = vi.fn();
   const contextValue: WebSocketContextValue = {
-    gameState: defaultGameState,
+    gameState: { ...defaultGameState, ...overrides.gameState },
     send,
     dispatch: vi.fn(),
     isConnected: true,
     ...overrides,
-  };
+  } as WebSocketContextValue;
 
   const utils = render(
     <WebSocketContext.Provider value={contextValue}>
@@ -265,6 +267,26 @@ describe("Landing", () => {
       avatar: expect.any(String),
       as_spectator: false,
       password: "mypassword",
+    });
+  });
+
+  it("renders Waiting for Host Approval modal when joinRequestPending is true", async () => {
+    const user = userEvent.setup();
+    const { send } = renderLanding({
+      gameState: {
+        joinRequestPending: true,
+        pendingJoinRequestId: "req-999",
+      },
+    });
+
+    expect(screen.getByTestId("join-approval-modal")).toBeInTheDocument();
+    expect(screen.getByText(/waiting for host approval/i)).toBeInTheDocument();
+
+    const cancelBtn = screen.getByTestId("cancel-join-request-btn");
+    await user.click(cancelBtn);
+
+    expect(send).toHaveBeenCalledWith("cancel_join_request", {
+      request_id: "req-999",
     });
   });
 });

@@ -102,11 +102,22 @@ async def websocket_handler(websocket: WebSocket) -> None:
                         room_code = result["payload"]["room_code"]
                     await websocket.send_json(result)
 
+                elif msg_type == "cancel_join_request":
+                    request_id = payload.get("request_id") if isinstance(payload, dict) else None
+                    await room_manager.cancel_pending_join_request(request_id or websocket)
+
                 elif msg_type == "pong":
                     # Application-level pong for heartbeat — always handle locally
                     pass
 
                 else:
+                    # Check if this websocket was approved via midgame join request
+                    if player_id is None:
+                        p_info = room_manager._ws_to_player.get(websocket)
+                        if p_info:
+                            player_id = p_info["player_id"]
+                            room_code = p_info["room_code"]
+
                     # All other messages require an identified player
                     if player_id is None:
                         # Check if it's a known message type that needs auth
@@ -115,7 +126,7 @@ async def websocket_handler(websocket: WebSocket) -> None:
                             "guess", "chat", "stroke", "fill", "clear_canvas",
                             "kick_player", "leave_room", "reaction", "typing",
                             "toggle_ready", "rematch", "end_game_now", "update_profile",
-                            "undo", "shape", "highlighter",
+                            "undo", "shape", "highlighter", "respond_join_request", "cancel_join_request",
                         }
                         if msg_type not in known_types:
                             await _send_error(websocket, "UNKNOWN_MESSAGE", f"Unknown message type: {msg_type}")
@@ -148,6 +159,16 @@ async def websocket_handler(websocket: WebSocket) -> None:
     finally:
         # Stop heartbeat task
         stop_heartbeat(heartbeat_task)
+
+        # Check if player was identified via mid-game join
+        if player_id is None:
+            p_info = room_manager._ws_to_player.get(websocket)
+            if p_info:
+                player_id = p_info.get("player_id")
+                room_code = p_info.get("room_code")
+            else:
+                await room_manager.cancel_pending_join_request(websocket)
+        room_manager._ws_to_player.pop(websocket, None)
 
         # Handle disconnect if player was identified
         if player_id is not None:
@@ -338,6 +359,12 @@ async def _handle_local_message(
     elif msg_type == "transfer_host":
         target_id = (payload.get("target_player_id") or payload.get("target_id", "")) if isinstance(payload, dict) else ""
         result = await room_manager.transfer_host(player_id, target_id)
+        await websocket.send_json(result)
+
+    elif msg_type == "respond_join_request":
+        request_id = payload.get("request_id", "") if isinstance(payload, dict) else ""
+        action = payload.get("action", "") if isinstance(payload, dict) else ""
+        result = await room_manager.respond_join_request(player_id, request_id, action)
         await websocket.send_json(result)
 
     elif msg_type == "leave_room":

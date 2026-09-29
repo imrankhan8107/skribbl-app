@@ -124,14 +124,27 @@ class TestJoinRoom:
         ws2 = make_mock_ws()
         create_result = await manager.create_room("Alice", ws1)
         room_code = create_result["payload"]["room_code"]
+        host_id = create_result["payload"]["player_id"]
 
         # Manually set room state to PLAYING
         room = manager.get_room(room_code)
         room.state = RoomState.PLAYING
 
         result = await manager.join_room("Bob", room_code, ws2)
-        assert result["type"] == "error"
-        assert result["payload"]["code"] == "ROOM_IN_PROGRESS"
+        assert result["type"] == "join_request_pending"
+        assert result["payload"]["room_code"] == room_code
+        req_id = result["payload"]["request_id"]
+
+        # Host accepts as player
+        res = await manager.respond_join_request(host_id, req_id, "accept_player")
+        assert res["type"] == "join_request_resolved"
+        assert res["payload"]["status"] == "accepted_player"
+
+        bob = room.get_player(res["payload"]["player_id"])
+        assert bob is not None
+        assert bob.name == "Bob"
+        assert bob.score == 0
+        assert bob.is_spectator is False
 
     async def test_join_room_full(self, manager):
         ws_host = make_mock_ws()
@@ -833,17 +846,62 @@ class TestSpectatorMode:
         room.state = RoomState.PLAYING
         room.current_round = 2
 
-        # Non-spectator rejected
-        res_fail = await manager.join_room("Charlie", room_code, ws3, as_spectator=False)
-        assert res_fail["type"] == "error"
-        assert res_fail["payload"]["code"] == "ROOM_IN_PROGRESS"
+        # Non-spectator triggers join request approval flow
+        res_req = await manager.join_room("Charlie", room_code, ws3, as_spectator=False)
+        assert res_req["type"] == "join_request_pending"
 
-        # Spectator accepted mid-game
-        res_spec = await manager.join_room("Charlie", room_code, ws3, as_spectator=True)
+        # Host approves as spectator
+        host_id = res1["payload"]["player_id"]
+        res_spec_approved = await manager.respond_join_request(host_id, res_req["payload"]["request_id"], "accept_spectator")
+        assert res_spec_approved["type"] == "join_request_resolved"
+        assert res_spec_approved["payload"]["status"] == "accepted_spectator"
+        charlie = room.get_player(res_spec_approved["payload"]["player_id"])
+        assert charlie.is_spectator is True
+
+        # Direct spectator join also accepted mid-game
+        ws4 = make_mock_ws()
+        res_spec = await manager.join_room("Dave", room_code, ws4, as_spectator=True)
         assert res_spec["type"] == "room_joined"
         assert res_spec["payload"]["is_spectator"] is True
         assert res_spec["payload"]["state"] == "playing"
         assert res_spec["payload"]["current_round"] == 2
+
+    async def test_join_room_mid_game_decline(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        host_id = res1["payload"]["player_id"]
+        room_code = res1["payload"]["room_code"]
+
+        room = manager.get_room(room_code)
+        room.state = RoomState.PLAYING
+
+        req = await manager.join_room("Bob", room_code, ws2)
+        assert req["type"] == "join_request_pending"
+
+        # Host declines
+        dec = await manager.respond_join_request(host_id, req["payload"]["request_id"], "decline")
+        assert dec["type"] == "join_request_resolved"
+        assert dec["payload"]["status"] == "declined"
+        assert room.get_player("Bob") is None
+
+    async def test_join_room_mid_game_cancel(self, manager):
+        ws1 = make_mock_ws()
+        ws2 = make_mock_ws()
+        res1 = await manager.create_room("Alice", ws1)
+        room_code = res1["payload"]["room_code"]
+
+        room = manager.get_room(room_code)
+        room.state = RoomState.PLAYING
+
+        req = await manager.join_room("Bob", room_code, ws2)
+        assert req["type"] == "join_request_pending"
+        req_id = req["payload"]["request_id"]
+        assert req_id in manager._pending_join_requests
+
+        # Requester cancels
+        await manager.cancel_pending_join_request(req_id)
+        assert req_id not in manager._pending_join_requests
 
     async def test_transfer_host_to_spectator_rejected(self, manager):
         ws1 = make_mock_ws()

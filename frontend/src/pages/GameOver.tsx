@@ -684,12 +684,87 @@ export default function GameOver() {
     gameState.sessionStats.some((s) => s.sessionWins > 0 || s.sessionGames > 1)
   );
 
+  const hostJoinRequests =
+    gameState.isHost && gameState.pendingJoinRequests && gameState.pendingJoinRequests.length > 0
+      ? gameState.pendingJoinRequests
+      : [];
+
+  const hostApprovalBanner =
+    hostJoinRequests.length > 0 ? (
+      <div className="host-join-approval-container" data-testid="host-join-approval-container">
+        {hostJoinRequests.map((req) => {
+          const avatarInfo = getAvatarForPlayer(req.playerName, req.avatar);
+          return (
+            <div
+              key={req.requestId}
+              className="host-join-approval-card"
+              data-testid={`join-request-${req.requestId}`}
+            >
+              <div className="host-join-info">
+                <span className="host-join-avatar">{avatarInfo?.emoji || "👋"}</span>
+                <div className="host-join-text">
+                  <span className="host-join-title">
+                    <strong>{req.playerName}</strong> wants to join the room!
+                  </span>
+                  <span className="host-join-subtitle">
+                    Admit them into the lobby for the next game:
+                  </span>
+                </div>
+              </div>
+              <div className="host-join-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm join-approve-player-btn"
+                  data-testid={`approve-player-${req.requestId}`}
+                  onClick={() =>
+                    send("respond_join_request", {
+                      request_id: req.requestId,
+                      action: "accept_player",
+                    })
+                  }
+                >
+                  🎮 Accept as Player
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm join-approve-spectator-btn"
+                  data-testid={`approve-spectator-${req.requestId}`}
+                  onClick={() =>
+                    send("respond_join_request", {
+                      request_id: req.requestId,
+                      action: "accept_spectator",
+                    })
+                  }
+                >
+                  👁️ Accept as Spectator
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger btn-sm join-decline-btn"
+                  data-testid={`decline-request-${req.requestId}`}
+                  onClick={() =>
+                    send("respond_join_request", {
+                      request_id: req.requestId,
+                      action: "decline",
+                    })
+                  }
+                >
+                  ✕ Decline
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    ) : null;
+
   return (
     <>
       <HeaderBar roomCode={gameState.roomCode} phase={gameState.phase} />
       <div className="game-over-page">
         <ConfettiCanvas />
         <h1>Game Over</h1>
+        {hostApprovalBanner}
 
         {winner ? (
           <>

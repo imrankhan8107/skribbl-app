@@ -19,7 +19,7 @@ export default function Landing() {
   const [selectedAvatarId, setSelectedAvatarId] = useState(getStoredAvatarId);
   const [joinAsSpectator, setJoinAsSpectator] = useState(false);
   const [roomPassword, setRoomPassword] = useState("");
-  const { gameState, send } = useWebSocket();
+  const { gameState, send, dispatch } = useWebSocket();
   const navigate = useNavigate();
 
   // Keep roomCode in sync if URL query param changes
@@ -38,7 +38,7 @@ export default function Landing() {
       } else if (gameState.phase === "playing" || gameState.phase === "word_selection") {
         navigate(`/game/${gameState.roomCode}`);
       } else if (gameState.phase === "game_over") {
-        navigate(`/game-over/${gameState.roomCode}`);
+        navigate(`/gameover/${gameState.roomCode}`);
       }
     }
   }, [gameState.phase, gameState.roomCode, navigate]);
@@ -88,6 +88,38 @@ export default function Landing() {
       <HeaderBar phase="idle" />
       <div className="landing-page">
         <h1>Skribbl</h1>
+
+        {gameState.joinRequestPending && (
+          <div className="join-approval-modal-backdrop" data-testid="join-approval-modal">
+            <div className="join-approval-modal-card">
+              <div className="join-approval-spinner">⏳</div>
+              <h2>Waiting for Host Approval</h2>
+              <p>
+                The match in room <strong>{roomCode}</strong> is in progress. We've asked the host
+                to let you in!
+              </p>
+              <p className="join-approval-hint">
+                The host can admit you as a player (starting with 0 score this round) or as a
+                spectator.
+              </p>
+              <div className="join-approval-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  data-testid="cancel-join-request-btn"
+                  onClick={() => {
+                    send("cancel_join_request", {
+                      request_id: gameState.pendingJoinRequestId,
+                    });
+                    dispatch({ type: "CANCEL_JOIN_REQUEST" });
+                  }}
+                >
+                  Cancel Request
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {gameState.errorMessage && (
           <div className="error-message" role="alert">

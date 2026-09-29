@@ -177,10 +177,10 @@ def test_error_room_not_found(client):
         assert msg["payload"]["code"] == "ROOM_NOT_FOUND"
 
 
-# --- Test 3: Error code - ROOM_IN_PROGRESS ---
+# --- Test 3: Mid-game Join with Host Approval ---
 
-def test_error_room_in_progress(client):
-    """Joining a room that's already playing returns ROOM_IN_PROGRESS error."""
+def test_midgame_join_approval_flow(client):
+    """Joining a room in progress triggers host approval flow."""
     with client.websocket_connect("/ws") as ws_host, \
          client.websocket_connect("/ws") as ws_p2, \
          client.websocket_connect("/ws") as ws_p3:
@@ -197,10 +197,26 @@ def test_error_room_in_progress(client):
         send_msg(ws_host, "start_game")
         recv_until_type(ws_host, "game_started")
 
-        # Third player tries to join
+        # Third player tries to join mid-game
         send_msg(ws_p3, "join_room", {"name": "Player3", "room_code": room_code})
-        msg = recv_until_type(ws_p3, "error")
-        assert msg["payload"]["code"] == "ROOM_IN_PROGRESS"
+        pending_msg = recv_until_type(ws_p3, "join_request_pending")
+        req_id = pending_msg["payload"]["request_id"]
+
+        # Host receives join_request_received
+        host_req_msg = recv_until_type(ws_host, "join_request_received")
+        assert host_req_msg["payload"]["request_id"] == req_id
+        assert host_req_msg["payload"]["player_name"] == "Player3"
+
+        # Host accepts as player
+        send_msg(ws_host, "respond_join_request", {"request_id": req_id, "action": "accept_player"})
+
+        # Host gets join_request_resolved
+        resolved_msg = recv_until_type(ws_host, "join_request_resolved")
+        assert resolved_msg["payload"]["status"] == "accepted_player"
+
+        # Joiner gets room_joined
+        joined_msg = recv_until_type(ws_p3, "room_joined")
+        assert joined_msg["payload"]["is_spectator"] is False
 
 
 # --- Test 4: Error code - ROOM_FULL ---

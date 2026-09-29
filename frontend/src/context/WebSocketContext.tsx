@@ -43,6 +43,9 @@ const initialGameState: GameState = {
   typingUsers: {},
   mvpAwards: [],
   sessionStats: [],
+  joinRequestPending: false,
+  pendingJoinRequestId: null,
+  pendingJoinRequests: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -120,12 +123,15 @@ export function gameReducer(state: GameState, action: Action): GameState {
       const timerSeconds = (p.duration as number) ?? state.timerSeconds;
       const currentTheme = (p.theme as GameState["currentTheme"]) ?? null;
 
+      const hostId = (p.host_id as string) ?? (p.hostId as string);
+      const isHost = action.payload.isHost ?? (hostId ? hostId === action.payload.playerId : false);
+
       return {
         ...state,
         phase,
         roomCode: action.payload.roomCode,
         localPlayerId: action.payload.playerId,
-        isHost: action.payload.isHost,
+        isHost,
         isSpectator,
         drawerId,
         isDrawer: !isSpectator && drawerId === action.payload.playerId,
@@ -135,6 +141,8 @@ export function gameReducer(state: GameState, action: Action): GameState {
         currentTheme,
         players,
         artworkGallery: [],
+        joinRequestPending: false,
+        pendingJoinRequestId: null,
       };
     }
 
@@ -522,6 +530,56 @@ export function gameReducer(state: GameState, action: Action): GameState {
       sessionStorage.removeItem("skribbl_session");
       return { ...initialGameState };
 
+    case "JOIN_REQUEST_PENDING": {
+      return {
+        ...state,
+        joinRequestPending: true,
+        pendingJoinRequestId: action.payload.requestId,
+        errorMessage: null,
+      };
+    }
+
+    case "JOIN_REQUEST_RECEIVED": {
+      const existing = state.pendingJoinRequests ?? [];
+      const updated = existing.filter((r) => r.requestId !== action.payload.requestId);
+      return {
+        ...state,
+        pendingJoinRequests: [...updated, action.payload],
+      };
+    }
+
+    case "JOIN_REQUEST_RESOLVED": {
+      const existing = state.pendingJoinRequests ?? [];
+      const updated = existing.filter((r) => r.requestId !== action.payload.requestId);
+      const isLocal = state.pendingJoinRequestId === action.payload.requestId;
+      return {
+        ...state,
+        pendingJoinRequests: updated,
+        ...(isLocal ? { joinRequestPending: false, pendingJoinRequestId: null } : {}),
+      };
+    }
+
+    case "JOIN_REQUEST_DECLINED": {
+      return {
+        ...state,
+        joinRequestPending: false,
+        pendingJoinRequestId: null,
+        errorMessage: action.payload.message || "Join request was declined.",
+      };
+    }
+
+    case "CANCEL_JOIN_REQUEST": {
+      return {
+        ...state,
+        joinRequestPending: false,
+        pendingJoinRequestId: null,
+      };
+    }
+
+    case "RESET": {
+      return { ...initialGameState };
+    }
+
     default: {
       // Handle custom local actions
       const act = action as unknown as { type: string; payload: unknown };
@@ -634,6 +692,10 @@ function mapServerTypeToActionType(serverType: string): Action["type"] | null {
     profile_updated: "PROFILE_UPDATED",
     host_changed: "HOST_CHANGED",
     host_transferred: "HOST_TRANSFERRED",
+    join_request_pending: "JOIN_REQUEST_PENDING",
+    join_request_received: "JOIN_REQUEST_RECEIVED",
+    join_request_resolved: "JOIN_REQUEST_RESOLVED",
+    join_request_declined: "JOIN_REQUEST_DECLINED",
     error: "ERROR",
   };
   return mapping[serverType] ?? null;

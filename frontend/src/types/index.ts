@@ -76,6 +76,13 @@ export interface RoundArtwork {
   replayActions?: DrawingAction[];
 }
 
+export interface JoinRequest {
+  requestId: string;
+  playerName: string;
+  avatar?: string;
+  roomCode: string;
+}
+
 export interface GameState {
   phase: GamePhase;
   roomCode: string | null;
@@ -104,6 +111,9 @@ export interface GameState {
   typingUsers?: Record<string, boolean>;
   mvpAwards?: MvpAward[];
   sessionStats?: SessionPlayerStat[];
+  joinRequestPending?: boolean;
+  pendingJoinRequestId?: string | null;
+  pendingJoinRequests?: JoinRequest[];
 }
 
 export interface ChatMessage {
@@ -202,5 +212,22 @@ export type Action =
         newHostName: string;
       };
     }
+  | {
+      type: "JOIN_REQUEST_PENDING";
+      payload: { requestId: string; roomCode: string; message?: string };
+    }
+  | {
+      type: "JOIN_REQUEST_RECEIVED";
+      payload: { requestId: string; playerName: string; avatar?: string; roomCode: string };
+    }
+  | {
+      type: "JOIN_REQUEST_RESOLVED";
+      payload: { requestId: string; status: string; playerName?: string };
+    }
+  | {
+      type: "JOIN_REQUEST_DECLINED";
+      payload: { requestId?: string; reason?: string; message: string };
+    }
+  | { type: "CANCEL_JOIN_REQUEST" }
   | { type: "TICK" }
   | { type: "RESET" };

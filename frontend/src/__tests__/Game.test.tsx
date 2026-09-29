@@ -287,4 +287,73 @@ describe("Game Page", () => {
       expect(send).toHaveBeenCalledWith("select_word", { word: "kangaroo" });
     });
   });
+
+  describe("Host Join Approval", () => {
+    const sampleRequest = {
+      requestId: "req-123",
+      playerName: "JoinerBob",
+      roomCode: "ABC123",
+    };
+
+    it("renders host approval prompt when host has pending requests", () => {
+      renderGame({
+        isHost: true,
+        pendingJoinRequests: [sampleRequest],
+      });
+
+      expect(screen.getByTestId("host-join-approval-container")).toBeInTheDocument();
+      expect(screen.getByText("JoinerBob")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /accept as player/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /accept as spectator/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /decline/i })).toBeInTheDocument();
+    });
+
+    it("sends respond_join_request with accept_player when clicked", () => {
+      const { send } = renderGame({
+        isHost: true,
+        pendingJoinRequests: [sampleRequest],
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /accept as player/i }));
+      expect(send).toHaveBeenCalledWith("respond_join_request", {
+        request_id: "req-123",
+        action: "accept_player",
+      });
+    });
+
+    it("sends respond_join_request with accept_spectator when clicked", () => {
+      const { send } = renderGame({
+        isHost: true,
+        pendingJoinRequests: [sampleRequest],
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /accept as spectator/i }));
+      expect(send).toHaveBeenCalledWith("respond_join_request", {
+        request_id: "req-123",
+        action: "accept_spectator",
+      });
+    });
+
+    it("sends respond_join_request with decline when clicked", () => {
+      const { send } = renderGame({
+        isHost: true,
+        pendingJoinRequests: [sampleRequest],
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /decline/i }));
+      expect(send).toHaveBeenCalledWith("respond_join_request", {
+        request_id: "req-123",
+        action: "decline",
+      });
+    });
+
+    it("does not render approval prompt for non-host players", () => {
+      renderGame({
+        isHost: false,
+        pendingJoinRequests: [sampleRequest],
+      });
+
+      expect(screen.queryByTestId("host-join-approval-container")).not.toBeInTheDocument();
+    });
+  });
 });
