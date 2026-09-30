@@ -1,14 +1,14 @@
 # Oracle Cloud Infrastructure (OCI) Deployment Guide (Terraform)
 
 This Terraform configuration supports **both**:
-1. **Single-Machine Deployment (Default)**: Ideal for **Oracle Cloud Always Free Tier** (1× Ampere `VM.Standard.A1.Flex` with 4 OCPUs and 24 GB RAM — $0/month forever). Runs Nginx + Go Gateways + Python Game Workers + Redis using Docker Compose on a single powerful instance.
+1. **Single-Machine Deployment (Default)**: Ideal for **Oracle Cloud Always Free Tier** (1× Ampere `VM.Standard.A1.Flex` with 4 OCPUs and 24 GB RAM — $0/month forever). Builds the multi-stage Docker image and runs the unified container (FastAPI serving both the React frontend and `/ws` WebSocket API directly on port 80). No Nginx, Go Gateway, or Redis needed!
 2. **Multi-Host Distributed Deployment**: Scales across dedicated OCI compute instances for Load Balancer, Gateways, Workers, Redis, and in-VCN load generators.
 
 ---
 
 ## 1. Single-Machine Deployment (Always Free: $0/Month)
 
-If you only have quota for **one machine** on Oracle Cloud, this mode deploys everything onto that single instance:
+If you only have quota for **one machine** on Oracle Cloud, this mode runs the pure application in a single lightweight container:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -16,21 +16,13 @@ If you only have quota for **one machine** on Oracle Cloud, this mode deploys ev
 │                   Ampere A1.Flex (4 OCPUs, 24 GB RAM) - Free           │
 │                                                                        │
 │   ┌────────────────────────────────────────────────────────────────┐   │
-│   │                 Nginx Reverse Proxy (:80 / :9000)              │   │
-│   │                 (Consistent hashing by room and client ID)     │   │
-│   └───────────────┬───────────────────────────────┬────────────────┘   │
-│                   │                               │                    │
-│   ┌───────────────▼───────────────┐               ▼                    │
-│   │    Go Edge Gateways (:9000)   │    4× Python Workers (:8000/:50051)│
-│   │    (Epoll WS + Coordinator)   │    (Game Logic & Turn Engine)      │
-│   └───────────────┬───────────────┘               ▲                    │
-│                   │   gRPC RoomStream (:50051)    │                    │
-│                   └───────────────────────────────┘                    │
-│                                   │                                    │
-│                   ┌───────────────▼───────────────┐                    │
-│                   │      Redis 7 Service (:6379)  │                    │
-│                   │      (AOF persistence & sync) │                    │
-│                   └───────────────────────────────┘                    │
+│   │                 Skribbl App Container (:80)                    │   │
+│   │                                                                │   │
+│   │   • Frontend: React 18 SPA (served from /assets & /)           │   │
+│   │   • Backend:  FastAPI + uvloop (in-memory state on /ws)        │   │
+│   │                                                                │   │
+│   │   (Zero Nginx, Zero Go Gateway, Zero Redis overhead)           │   │
+│   └────────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 

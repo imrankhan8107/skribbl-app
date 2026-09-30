@@ -249,7 +249,6 @@ resource "oci_core_instance" "single" {
     user_data = base64encode(templatefile("${path.module}/templates/cloud-init-single-instance.tftpl", {
       git_repo_url = var.git_repo_url
       git_branch   = var.git_branch
-      app_scale    = var.single_instance_app_scale
     }))
   }
 }
