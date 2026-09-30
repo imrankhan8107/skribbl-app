@@ -244,9 +244,12 @@ resource "oci_core_instance" "single" {
   display_name        = "${var.app_name}-server"
   shape               = var.single_instance_shape
 
-  shape_config {
-    ocpus         = var.single_instance_ocpus
-    memory_in_gbs = var.single_instance_memory_in_gbs
+  dynamic "shape_config" {
+    for_each = length(regexall("(?i)flex", var.single_instance_shape)) > 0 ? [1] : []
+    content {
+      ocpus         = var.single_instance_ocpus
+      memory_in_gbs = var.single_instance_memory_in_gbs
+    }
   }
 
   source_details {
@@ -282,9 +285,12 @@ resource "oci_core_instance" "redis" {
   display_name        = "${var.app_name}-redis"
   shape               = var.redis_shape
 
-  shape_config {
-    ocpus         = var.redis_ocpus
-    memory_in_gbs = var.redis_memory_in_gbs
+  dynamic "shape_config" {
+    for_each = length(regexall("(?i)flex", var.redis_shape)) > 0 ? [1] : []
+    content {
+      ocpus         = var.redis_ocpus
+      memory_in_gbs = var.redis_memory_in_gbs
+    }
   }
 
   source_details {
@@ -316,9 +322,12 @@ resource "oci_core_instance" "workers" {
   display_name        = "${var.app_name}-worker-${count.index + 1}"
   shape               = var.worker_shape
 
-  shape_config {
-    ocpus         = var.worker_ocpus
-    memory_in_gbs = var.worker_memory_in_gbs
+  dynamic "shape_config" {
+    for_each = length(regexall("(?i)flex", var.worker_shape)) > 0 ? [1] : []
+    content {
+      ocpus         = var.worker_ocpus
+      memory_in_gbs = var.worker_memory_in_gbs
+    }
   }
 
   source_details {
@@ -356,9 +365,12 @@ resource "oci_core_instance" "gateways" {
   display_name        = "${var.app_name}-gateway-${count.index + 1}"
   shape               = var.gateway_shape
 
-  shape_config {
-    ocpus         = var.gateway_ocpus
-    memory_in_gbs = var.gateway_memory_in_gbs
+  dynamic "shape_config" {
+    for_each = length(regexall("(?i)flex", var.gateway_shape)) > 0 ? [1] : []
+    content {
+      ocpus         = var.gateway_ocpus
+      memory_in_gbs = var.gateway_memory_in_gbs
+    }
   }
 
   source_details {
@@ -397,9 +409,12 @@ resource "oci_core_instance" "lb" {
   display_name        = "${var.app_name}-lb"
   shape               = var.lb_shape
 
-  shape_config {
-    ocpus         = var.lb_ocpus
-    memory_in_gbs = var.lb_memory_in_gbs
+  dynamic "shape_config" {
+    for_each = length(regexall("(?i)flex", var.lb_shape)) > 0 ? [1] : []
+    content {
+      ocpus         = var.lb_ocpus
+      memory_in_gbs = var.lb_memory_in_gbs
+    }
   }
 
   source_details {
@@ -442,9 +457,12 @@ resource "oci_core_instance" "load_generator" {
   display_name        = var.load_generator_count > 1 ? "${var.app_name}-k6-${count.index + 1}" : "${var.app_name}-k6"
   shape               = var.load_generator_shape
 
-  shape_config {
-    ocpus         = var.load_generator_ocpus
-    memory_in_gbs = var.load_generator_memory_in_gbs
+  dynamic "shape_config" {
+    for_each = length(regexall("(?i)flex", var.load_generator_shape)) > 0 ? [1] : []
+    content {
+      ocpus         = var.load_generator_ocpus
+      memory_in_gbs = var.load_generator_memory_in_gbs
+    }
   }
 
   source_details {
