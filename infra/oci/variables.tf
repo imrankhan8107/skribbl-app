@@ -18,6 +18,13 @@ variable "private_key_path" {
   type        = string
 }
 
+variable "private_key_password" {
+  description = "Passphrase for OCI API private key (optional)"
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
 variable "region" {
   description = "OCI region"
   type        = string
