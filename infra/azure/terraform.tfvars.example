@@ -8,7 +8,13 @@ app_name = "skribbl"
 vnet_cidr   = "10.10.0.0/16"
 subnet_cidr = "10.10.1.0/24"
 
-# STRICT SECURITY: External access whitelist
+# ACCESS & SECURITY
+# Set is_private = true if you want ONLY your IP to access the web app.
+# Set is_private = false (default) so ANYONE on the internet can access and play the game at http://<LB_PUBLIC_IP>.
+# Administrative SSH (port 22) is ALWAYS strictly locked down to allowed_cidrs for security!
+is_private = false
+
+# Whitelist for administrative SSH access (port 22) (and web app if is_private = true)
 # Run 'curl ifconfig.me' to find your public IP
 allowed_cidrs = [
   "YOUR_LOCAL_IP/32"

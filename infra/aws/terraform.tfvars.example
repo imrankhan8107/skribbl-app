@@ -4,11 +4,15 @@ aws_region = "us-east-1"
 # Resource naming prefix
 app_name = "skribbl"
 
-# Public IP addresses/CIDRs for strict external ingress
+# ACCESS & SECURITY
+# Set is_private = true if you want ONLY your IP to access the web app.
+# Set is_private = false (default) so ANYONE on the internet can access and play the game at http://<LB_PUBLIC_IP>.
+# Administrative SSH (port 22) is ALWAYS strictly locked down to allowed_cidrs for security!
+is_private = false
+
+# Whitelist for administrative SSH access (port 22) (and web app if is_private = true)
 # You can specify multiple IPs (e.g. your local computer's IP AND your Cloud9 environment)
 # Find your local IP via: curl ifconfig.me
-# Find Cloud9 public IP in Cloud9 bash via: curl ifconfig.me
-# ZERO ports will be open to 0.0.0.0/0
 allowed_cidrs = [
   "YOUR_LOCAL_PC_IP/32",     # e.g. "203.0.113.45/32" (access app from local browser)
   "YOUR_CLOUD9_IP/32"        # e.g. "54.210.12.34/32" (access/test from Cloud9)

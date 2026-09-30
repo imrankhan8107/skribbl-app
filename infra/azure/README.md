@@ -73,8 +73,9 @@ cp terraform.tfvars.example terraform.tfvars
 Edit `terraform.tfvars`:
 ```hcl
 azure_location = "eastus"
+is_private     = false               # false = public game access; true = only allowed_cidrs
 allowed_cidrs = [
-  "YOUR_LOCAL_IP/32"    # Your local machine (from curl ifconfig.me)
+  "YOUR_LOCAL_IP/32"    # Your local machine for administrative SSH (from curl ifconfig.me)
 ]
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
 
