@@ -60,14 +60,16 @@ variable "subnet_cidr" {
   default     = "10.10.1.0/24"
 }
 
+variable "public_access" {
+  description = "If true, opens HTTP (80/443) and app/game ports (9000-9020) to the entire internet (0.0.0.0/0) so anyone can play. SSH (22) remains strictly restricted to allowed_cidrs."
+  type        = bool
+  default     = false
+}
+
 variable "allowed_cidrs" {
-  description = "List of public IP/CIDR blocks allowed to access the cluster externally. STRICT: No 0.0.0.0/0 external ingress is permitted."
+  description = "List of public IP/CIDR blocks allowed to access the cluster externally (e.g. for SSH access or restricted testing)."
   type        = list(string)
   default     = []
-  validation {
-    condition     = alltrue([for c in var.allowed_cidrs : c != "0.0.0.0/0"])
-    error_message = "STRICT SECURITY: 0.0.0.0/0 is not allowed. Specify explicit /32 or subnet CIDRs."
-  }
 }
 
 variable "allowed_cidr" {

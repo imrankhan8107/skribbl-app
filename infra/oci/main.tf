@@ -24,6 +24,7 @@ locals {
     var.allowed_cidr != "" ? [var.allowed_cidr] : []
   )))
   safe_allowed_cidrs = length(local.effective_allowed_cidrs) > 0 ? local.effective_allowed_cidrs : ["127.0.0.1/32"]
+  web_allowed_cidrs  = var.public_access ? ["0.0.0.0/0"] : local.safe_allowed_cidrs
   ad                 = data.oci_identity_availability_domains.ads.availability_domains[0].name
 
   target_shape = var.single_instance_mode ? var.single_instance_shape : var.lb_shape
@@ -124,13 +125,13 @@ resource "oci_core_security_list" "cluster_sl" {
     }
   }
 
-  # 3. HTTP (80) from allowed_cidrs
+  # 3. HTTP (80)
   dynamic "ingress_security_rules" {
-    for_each = local.safe_allowed_cidrs
+    for_each = local.web_allowed_cidrs
     content {
       protocol    = "6"
       source      = ingress_security_rules.value
-      description = "HTTP access strictly from allowed IPs"
+      description = "HTTP web access"
       tcp_options {
         min = 80
         max = 80
@@ -138,13 +139,13 @@ resource "oci_core_security_list" "cluster_sl" {
     }
   }
 
-  # 4. HTTPS (443) from allowed_cidrs
+  # 4. HTTPS (443)
   dynamic "ingress_security_rules" {
-    for_each = local.safe_allowed_cidrs
+    for_each = local.web_allowed_cidrs
     content {
       protocol    = "6"
       source      = ingress_security_rules.value
-      description = "HTTPS access strictly from allowed IPs"
+      description = "HTTPS web access"
       tcp_options {
         min = 443
         max = 443
@@ -152,13 +153,13 @@ resource "oci_core_security_list" "cluster_sl" {
     }
   }
 
-  # 5. Direct Go Gateway data plane (9000-9020)
+  # 5. Direct Go Gateway data plane & Alt HTTP (9000-9020)
   dynamic "ingress_security_rules" {
-    for_each = local.safe_allowed_cidrs
+    for_each = local.web_allowed_cidrs
     content {
       protocol    = "6"
       source      = ingress_security_rules.value
-      description = "Gateway data plane access strictly from allowed IPs"
+      description = "Gateway and Alt HTTP access"
       tcp_options {
         min = 9000
         max = 9020
