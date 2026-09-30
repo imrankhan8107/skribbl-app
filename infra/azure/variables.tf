@@ -1,0 +1,140 @@
+variable "azure_location" {
+  description = "Azure region for deployment"
+  type        = string
+  default     = "eastus"
+}
+
+variable "app_name" {
+  description = "Base name for resources"
+  type        = string
+  default     = "skribbl"
+}
+
+variable "vnet_cidr" {
+  description = "CIDR block for Virtual Network"
+  type        = string
+  default     = "10.10.0.0/16"
+}
+
+variable "subnet_cidr" {
+  description = "CIDR block for subnet"
+  type        = string
+  default     = "10.10.1.0/24"
+}
+
+variable "allowed_cidrs" {
+  description = "List of public IP/CIDR blocks allowed to access the cluster externally. STRICT: No 0.0.0.0/0 external ingress is permitted."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for c in var.allowed_cidrs : c != "0.0.0.0/0"])
+    error_message = "STRICT SECURITY: 0.0.0.0/0 is not allowed. Specify explicit /32 or subnet CIDRs."
+  }
+}
+
+variable "allowed_cidr" {
+  description = "Single public IP/CIDR allowed to access the cluster externally (e.g. '203.0.113.50/32'). Kept for backward compatibility; prefer allowed_cidrs."
+  type        = string
+  default     = ""
+}
+
+variable "ssh_public_key" {
+  description = "SSH public key for Azure VM instance access"
+  type        = string
+}
+
+variable "gateway_count" {
+  description = "Number of dedicated Go Gateway Azure VM instances"
+  type        = number
+  default     = 2
+}
+
+variable "gateways_per_host" {
+  description = "Number of Go Gateway Docker containers to run per gateway VM instance"
+  type        = number
+  default     = 1
+}
+
+variable "worker_count" {
+  description = "Number of dedicated Python Worker Azure VM instances"
+  type        = number
+  default     = 2
+}
+
+variable "workers_per_host" {
+  description = "Number of Python worker Docker containers to run per worker VM instance"
+  type        = number
+  default     = 2
+}
+
+variable "lb_vm_size" {
+  description = "Azure VM size for Nginx Load Balancer (e.g. Standard_D4as_v5 for benchmarks, Standard_B2s for dev)"
+  type        = string
+  default     = "Standard_D4as_v5"
+}
+
+variable "gateway_vm_size" {
+  description = "Azure VM size for Go Gateways (e.g. Standard_D4as_v5 for benchmarks, Standard_B2s for dev)"
+  type        = string
+  default     = "Standard_D4as_v5"
+}
+
+variable "worker_vm_size" {
+  description = "Azure VM size for Python Workers (e.g. Standard_D4as_v5 for benchmarks, Standard_B2s for dev)"
+  type        = string
+  default     = "Standard_D4as_v5"
+}
+
+variable "redis_vm_size" {
+  description = "Azure VM size for standalone Redis"
+  type        = string
+  default     = "Standard_D2as_v5"
+}
+
+variable "git_repo_url" {
+  description = "Git repository URL for deployment"
+  type        = string
+  default     = "https://github.com/imrankhan8107/skribbl-app.git"
+}
+
+variable "git_branch" {
+  description = "Git branch to deploy"
+  type        = string
+  default     = "feature/go-gateway"
+}
+
+variable "enable_load_generator" {
+  description = "Whether to provision dedicated Azure VMs for running k6 load tests in-VNet"
+  type        = bool
+  default     = true
+}
+
+variable "load_generator_count" {
+  description = "Number of dedicated in-VNet k6 load generator instances"
+  type        = number
+  default     = 1
+}
+
+variable "load_generator_vm_size" {
+  description = "Azure VM size for k6 load generator"
+  type        = string
+  default     = "Standard_D4as_v5"
+}
+
+variable "trace_enabled" {
+  description = "Enable verbose per-message trace logging (set false for high-scale benchmarks)"
+  type        = bool
+  default     = false
+}
+
+variable "grpc_stream_buffer_size" {
+  description = "Gateway gRPC send queue size"
+  type        = number
+  default     = 1024
+}
+
+variable "grpc_send_queue_maxsize" {
+  description = "Worker gRPC send queue max size"
+  type        = number
+  default     = 1024
+}

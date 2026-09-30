@@ -200,6 +200,60 @@ See [infra/aws/README.md](../infra/aws/README.md) for full operational runbooks,
 
 ---
 
+## Azure Multi-Host Distributed Deployment (Terraform)
+
+Deploy the multi-host distributed cluster on **Microsoft Azure** using Terraform in `infra/azure/`.
+
+### Architecture & Resource Provisioning
+- **Azure Virtual Network** (`10.10.0.0/16`) and Subnet (`10.10.1.0/24`)
+- **Network Security Group (NSG)**: Internal inter-instance traffic allowed across `VirtualNetwork`; external ingress (SSH 22, HTTP 80, HTTPS 443, Gateways 9000-9020, Coord 9100-9120) strictly locked down to `allowed_cidrs`.
+- **Azure Linux Virtual Machines** (`Standard_D4as_v5`):
+  - 1× Nginx Load Balancer with consistent hashing
+  - N× Go Edge Gateways (`:9000`, `:9100`)
+  - M× Python Game Workers (`:50051` gRPC servicer)
+  - 1× Dedicated Redis with AOF persistence
+  - 1× In-VNet k6 Load Generator with pre-configured `./run-test.sh`
+
+```bash
+cd infra/azure
+cp terraform.tfvars.example terraform.tfvars
+# Configure allowed_cidrs and ssh_public_key
+terraform init
+terraform plan
+terraform apply
+```
+
+See [infra/azure/README.md](../infra/azure/README.md) for full operational instructions.
+
+---
+
+## OCI Multi-Host Distributed Deployment (Terraform)
+
+Deploy the multi-host distributed cluster on **Oracle Cloud Infrastructure (OCI)** using Terraform in `infra/oci/`.
+
+### Architecture & Resource Provisioning
+- **OCI VCN** (`10.10.0.0/16`) and Regional Subnet (`10.10.1.0/24`)
+- **Security List**: Internal inter-instance communication allowed within VCN; external ingress (SSH 22, HTTP 80, HTTPS 443, Gateways 9000-9020, Coord 9100-9120) strictly locked down to `allowed_cidrs`.
+- **OCI Compute Instances** (`VM.Standard.E4.Flex` or Ampere `VM.Standard.A1.Flex`):
+  - 1× Nginx Load Balancer with consistent hashing
+  - N× Go Edge Gateways (`:9000`, `:9100`)
+  - M× Python Game Workers (`:50051` gRPC servicer)
+  - 1× Dedicated Redis with AOF persistence
+  - 1× In-VCN k6 Load Generator with pre-configured `./run-test.sh`
+
+```bash
+cd infra/oci
+cp terraform.tfvars.example terraform.tfvars
+# Configure OCI credentials, allowed_cidrs, and ssh_public_key
+terraform init
+terraform plan
+terraform apply
+```
+
+See [infra/oci/README.md](../infra/oci/README.md) for full operational instructions.
+
+---
+
 ## Performance Benchmarks
 
 Tested with `scripts/perf_test.py` (100 concurrent clients, single worker):
@@ -232,6 +286,6 @@ Tests multi-worker deployment with cookie-based routing:
 |------------|-------------------------------|-----------------------|------------------------------|
 | **Single Container (Docker)** | 100–500 | Single container (FastAPI + built React) | 500 connections, 6,781 msgs/sec |
 | **Local Multi-Worker (Compose)** | 500–2,000 | Nginx LB + 3 App Workers + Redis | Sticky sessions with cookie routing |
-| **AWS Distributed Cluster (Terraform)** | **10,000–150,000+** | **Nginx (`c5a.4xlarge`) + Go Gateways (`c5a.2xlarge`) + Python Workers (`c5a.2xlarge`) + Redis (`c5a.xlarge`)** | **150,000 VUs, 512M messages, 4.00 Gbps, 0 control drops** ✅ |
+| **Distributed Cluster (AWS / Azure / OCI)** | **10,000–150,000+** | **Nginx + Go Gateways + Python Workers + Redis** | **150,000 VUs, 512M messages, 4.00 Gbps, 0 control drops** ✅ |
 
 Each Python worker holds rooms in-memory with the game engine. The Go edge gateway offloads high-concurrency WebSocket I/O, epoll connection state, and frame buffering, while dedicated Redis synchronizes cross-gateway state and room discovery.

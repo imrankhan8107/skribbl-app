@@ -1,21 +1,64 @@
-# Copy this file to terraform.tfvars and fill in your values
-# DO NOT commit terraform.tfvars to git (it contains secrets)
-
-tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaaaaxxxxxxxx"
-user_ocid        = "ocid1.user.oc1..aaaaaaaaxxxxxxxx"
-fingerprint      = "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
+# OCI Authentication
+tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaaaaxxx"
+user_ocid        = "ocid1.user.oc1..aaaaaaaaxxx"
+fingerprint      = "xx:xx:xx:xx:xx:xx:xx:xx"
 private_key_path = "~/.oci/oci_api_key.pem"
-compartment_ocid = "ocid1.compartment.oc1..aaaaaaaaxxxxxxxx"
-region           = "ap-mumbai-1"
+region           = "us-ashburn-1"
+compartment_ocid = "ocid1.compartment.oc1..aaaaaaaaxxx"
 
-ssh_public_key = "ssh-rsa AAAA... your-key"
+# Base resource name
+app_name = "skribbl"
 
-# Always Free tier defaults (change if needed)
-instance_shape     = "VM.Standard.A1.Flex"
-instance_ocpus     = 1
-instance_memory_gb = 6
+# Networking
+vcn_cidr    = "10.10.0.0/16"
+subnet_cidr = "10.10.1.0/24"
 
-# App config
-app_name     = "skribbl"
+# STRICT SECURITY: External access whitelist
+# Run 'curl ifconfig.me' to find your public IP
+allowed_cidrs = [
+  "YOUR_LOCAL_IP/32"
+]
+
+# SSH Public Key for OCI instances
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
+
+# Cluster sizing
+gateway_count     = 2
+gateways_per_host = 1
+worker_count      = 2
+workers_per_host  = 2
+
+# OCI Shapes (Flex allows customized OCPU and RAM)
+# E4.Flex is AMD x86_64; A1.Flex is Ampere ARM64
+lb_shape          = "VM.Standard.E4.Flex"
+lb_ocpus          = 2
+lb_memory_in_gbs  = 8
+
+gateway_shape         = "VM.Standard.E4.Flex"
+gateway_ocpus         = 4
+gateway_memory_in_gbs = 16
+
+worker_shape         = "VM.Standard.E4.Flex"
+worker_ocpus         = 4
+worker_memory_in_gbs = 16
+
+redis_shape         = "VM.Standard.E4.Flex"
+redis_ocpus         = 2
+redis_memory_in_gbs = 8
+
+load_generator_shape         = "VM.Standard.E4.Flex"
+load_generator_ocpus         = 4
+load_generator_memory_in_gbs = 16
+
+# Git repository configuration
 git_repo_url = "https://github.com/imrankhan8107/skribbl-app.git"
-git_branch   = "feature/redis-scaling"
+git_branch   = "feature/go-gateway"
+
+# In-VCN k6 Load Generator
+enable_load_generator = true
+load_generator_count  = 1
+
+# Performance tuning
+trace_enabled           = false
+grpc_stream_buffer_size = 1024
+grpc_send_queue_maxsize = 1024

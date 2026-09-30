@@ -1,73 +1,128 @@
-# Skribbl App — Oracle Cloud (OCI) Terraform Deployment
+# Multi-Host Distributed Deployment on Oracle Cloud Infrastructure (Terraform)
 
-Deploys the Skribbl app on an OCI Always Free tier A1.Flex compute instance with Docker.
+This Terraform configuration provisions a production-grade, multi-host distributed cluster on **Oracle Cloud Infrastructure (OCI)** for the Skribbl application, separating Load Balancers, Go Gateways, Python Workers, Redis, and k6 Load Generators across dedicated OCI Compute Instances.
 
-## Architecture
+---
 
-- **Compute**: VM.Standard.A1.Flex (ARM, 1 OCPU / 6 GB RAM — Always Free)
-- **Networking**: VCN + public subnet + internet gateway
-- **App**: Docker Compose (app + Redis + nginx) deployed via cloud-init
-- **Cost**: $0 on Always Free tier
+## Architecture Topology
+
+```
+                              Internet (Browser Clients & k6)
+                                             │
+                                             ▼
+                     ┌────────────────────────────────────────────────┐
+                     │          Nginx Reverse Proxy / LB              │
+                     │          (Public Subnet, Port 80/443)          │
+                     │   hash "$arg_gw$arg_room$arg_cid" consistent   │
+                     └───────────────┬────────────────┬───────────────┘
+                                     │                │
+                     ┌───────────────▼┐              ┌▼───────────────┐
+                     │ Go Gateway 1   │              │ Go Gateway N   │
+                     │ (OCI VM :9000) │  ...         │ (OCI VM :9000) │
+                     │ + Coord :9100  │              │ + Coord :9100  │
+                     └───────┬────────┘              └────────┬───────┘
+                             │                                │
+                             │  gRPC RoomStream (:50051)      │
+                             └───────────────┬────────────────┘
+                                             ▼
+                     ┌────────────────────────────────────────────────┐
+                     │           Python Worker Tier                   │
+                     │   Worker 1 (:50051) ... Worker M (:50051)      │
+                     │   (FastAPI + gRPC Servicer + VirtualTransport) │
+                     └───────────────────────┬────────────────────────┘
+                                             │
+                                             ▼
+                     ┌────────────────────────────────────────────────┐
+                     │          Redis Tier (:6379)                    │
+                     │   Dedicated OCI VM with AOF persistence        │
+                     │   (Room registry, worker discovery, snapshots) │
+                     └────────────────────────────────────────────────┘
+```
+
+---
+
+## Security & Firewall Constraints
+
+In accordance with strict security standards, **zero ports are exposed to `0.0.0.0/0`**:
+
+1. **Internal Inter-Tier Communication**: All traffic between Nginx, Gateways, Workers, and Redis is locked strictly to `var.vcn_cidr` (only instances within the cluster VCN can communicate across private IPs).
+2. **External Traffic (SSH, HTTP, Gateways, Coord)**: External ingress on ports 22, 80, 443, 9000-9020, and 9100-9120 is strictly locked down to `var.allowed_cidrs` (your local public IP/32 and CI/CD environment IP/32).
+
+---
 
 ## Prerequisites
 
-1. [OCI account](https://cloud.oracle.com/) with Always Free tier
-2. [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.5
-3. [OCI CLI configured](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/apisigningkey.htm) with API key
-4. SSH key pair
+1. **OCI CLI** installed and configured (`oci session authenticate` or API key setup in `~/.oci/config`).
+2. **Terraform** >= 1.5.0 installed (`terraform --version`).
+3. An SSH public key on your local machine (`~/.ssh/id_ed25519.pub` or `~/.ssh/id_rsa.pub`).
+4. Your current public IP address (run `curl ifconfig.me`).
+
+---
 
 ## Quick Start
+
+### 1. Initialize and Configure
 
 ```bash
 cd infra/oci
 
-# Copy and edit variables
+# Copy example variables
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your OCI credentials
+```
 
-# Deploy
+Edit `terraform.tfvars`:
+```hcl
+tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaaaaxxx"
+user_ocid        = "ocid1.user.oc1..aaaaaaaaxxx"
+fingerprint      = "xx:xx:xx:xx:xx:xx:xx:xx"
+private_key_path = "~/.oci/oci_api_key.pem"
+region           = "us-ashburn-1"
+compartment_ocid = "ocid1.compartment.oc1..aaaaaaaaxxx"
+
+allowed_cidrs = [
+  "YOUR_LOCAL_IP/32"    # Your local machine (from curl ifconfig.me)
+]
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
+
+# Cluster sizing
+gateway_count     = 2
+gateways_per_host = 1
+worker_count      = 2
+workers_per_host  = 2
+```
+
+### 2. Deploy the Cluster
+
+```bash
 terraform init
 terraform plan
 terraform apply
 ```
 
-## After Deployment
+Deployment takes ~3–5 minutes for cloud-init to provision packages, compile images, and start the services across VMs.
 
-The app takes 3-5 minutes to fully start (Docker builds from source).
+### 3. Verify Deployment
 
-Check progress:
 ```bash
-ssh ubuntu@<public_ip>
-tail -f /var/log/skribbl-deploy.log
+# View cluster access details
+terraform output
+
+# Check Nginx health
+curl -I http://<LB_PUBLIC_IP>/health
 ```
 
-Access the app:
-- Via nginx (load balanced): `http://<public_ip>:8080`
-- Direct (single worker): `http://<public_ip>:8000`
+### 4. Run In-VCN Load Tests
 
-## Updating the App
-
-SSH in and pull the latest code:
 ```bash
-ssh ubuntu@<public_ip>
-cd /home/ubuntu/skribbl-app
-git pull
-docker compose up -d --build
+# SSH into the dedicated k6 load generator VM
+ssh ubuntu@<LOAD_GENERATOR_PUBLIC_IP>
+
+# Run a 1,000 VU load test: 5 players/room, 20Hz drawing, 30s ramp
+./run-test.sh 1000 5 20 30
 ```
 
-## Teardown
+### 5. Teardown
 
 ```bash
 terraform destroy
 ```
-
-## Always Free Limits
-
-| Resource | Free Allowance | This Deployment |
-|----------|---------------|-----------------|
-| A1.Flex OCPUs | 4 | 1 |
-| A1.Flex Memory | 24 GB | 6 GB |
-| Boot Volume | 200 GB total | 50 GB |
-| VCN | 2 | 1 |
-| Public IPs | 2 | 1 |
-| Outbound Data | 10 TB/month | Minimal |

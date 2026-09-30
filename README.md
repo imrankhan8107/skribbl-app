@@ -50,7 +50,7 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 | Reverse Proxy | Nginx (consistent hashing by room and client ID) |
 | Observability | 1-second `/proc` cluster metrics monitor, k6 telemetry, structured logs |
 | Testing | pytest + Hypothesis (330 tests), Vitest (151 tests), k6 distributed suite |
-| Cloud IaC | Terraform (AWS: EC2, VPC, Nginx, Redis, Go Gateways, Python Workers) |
+| Cloud IaC | Terraform (Multi-Host Distributed Clusters: AWS, Azure, OCI) |
 
 ## Architecture
 
@@ -207,6 +207,50 @@ terraform output
 
 See the full [AWS Multi-Host Deployment Guide](infra/aws/README.md) for sizing options, benchmark runbooks, and troubleshooting.
 
+### Azure Multi-Host Distributed Cluster (Terraform)
+
+Deploy the multi-host distributed cluster on **Microsoft Azure** using Terraform in [infra/azure/](infra/azure/README.md).
+
+Provisions an Azure Virtual Network (`10.10.0.0/16`), Subnet (`10.10.1.0/24`), Network Security Group (NSG with zero 0.0.0.0/0 exposure), and dedicated Azure Linux VMs (`Standard_D4as_v5`):
+- **Nginx Load Balancer** with consistent hashing
+- **Go Edge Gateways** on port 9000 & Coordinator on 9100
+- **Python Game Workers** with gRPC servicer streams
+- **Redis 7** with AOF persistence
+- **In-VNet k6 Load Generator** with pre-configured `./run-test.sh`
+
+```bash
+cd infra/azure
+cp terraform.tfvars.example terraform.tfvars
+# Configure allowed_cidrs and ssh_public_key
+terraform init
+terraform plan
+terraform apply
+```
+
+See [infra/azure/README.md](infra/azure/README.md) for full instructions.
+
+### Oracle Cloud (OCI) Multi-Host Distributed Cluster (Terraform)
+
+Deploy the multi-host distributed cluster on **Oracle Cloud Infrastructure (OCI)** using Terraform in [infra/oci/](infra/oci/README.md).
+
+Provisions an OCI VCN (`10.10.0.0/16`), Regional Subnet, Security List with strict CIDR whitelisting, and dedicated OCI Compute Instances (`VM.Standard.E4.Flex` or Ampere `VM.Standard.A1.Flex`):
+- **Nginx Load Balancer** with consistent hashing
+- **Go Edge Gateways** on port 9000 & Coordinator on 9100
+- **Python Game Workers** with gRPC servicer streams
+- **Redis 7** with AOF persistence
+- **In-VCN k6 Load Generator** with pre-configured `./run-test.sh`
+
+```bash
+cd infra/oci
+cp terraform.tfvars.example terraform.tfvars
+# Configure OCI credentials, allowed_cidrs, and ssh_public_key
+terraform init
+terraform plan
+terraform apply
+```
+
+See [infra/oci/README.md](infra/oci/README.md) for full instructions.
+
 ### Docker (Single Container)
 
 Multi-stage Dockerfile builds both frontend and backend into a single image:
@@ -286,13 +330,18 @@ skribbl-app/
 │   ├── cmd/gateway/main.go  # Entrypoint & epoll event loop
 │   └── internal/            # Hub, client, gRPC streaming client, coordinator
 ├── infra/
-│   └── aws/                 # AWS Multi-Host Distributed Cluster (Terraform)
-│       ├── main.tf          # VPC, Subnets, SG rules, EC2 compute (Nginx, Gateways, Workers, Redis)
-│       ├── variables.tf     # Cluster sizing, instance types, allowed_cidrs
-│       ├── outputs.tf       # Cluster IP map & connection commands
-│       ├── terraform.tfvars.example
+│   ├── aws/                 # AWS Multi-Host Distributed Cluster (Terraform)
+│   │   ├── main.tf, variables.tf, outputs.tf, terraform.tfvars.example
+│   │   ├── templates/       # Cloud-init scripts for each tier
+│   │   └── README.md        # Detailed AWS deployment guide
+│   ├── azure/               # Azure Multi-Host Distributed Cluster (Terraform)
+│   │   ├── main.tf, variables.tf, outputs.tf, terraform.tfvars.example
+│   │   ├── templates/       # Cloud-init scripts for each tier
+│   │   └── README.md        # Detailed Azure deployment guide
+│   └── oci/                 # Oracle Cloud Multi-Host Distributed Cluster (Terraform)
+│       ├── main.tf, variables.tf, outputs.tf, terraform.tfvars.example
 │       ├── templates/       # Cloud-init scripts for each tier
-│       └── README.md        # Detailed AWS deployment guide
+│       └── README.md        # Detailed OCI deployment guide
 ├── scripts/
 │   ├── perf_test.py         # WebSocket performance benchmark
 │   └── perf_test_sticky.py  # Sticky session performance test

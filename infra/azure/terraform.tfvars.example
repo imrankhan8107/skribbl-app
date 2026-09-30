@@ -1,0 +1,46 @@
+# Azure Region
+azure_location = "eastus"
+
+# Base name for all resources
+app_name = "skribbl"
+
+# Virtual Network CIDR
+vnet_cidr   = "10.10.0.0/16"
+subnet_cidr = "10.10.1.0/24"
+
+# STRICT SECURITY: External access whitelist
+# Run 'curl ifconfig.me' to find your public IP
+allowed_cidrs = [
+  "YOUR_LOCAL_IP/32"
+]
+
+# SSH Public Key for Azure Linux VMs
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
+
+# Cluster sizing
+gateway_count     = 2
+gateways_per_host = 1
+worker_count      = 2
+workers_per_host  = 2
+
+# Azure VM sizing
+# Development / low-cost: Standard_B2s (2 vCPU, 4GB)
+# Benchmarks / production: Standard_D4as_v5 (4 vCPU, 16GB)
+lb_vm_size             = "Standard_D4as_v5"
+gateway_vm_size        = "Standard_D4as_v5"
+worker_vm_size         = "Standard_D4as_v5"
+redis_vm_size          = "Standard_D2as_v5"
+load_generator_vm_size = "Standard_D4as_v5"
+
+# Git repository configuration
+git_repo_url = "https://github.com/imrankhan8107/skribbl-app.git"
+git_branch   = "feature/go-gateway"
+
+# In-VNet k6 Load Generator
+enable_load_generator = true
+load_generator_count  = 1
+
+# Performance tuning
+trace_enabled           = false
+grpc_stream_buffer_size = 1024
+grpc_send_queue_maxsize = 1024

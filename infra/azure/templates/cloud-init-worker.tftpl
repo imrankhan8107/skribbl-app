@@ -1,0 +1,69 @@
+#!/bin/bash
+set -ex
+exec > /var/log/skribbl-worker-init.log 2>&1
+echo "=== Worker initialization started at $(date) ==="
+
+# OS tuning
+sysctl -w net.core.somaxconn=65535
+echo "net.core.somaxconn=65535" >> /etc/sysctl.conf
+echo "* soft nofile 65535" >> /etc/security/limits.conf
+echo "* hard nofile 65535" >> /etc/security/limits.conf
+
+# Install Docker and Git
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg git
+
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io
+
+systemctl enable docker
+systemctl start docker
+
+# Clone repository
+cd /opt
+git clone -b ${git_branch} ${git_repo_url} skribbl-app
+cd skribbl-app
+
+# Retrieve instance private IP
+PRIVATE_IP=$(hostname -I | awk '{print $1}')
+
+# Build worker image
+docker build -t skribbl-worker .
+
+mkdir -p /var/log/skribbl
+
+# Run ${workers_per_host} worker container instances using host networking for low latency
+for i in $(seq 1 ${workers_per_host}); do
+  HTTP_PORT=$((7999 + i))
+  GRPC_PORT=$((50050 + i))
+  echo "Launching worker container $i on HTTP:$HTTP_PORT, gRPC:$GRPC_PORT..."
+  docker run -d \
+    --name "worker-$i" \
+    --restart always \
+    --net host \
+    --ulimit nofile=65535:65535 \
+    -e REDIS_URL=redis://${redis_ip}:6379 \
+    -e GRPC_ENABLED=true \
+    -e PORT=$HTTP_PORT \
+    -e GRPC_PORT=$GRPC_PORT \
+    -e WORKER_ADVERTISE_HOST=$PRIVATE_IP \
+    -e TRACE_ENABLED=${trace_enabled} \
+    -e GRPC_SEND_QUEUE_MAXSIZE=${grpc_send_queue_maxsize} \
+    skribbl-worker
+
+  # Stream filtered logs to a file in the background (only keeping errors/warnings to save space)
+  docker logs -f "worker-$i" 2>&1 | grep --line-buffered -iE "error|timeout|blocked|missed|fail|warn|exception" > /var/log/skribbl/worker-$i.log &
+done
+
+# Start a simple HTTP server to serve the logs directory on port 8080
+nohup python3 -m http.server 8080 --directory /var/log/skribbl > /dev/null 2>&1 &
+
+# Start cluster performance and network traffic monitor on port 9101
+nohup python3 /opt/skribbl-app/scripts/cluster_monitor.py agent --role "worker" --port 9101 > /var/log/skribbl-monitor.log 2>&1 &
+
+echo "=== Worker initialization finished at $(date) ==="
