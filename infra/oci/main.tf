@@ -24,7 +24,7 @@ locals {
     var.allowed_cidr != "" ? [var.allowed_cidr] : []
   )))
   safe_allowed_cidrs = length(local.effective_allowed_cidrs) > 0 ? local.effective_allowed_cidrs : ["127.0.0.1/32"]
-  web_allowed_cidrs  = var.public_access ? ["0.0.0.0/0"] : local.safe_allowed_cidrs
+  web_allowed_cidrs  = (var.is_private && !var.public_access) ? local.safe_allowed_cidrs : ["0.0.0.0/0"]
   ad                 = data.oci_identity_availability_domains.ads.availability_domains[0].name
 
   target_shape = var.single_instance_mode ? var.single_instance_shape : var.lb_shape

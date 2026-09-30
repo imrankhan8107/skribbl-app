@@ -19,6 +19,7 @@ locals {
     var.allowed_cidrs,
     var.allowed_cidr != "" ? [var.allowed_cidr] : []
   )))
+  web_allowed_cidrs = var.is_private ? local.effective_allowed_cidrs : ["0.0.0.0/0"]
 }
 
 # --- Networking ---
@@ -96,31 +97,31 @@ resource "aws_security_group" "cluster" {
     cidr_blocks = local.effective_allowed_cidrs
   }
 
-  # 3. HTTP port 80 restricted strictly to allowed_cidrs
+  # 3. HTTP port 80
   ingress {
-    description = "HTTP access strictly from allowed IPs"
+    description = "HTTP web access"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = local.effective_allowed_cidrs
+    cidr_blocks = local.web_allowed_cidrs
   }
 
-  # 4. HTTPS port 443 restricted strictly to allowed_cidrs
+  # 4. HTTPS port 443
   ingress {
-    description = "HTTPS access strictly from allowed IPs"
+    description = "HTTPS web access"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = local.effective_allowed_cidrs
+    cidr_blocks = local.web_allowed_cidrs
   }
 
-  # 5. Direct Go Gateway data plane (9000-9020) strictly from allowed_cidrs
+  # 5. Direct Go Gateway data plane (9000-9020)
   ingress {
-    description = "Direct Gateway data plane access strictly from allowed IPs"
+    description = "Direct Gateway data plane access"
     from_port   = 9000
     to_port     = 9020
     protocol    = "tcp"
-    cidr_blocks = local.effective_allowed_cidrs
+    cidr_blocks = local.web_allowed_cidrs
   }
 
   # Gateway Coord control plane (9100-9120) strictly from allowed_cidrs (for k6 load tests)

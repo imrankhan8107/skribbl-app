@@ -60,8 +60,14 @@ variable "subnet_cidr" {
   default     = "10.10.1.0/24"
 }
 
+variable "is_private" {
+  description = "If true, web/game ports (80, 443, 9000-9020) are strictly restricted to allowed_cidrs (your IP only). If false (default), anyone on the internet can access and play. SSH (22) is always restricted to allowed_cidrs."
+  type        = bool
+  default     = false
+}
+
 variable "public_access" {
-  description = "If true, opens HTTP (80/443) and app/game ports (9000-9020) to the entire internet (0.0.0.0/0) so anyone can play. SSH (22) remains strictly restricted to allowed_cidrs."
+  description = "Kept for backward compatibility. Prefer is_private (is_private = false means public)."
   type        = bool
   default     = false
 }

@@ -20,6 +20,7 @@ locals {
   )))
   # If empty, safely fall back to loopback CIDR so NSG rule syntax remains valid
   safe_allowed_cidrs = length(local.effective_allowed_cidrs) > 0 ? local.effective_allowed_cidrs : ["127.0.0.1/32"]
+  web_allowed_cidrs  = var.is_private ? local.safe_allowed_cidrs : ["*"]
 }
 
 # --- Resource Group & Networking ---
@@ -87,7 +88,7 @@ resource "azurerm_network_security_group" "nsg" {
     destination_address_prefix  = "*"
   }
 
-  # 3. HTTP port 80 restricted strictly to allowed_cidrs
+  # 3. HTTP port 80
   security_rule {
     name                        = "allow-http"
     priority                    = 120
@@ -96,11 +97,11 @@ resource "azurerm_network_security_group" "nsg" {
     protocol                    = "Tcp"
     source_port_range           = "*"
     destination_port_range      = "80"
-    source_address_prefixes     = local.safe_allowed_cidrs
+    source_address_prefixes     = local.web_allowed_cidrs
     destination_address_prefix  = "*"
   }
 
-  # 4. HTTPS port 443 restricted strictly to allowed_cidrs
+  # 4. HTTPS port 443
   security_rule {
     name                        = "allow-https"
     priority                    = 130
@@ -109,7 +110,7 @@ resource "azurerm_network_security_group" "nsg" {
     protocol                    = "Tcp"
     source_port_range           = "*"
     destination_port_range      = "443"
-    source_address_prefixes     = local.safe_allowed_cidrs
+    source_address_prefixes     = local.web_allowed_cidrs
     destination_address_prefix  = "*"
   }
 
@@ -122,7 +123,7 @@ resource "azurerm_network_security_group" "nsg" {
     protocol                    = "Tcp"
     source_port_range           = "*"
     destination_port_range      = "9000-9020"
-    source_address_prefixes     = local.safe_allowed_cidrs
+    source_address_prefixes     = local.web_allowed_cidrs
     destination_address_prefix  = "*"
   }
 

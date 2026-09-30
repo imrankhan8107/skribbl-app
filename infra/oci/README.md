@@ -43,8 +43,10 @@ If you only have quota for **one machine** on Oracle Cloud, this mode runs the p
    region           = "us-ashburn-1"
    compartment_ocid = "ocid1.compartment.oc1..aaaaaaaaxxx"
 
+   # Access mode: false = anyone can access web app; true = restricted to allowed_cidrs
+   is_private    = false
    allowed_cidrs = [
-     "YOUR_LOCAL_IP/32"    # Your local machine (from curl ifconfig.me)
+     "YOUR_LOCAL_IP/32"    # Your local machine for administrative SSH (from curl ifconfig.me)
    ]
    ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
 
