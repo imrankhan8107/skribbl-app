@@ -1,10 +1,12 @@
 # OCI Authentication
-tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaaaaxxx"
-user_ocid        = "ocid1.user.oc1..aaaaaaaaxxx"
-fingerprint      = "xx:xx:xx:xx:xx:xx:xx:xx"
-private_key_path = "~/.oci/oci_api_key.pem"
-region           = "us-ashburn-1"
-compartment_ocid = "ocid1.compartment.oc1..aaaaaaaaxxx"
+tenancy_ocid         = "ocid1.tenancy.oc1..aaaaaaaaxxx"
+user_ocid            = "ocid1.user.oc1..aaaaaaaaxxx"
+fingerprint          = "xx:xx:xx:xx:xx:xx:xx:xx"
+private_key_path     = "~/.oci/oci_api_key.pem"
+# private_key_password = ""  # Optional: only if your private key is passphrase-protected
+region               = "us-ashburn-1"
+compartment_ocid     = "ocid1.compartment.oc1..aaaaaaaaxxx"
+# image_ocid         = ""  # Optional: override auto-discovered Ubuntu 22.04 image OCID
 
 # Base resource name
 app_name = "skribbl"

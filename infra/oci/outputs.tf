@@ -37,3 +37,4 @@ output "internal_topology" {
     load_generator_private_ips = oci_core_instance.load_generator[*].private_ip
   }
 }
+

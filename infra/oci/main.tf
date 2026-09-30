@@ -25,6 +25,22 @@ locals {
   )))
   safe_allowed_cidrs = length(local.effective_allowed_cidrs) > 0 ? local.effective_allowed_cidrs : ["127.0.0.1/32"]
   ad                 = data.oci_identity_availability_domains.ads.availability_domains[0].name
+
+  target_shape = var.single_instance_mode ? var.single_instance_shape : var.lb_shape
+  is_arm       = length(regexall("(?i)a1|arm", local.target_shape)) > 0
+
+  all_images = coalesce(data.oci_core_images.ubuntu.images, [])
+
+  filtered_images = [
+    for img in local.all_images : img
+    if (local.is_arm ? length(regexall("(?i)aarch64|arm", img.display_name)) > 0 : length(regexall("(?i)aarch64|arm", img.display_name)) == 0)
+  ]
+
+  image_id = var.image_ocid != "" ? var.image_ocid : (
+    length(local.filtered_images) > 0 ? local.filtered_images[0].id : (
+      length(local.all_images) > 0 ? local.all_images[0].id : null
+    )
+  )
 }
 
 # --- Availability Domains & OS Images ---
@@ -37,7 +53,6 @@ data "oci_core_images" "ubuntu" {
   compartment_id           = var.compartment_ocid
   operating_system         = "Canonical Ubuntu"
   operating_system_version = "22.04"
-  shape                    = var.single_instance_mode ? var.single_instance_shape : var.lb_shape
   sort_by                  = "TIMECREATED"
   sort_order               = "DESC"
 }
@@ -236,7 +251,7 @@ resource "oci_core_instance" "single" {
 
   source_details {
     source_type = "image"
-    source_id   = data.oci_core_images.ubuntu.images[0].id
+    source_id   = local.image_id
   }
 
   create_vnic_details {
@@ -274,7 +289,7 @@ resource "oci_core_instance" "redis" {
 
   source_details {
     source_type = "image"
-    source_id   = data.oci_core_images.ubuntu.images[0].id
+    source_id   = local.image_id
   }
 
   create_vnic_details {
@@ -308,7 +323,7 @@ resource "oci_core_instance" "workers" {
 
   source_details {
     source_type = "image"
-    source_id   = data.oci_core_images.ubuntu.images[0].id
+    source_id   = local.image_id
   }
 
   create_vnic_details {
@@ -348,7 +363,7 @@ resource "oci_core_instance" "gateways" {
 
   source_details {
     source_type = "image"
-    source_id   = data.oci_core_images.ubuntu.images[0].id
+    source_id   = local.image_id
   }
 
   create_vnic_details {
@@ -389,7 +404,7 @@ resource "oci_core_instance" "lb" {
 
   source_details {
     source_type = "image"
-    source_id   = data.oci_core_images.ubuntu.images[0].id
+    source_id   = local.image_id
   }
 
   create_vnic_details {
@@ -434,7 +449,7 @@ resource "oci_core_instance" "load_generator" {
 
   source_details {
     source_type = "image"
-    source_id   = data.oci_core_images.ubuntu.images[0].id
+    source_id   = local.image_id
   }
 
   create_vnic_details {

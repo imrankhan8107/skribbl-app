@@ -36,6 +36,12 @@ variable "compartment_ocid" {
   type        = string
 }
 
+variable "image_ocid" {
+  description = "Optional explicit custom or platform image OCID (if unset, auto-discovered via Ubuntu 22.04 data source)"
+  type        = string
+  default     = ""
+}
+
 variable "app_name" {
   description = "Base name for resources"
   type        = string
