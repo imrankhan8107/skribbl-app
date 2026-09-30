@@ -155,7 +155,8 @@ services:
         soft: 131072
         hard: 131072
     ports:
-      - "9000:80"  # public origin — frontend + WebSocket
+      - "80:80"   # standard HTTP / public web entrypoint
+      - "9000:80" # alternate port for WebSocket load tools
     depends_on:
       - gateway1
       - gateway2

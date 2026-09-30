@@ -19,17 +19,28 @@ allowed_cidrs = [
   "YOUR_LOCAL_IP/32"
 ]
 
-# SSH Public Key for OCI instances
+# SSH Public Key for OCI instance access
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
 
-# Cluster sizing
+# ==============================================================================
+# DEPLOYMENT MODE
+# ==============================================================================
+# Set true for single-machine deployment (OCI Always Free: 1 VM with Docker Compose)
+# Set false for multi-host distributed cluster (separate VMs for LB, Gateways, Workers, Redis)
+single_instance_mode = true
+
+# --- Single Instance Mode Settings (Always Free Ampere A1.Flex ARM) ---
+single_instance_shape         = "VM.Standard.A1.Flex"
+single_instance_ocpus         = 4    # Up to 4 free OCPUs
+single_instance_memory_in_gbs = 24   # Up to 24 free GB RAM
+single_instance_app_scale     = 4    # 4 Python game worker container replicas
+
+# --- Multi-Host Cluster Sizing (Used when single_instance_mode = false) ---
 gateway_count     = 2
 gateways_per_host = 1
 worker_count      = 2
 workers_per_host  = 2
 
-# OCI Shapes (Flex allows customized OCPU and RAM)
-# E4.Flex is AMD x86_64; A1.Flex is Ampere ARM64
 lb_shape          = "VM.Standard.E4.Flex"
 lb_ocpus          = 2
 lb_memory_in_gbs  = 8
@@ -46,6 +57,8 @@ redis_shape         = "VM.Standard.E4.Flex"
 redis_ocpus         = 2
 redis_memory_in_gbs = 8
 
+enable_load_generator        = true
+load_generator_count         = 1
 load_generator_shape         = "VM.Standard.E4.Flex"
 load_generator_ocpus         = 4
 load_generator_memory_in_gbs = 16
@@ -53,10 +66,6 @@ load_generator_memory_in_gbs = 16
 # Git repository configuration
 git_repo_url = "https://github.com/imrankhan8107/skribbl-app.git"
 git_branch   = "feature/go-gateway"
-
-# In-VCN k6 Load Generator
-enable_load_generator = true
-load_generator_count  = 1
 
 # Performance tuning
 trace_enabled           = false

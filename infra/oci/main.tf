@@ -36,7 +36,7 @@ data "oci_core_images" "ubuntu" {
   compartment_id           = var.compartment_ocid
   operating_system         = "Canonical Ubuntu"
   operating_system_version = "22.04"
-  shape                    = var.lb_shape
+  shape                    = var.single_instance_mode ? var.single_instance_shape : var.lb_shape
   sort_by                  = "TIMECREATED"
   sort_order               = "DESC"
 }
@@ -217,9 +217,51 @@ resource "oci_core_subnet" "public_subnet" {
   dns_label         = "public"
 }
 
+# ==============================================================================
+# MODE 1: SINGLE INSTANCE DEPLOYMENT (Ideal for OCI Always Free Tier)
+# ==============================================================================
+
+resource "oci_core_instance" "single" {
+  count               = var.single_instance_mode ? 1 : 0
+  compartment_id      = var.compartment_ocid
+  availability_domain = local.ad
+  display_name        = "${var.app_name}-server"
+  shape               = var.single_instance_shape
+
+  shape_config {
+    ocpus         = var.single_instance_ocpus
+    memory_in_gbs = var.single_instance_memory_in_gbs
+  }
+
+  source_details {
+    source_type = "image"
+    source_id   = data.oci_core_images.ubuntu.images[0].id
+  }
+
+  create_vnic_details {
+    subnet_id        = oci_core_subnet.public_subnet.id
+    display_name     = "${var.app_name}-vnic"
+    assign_public_ip = true
+  }
+
+  metadata = {
+    ssh_authorized_keys = var.ssh_public_key
+    user_data = base64encode(templatefile("${path.module}/templates/cloud-init-single-instance.tftpl", {
+      git_repo_url = var.git_repo_url
+      git_branch   = var.git_branch
+      app_scale    = var.single_instance_app_scale
+    }))
+  }
+}
+
+# ==============================================================================
+# MODE 2: MULTI-HOST DISTRIBUTED CLUSTER DEPLOYMENT
+# ==============================================================================
+
 # --- Redis Instance ---
 
 resource "oci_core_instance" "redis" {
+  count               = var.single_instance_mode ? 0 : 1
   compartment_id      = var.compartment_ocid
   availability_domain = local.ad
   display_name        = "${var.app_name}-redis"
@@ -253,7 +295,7 @@ resource "oci_core_instance" "redis" {
 # --- Python Worker Instances ---
 
 resource "oci_core_instance" "workers" {
-  count               = var.worker_count
+  count               = var.single_instance_mode ? 0 : var.worker_count
   compartment_id      = var.compartment_ocid
   availability_domain = local.ad
   display_name        = "${var.app_name}-worker-${count.index + 1}"
@@ -278,7 +320,7 @@ resource "oci_core_instance" "workers" {
   metadata = {
     ssh_authorized_keys = var.ssh_public_key
     user_data = base64encode(templatefile("${path.module}/templates/cloud-init-worker.tftpl", {
-      redis_ip                = oci_core_instance.redis.private_ip
+      redis_ip                = oci_core_instance.redis[0].private_ip
       git_repo_url            = var.git_repo_url
       git_branch              = var.git_branch
       workers_per_host        = var.workers_per_host
@@ -293,7 +335,7 @@ resource "oci_core_instance" "workers" {
 # --- Go Gateway Instances ---
 
 resource "oci_core_instance" "gateways" {
-  count               = var.gateway_count
+  count               = var.single_instance_mode ? 0 : var.gateway_count
   compartment_id      = var.compartment_ocid
   availability_domain = local.ad
   display_name        = "${var.app_name}-gateway-${count.index + 1}"
@@ -319,7 +361,7 @@ resource "oci_core_instance" "gateways" {
     ssh_authorized_keys = var.ssh_public_key
     user_data = base64encode(templatefile("${path.module}/templates/cloud-init-gateway.tftpl", {
       gateway_id              = "gateway-${count.index + 1}"
-      redis_ip                = oci_core_instance.redis.private_ip
+      redis_ip                = oci_core_instance.redis[0].private_ip
       git_repo_url            = var.git_repo_url
       git_branch              = var.git_branch
       gateways_per_host       = var.gateways_per_host
@@ -334,6 +376,7 @@ resource "oci_core_instance" "gateways" {
 # --- Nginx Load Balancer Instance ---
 
 resource "oci_core_instance" "lb" {
+  count               = var.single_instance_mode ? 0 : 1
   compartment_id      = var.compartment_ocid
   availability_domain = local.ad
   display_name        = "${var.app_name}-lb"
@@ -378,7 +421,7 @@ resource "oci_core_instance" "lb" {
 # --- In-VCN k6 Load Generator Instance ---
 
 resource "oci_core_instance" "load_generator" {
-  count               = var.enable_load_generator ? var.load_generator_count : 0
+  count               = (!var.single_instance_mode && var.enable_load_generator) ? var.load_generator_count : 0
   compartment_id      = var.compartment_ocid
   availability_domain = local.ad
   display_name        = var.load_generator_count > 1 ? "${var.app_name}-k6-${count.index + 1}" : "${var.app_name}-k6"
@@ -407,7 +450,7 @@ resource "oci_core_instance" "load_generator" {
       git_branch    = var.git_branch
       runner_id     = count.index + 1
       runner_count  = var.load_generator_count
-      lb_private_ip = oci_core_instance.lb.private_ip
+      lb_private_ip = oci_core_instance.lb[0].private_ip
       coord_host    = oci_core_instance.gateways[0].private_ip
       coord_hosts   = join(",", oci_core_instance.gateways[*].private_ip)
       coord_urls = join(",", flatten([
@@ -421,8 +464,8 @@ resource "oci_core_instance" "load_generator" {
         ]
       ]))
       cluster_nodes = join(",", flatten([
-        ["lb:${oci_core_instance.lb.private_ip}:9101"],
-        ["redis:${oci_core_instance.redis.private_ip}:9101"],
+        ["lb:${oci_core_instance.lb[0].private_ip}:9101"],
+        ["redis:${oci_core_instance.redis[0].private_ip}:9101"],
         [for idx, ip in oci_core_instance.gateways[*].private_ip : "gateway-${idx + 1}:${ip}:9101"],
         [for idx, ip in oci_core_instance.workers[*].private_ip : "worker-${idx + 1}:${ip}:9101"],
       ]))

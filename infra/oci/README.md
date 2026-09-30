@@ -1,43 +1,94 @@
-# Multi-Host Distributed Deployment on Oracle Cloud Infrastructure (Terraform)
+# Oracle Cloud Infrastructure (OCI) Deployment Guide (Terraform)
 
-This Terraform configuration provisions a production-grade, multi-host distributed cluster on **Oracle Cloud Infrastructure (OCI)** for the Skribbl application, separating Load Balancers, Go Gateways, Python Workers, Redis, and k6 Load Generators across dedicated OCI Compute Instances.
+This Terraform configuration supports **both**:
+1. **Single-Machine Deployment (Default)**: Ideal for **Oracle Cloud Always Free Tier** (1× Ampere `VM.Standard.A1.Flex` with 4 OCPUs and 24 GB RAM — $0/month forever). Runs Nginx + Go Gateways + Python Game Workers + Redis using Docker Compose on a single powerful instance.
+2. **Multi-Host Distributed Deployment**: Scales across dedicated OCI compute instances for Load Balancer, Gateways, Workers, Redis, and in-VCN load generators.
 
 ---
 
-## Architecture Topology
+## 1. Single-Machine Deployment (Always Free: $0/Month)
+
+If you only have quota for **one machine** on Oracle Cloud, this mode deploys everything onto that single instance:
 
 ```
-                              Internet (Browser Clients & k6)
-                                             │
-                                             ▼
-                     ┌────────────────────────────────────────────────┐
-                     │          Nginx Reverse Proxy / LB              │
-                     │          (Public Subnet, Port 80/443)          │
-                     │   hash "$arg_gw$arg_room$arg_cid" consistent   │
-                     └───────────────┬────────────────┬───────────────┘
-                                     │                │
-                     ┌───────────────▼┐              ┌▼───────────────┐
-                     │ Go Gateway 1   │              │ Go Gateway N   │
-                     │ (OCI VM :9000) │  ...         │ (OCI VM :9000) │
-                     │ + Coord :9100  │              │ + Coord :9100  │
-                     └───────┬────────┘              └────────┬───────┘
-                             │                                │
-                             │  gRPC RoomStream (:50051)      │
-                             └───────────────┬────────────────┘
-                                             ▼
-                     ┌────────────────────────────────────────────────┐
-                     │           Python Worker Tier                   │
-                     │   Worker 1 (:50051) ... Worker M (:50051)      │
-                     │   (FastAPI + gRPC Servicer + VirtualTransport) │
-                     └───────────────────────┬────────────────────────┘
-                                             │
-                                             ▼
-                     ┌────────────────────────────────────────────────┐
-                     │          Redis Tier (:6379)                    │
-                     │   Dedicated OCI VM with AOF persistence        │
-                     │   (Room registry, worker discovery, snapshots) │
-                     └────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                   Single OCI Compute Instance (Ubuntu 22.04)            │
+│                   Ampere A1.Flex (4 OCPUs, 24 GB RAM) - Free           │
+│                                                                        │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │                 Nginx Reverse Proxy (:80 / :9000)              │   │
+│   │                 (Consistent hashing by room and client ID)     │   │
+│   └───────────────┬───────────────────────────────┬────────────────┘   │
+│                   │                               │                    │
+│   ┌───────────────▼───────────────┐               ▼                    │
+│   │    Go Edge Gateways (:9000)   │    4× Python Workers (:8000/:50051)│
+│   │    (Epoll WS + Coordinator)   │    (Game Logic & Turn Engine)      │
+│   └───────────────┬───────────────┘               ▲                    │
+│                   │   gRPC RoomStream (:50051)    │                    │
+│                   └───────────────────────────────┘                    │
+│                                   │                                    │
+│                   ┌───────────────▼───────────────┐                    │
+│                   │      Redis 7 Service (:6379)  │                    │
+│                   │      (AOF persistence & sync) │                    │
+│                   └───────────────────────────────┘                    │
+└────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Quick Start (Single Machine)
+
+1. **Configure credentials**:
+   ```bash
+   cd infra/oci
+   cp terraform.tfvars.example terraform.tfvars
+   ```
+
+2. **Edit `terraform.tfvars`**:
+   ```hcl
+   tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaaaaxxx"
+   user_ocid        = "ocid1.user.oc1..aaaaaaaaxxx"
+   fingerprint      = "xx:xx:xx:xx:xx:xx:xx:xx"
+   private_key_path = "~/.oci/oci_api_key.pem"
+   region           = "us-ashburn-1"
+   compartment_ocid = "ocid1.compartment.oc1..aaaaaaaaxxx"
+
+   allowed_cidrs = [
+     "YOUR_LOCAL_IP/32"    # Your local machine (from curl ifconfig.me)
+   ]
+   ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
+
+   # Single machine mode (enabled by default)
+   single_instance_mode          = true
+   single_instance_shape         = "VM.Standard.A1.Flex"
+   single_instance_ocpus         = 4    # Up to 4 free OCPUs
+   single_instance_memory_in_gbs = 24   # Up to 24 free GB RAM
+   single_instance_app_scale     = 4    # 4 Python game worker replicas
+   ```
+
+3. **Deploy**:
+   ```bash
+   terraform init
+   terraform plan
+   terraform apply
+   ```
+
+4. **Access Application**:
+   App is live at `http://<SERVER_PUBLIC_IP>` (and `http://<SERVER_PUBLIC_IP>:9000`) in ~3–5 minutes.
+
+---
+
+## 2. Multi-Host Distributed Deployment
+
+If you want to scale horizontally across multiple dedicated OCI compute instances (separate VMs for Nginx, Go Gateways, Python Workers, Redis, and k6 load generators):
+
+In `terraform.tfvars`, simply set:
+```hcl
+single_instance_mode = false
+
+gateway_count = 2
+worker_count  = 2
+```
+
+Then run `terraform apply`.
 
 ---
 
@@ -45,84 +96,32 @@ This Terraform configuration provisions a production-grade, multi-host distribut
 
 In accordance with strict security standards, **zero ports are exposed to `0.0.0.0/0`**:
 
-1. **Internal Inter-Tier Communication**: All traffic between Nginx, Gateways, Workers, and Redis is locked strictly to `var.vcn_cidr` (only instances within the cluster VCN can communicate across private IPs).
-2. **External Traffic (SSH, HTTP, Gateways, Coord)**: External ingress on ports 22, 80, 443, 9000-9020, and 9100-9120 is strictly locked down to `var.allowed_cidrs` (your local public IP/32 and CI/CD environment IP/32).
+1. **Internal Inter-Tier Communication**: All traffic between containers and instances is locked strictly to `var.vcn_cidr` (`10.10.0.0/16`).
+2. **External Ingress**: Ports 22 (SSH), 80/443 (HTTP/HTTPS), 9000–9020 (Gateway WS), and 9100–9120 (Coord) are strictly locked down to `var.allowed_cidrs`.
 
 ---
 
-## Prerequisites
+## Troubleshooting & Verification
 
-1. **OCI CLI** installed and configured (`oci session authenticate` or API key setup in `~/.oci/config`).
-2. **Terraform** >= 1.5.0 installed (`terraform --version`).
-3. An SSH public key on your local machine (`~/.ssh/id_ed25519.pub` or `~/.ssh/id_rsa.pub`).
-4. Your current public IP address (run `curl ifconfig.me`).
+1. **Check cloud-init deployment log**:
+   ```bash
+   ssh ubuntu@<SERVER_PUBLIC_IP> "tail -f /var/log/skribbl-deploy.log"
+   ```
 
----
+2. **Inspect running Docker containers**:
+   ```bash
+   ssh ubuntu@<SERVER_PUBLIC_IP> "docker ps"
+   ```
 
-## Quick Start
+3. **Update code & redeploy**:
+   ```bash
+   ssh ubuntu@<SERVER_PUBLIC_IP>
+   cd /home/ubuntu/skribbl-app
+   git pull
+   docker compose up -d --build --scale app=4
+   ```
 
-### 1. Initialize and Configure
-
-```bash
-cd infra/oci
-
-# Copy example variables
-cp terraform.tfvars.example terraform.tfvars
-```
-
-Edit `terraform.tfvars`:
-```hcl
-tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaaaaxxx"
-user_ocid        = "ocid1.user.oc1..aaaaaaaaxxx"
-fingerprint      = "xx:xx:xx:xx:xx:xx:xx:xx"
-private_key_path = "~/.oci/oci_api_key.pem"
-region           = "us-ashburn-1"
-compartment_ocid = "ocid1.compartment.oc1..aaaaaaaaxxx"
-
-allowed_cidrs = [
-  "YOUR_LOCAL_IP/32"    # Your local machine (from curl ifconfig.me)
-]
-ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
-
-# Cluster sizing
-gateway_count     = 2
-gateways_per_host = 1
-worker_count      = 2
-workers_per_host  = 2
-```
-
-### 2. Deploy the Cluster
-
-```bash
-terraform init
-terraform plan
-terraform apply
-```
-
-Deployment takes ~3–5 minutes for cloud-init to provision packages, compile images, and start the services across VMs.
-
-### 3. Verify Deployment
-
-```bash
-# View cluster access details
-terraform output
-
-# Check Nginx health
-curl -I http://<LB_PUBLIC_IP>/health
-```
-
-### 4. Run In-VCN Load Tests
-
-```bash
-# SSH into the dedicated k6 load generator VM
-ssh ubuntu@<LOAD_GENERATOR_PUBLIC_IP>
-
-# Run a 1,000 VU load test: 5 players/room, 20Hz drawing, 30s ramp
-./run-test.sh 1000 5 20 30
-```
-
-### 5. Teardown
-
-```bash
-terraform destroy
-```
+4. **Teardown**:
+   ```bash
+   terraform destroy
+   ```

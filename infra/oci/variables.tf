@@ -68,7 +68,38 @@ variable "ssh_public_key" {
   type        = string
 }
 
-variable "gateway_count" {
+# --- Deployment Mode ---
+variable "single_instance_mode" {
+  description = "If true, provisions a single OCI compute instance (ideal for OCI Always Free Tier) running the full stack via Docker Compose. If false, provisions the multi-host distributed cluster."
+  type        = bool
+  default     = true
+}
+
+variable "single_instance_shape" {
+  description = "Shape for single-instance mode (VM.Standard.A1.Flex for Always Free ARM, or VM.Standard.E4.Flex)"
+  type        = string
+  default     = "VM.Standard.A1.Flex"
+}
+
+variable "single_instance_ocpus" {
+  description = "OCPUs for single-instance mode (up to 4 for Always Free A1.Flex)"
+  type        = number
+  default     = 4
+}
+
+variable "single_instance_memory_in_gbs" {
+  description = "RAM in GB for single-instance mode (up to 24 for Always Free A1.Flex)"
+  type        = number
+  default     = 24
+}
+
+variable "single_instance_app_scale" {
+  description = "Number of Python game worker container replicas to run in single-instance mode"
+  type        = number
+  default     = 4
+}
+
+# --- Multi-Host Cluster Sizing ---
   description = "Number of dedicated Go Gateway OCI compute instances"
   type        = number
   default     = 2
