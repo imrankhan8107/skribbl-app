@@ -100,6 +100,7 @@ variable "single_instance_app_scale" {
 }
 
 # --- Multi-Host Cluster Sizing ---
+variable "gateway_count" {
   description = "Number of dedicated Go Gateway OCI compute instances"
   type        = number
   default     = 2
