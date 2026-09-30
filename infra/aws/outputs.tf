@@ -1,90 +1,49 @@
-output "lb_public_ip" {
-  description = "Public IP of the Nginx Load Balancer"
-  value       = aws_instance.lb.public_ip
+output "cluster_access" {
+  description = "Cluster connection info and test instructions"
+  value = {
+    deployment_mode   = var.single_instance_mode ? "single_instance" : "multi_host distributed cluster"
+    server_public_ip  = var.single_instance_mode ? (length(aws_instance.single) > 0 ? aws_instance.single[0].public_ip : null) : (length(aws_instance.lb) > 0 ? aws_instance.lb[0].public_ip : null)
+    app_url           = "http://${var.single_instance_mode ? (length(aws_instance.single) > 0 ? aws_instance.single[0].public_ip : "") : (length(aws_instance.lb) > 0 ? aws_instance.lb[0].public_ip : "")}"
+    app_url_alt_port  = "http://${var.single_instance_mode ? (length(aws_instance.single) > 0 ? aws_instance.single[0].public_ip : "") : (length(aws_instance.lb) > 0 ? aws_instance.lb[0].public_ip : "")}:9000"
+    grafana_url       = var.single_instance_mode ? "N/A" : (length(aws_instance.lb) > 0 ? "http://${aws_instance.lb[0].public_ip}:3000" : "N/A")
+    prometheus_url    = var.single_instance_mode ? "N/A" : (length(aws_instance.lb) > 0 ? "http://${aws_instance.lb[0].public_ip}:9090" : "N/A")
+    load_generator_ip = (!var.single_instance_mode && length(aws_instance.load_generator) > 0) ? aws_instance.load_generator[0].public_ip : "N/A"
+  }
+}
+
+output "node_ssh" {
+  description = "SSH connection strings for all provisioned node(s)"
+  value = var.single_instance_mode ? (
+    length(aws_instance.single) > 0 ? {
+      server = "ssh ubuntu@${aws_instance.single[0].public_ip}"
+    } : {}
+  ) : merge(
+    length(aws_instance.lb) > 0 ? { lb = "ssh ubuntu@${aws_instance.lb[0].public_ip}" } : {},
+    length(aws_instance.redis) > 0 ? { redis = "ssh ubuntu@${aws_instance.redis[0].private_ip}" } : {},
+    { for idx, inst in aws_instance.gateways : "gateway-${idx + 1}" => "ssh ubuntu@${inst.public_ip}" },
+    { for idx, inst in aws_instance.workers : "worker-${idx + 1}" => "ssh ubuntu@${inst.public_ip}" },
+    { for idx, inst in aws_instance.load_generator : "load-gen-${idx + 1}" => "ssh ubuntu@${inst.public_ip}" }
+  )
+}
+
+output "internal_topology" {
+  description = "Private IP layout within AWS VPC"
+  value = {
+    server_private_ip          = length(aws_instance.single) > 0 ? aws_instance.single[0].private_ip : null
+    lb_private_ip              = length(aws_instance.lb) > 0 ? aws_instance.lb[0].private_ip : null
+    redis_private_ip           = length(aws_instance.redis) > 0 ? aws_instance.redis[0].private_ip : null
+    gateway_private_ips        = aws_instance.gateways[*].private_ip
+    worker_private_ips         = aws_instance.workers[*].private_ip
+    load_generator_private_ips = aws_instance.load_generator[*].private_ip
+  }
 }
 
 output "app_url" {
-  description = "URL to access the Skribbl game via the Load Balancer"
-  value       = "http://${aws_instance.lb.public_ip}"
+  description = "URL to access the Skribbl game"
+  value       = "http://${var.single_instance_mode ? (length(aws_instance.single) > 0 ? aws_instance.single[0].public_ip : "") : (length(aws_instance.lb) > 0 ? aws_instance.lb[0].public_ip : "")}"
 }
 
-output "grafana_url" {
-  description = "URL to access Grafana Dashboard (strictly bounded to allowed_cidr)"
-  value       = "http://${aws_instance.lb.public_ip}:3000"
+output "lb_public_ip" {
+  description = "Public IP of the primary entrypoint (single instance or load balancer)"
+  value       = var.single_instance_mode ? (length(aws_instance.single) > 0 ? aws_instance.single[0].public_ip : null) : (length(aws_instance.lb) > 0 ? aws_instance.lb[0].public_ip : null)
 }
-
-output "prometheus_url" {
-  description = "URL to access Prometheus UI (strictly bounded to allowed_cidr)"
-  value       = "http://${aws_instance.lb.public_ip}:9090"
-}
-
-output "gateway_public_ips" {
-  description = "Public IPs of the Go Gateway instances"
-  value       = aws_instance.gateways[*].public_ip
-}
-
-output "gateway_private_ips" {
-  description = "Private IPs of the Go Gateway instances"
-  value       = aws_instance.gateways[*].private_ip
-}
-
-output "worker_private_ips" {
-  description = "Private IP addresses of Python Workers"
-  value       = aws_instance.workers[*].private_ip
-}
-
-output "worker_public_ips" {
-  description = "Public IP addresses of Python Workers"
-  value       = aws_instance.workers[*].public_ip
-}
-
-output "gateway_log_urls" {
-  description = "URLs to download gateway logs"
-  value       = [for ip in aws_instance.gateways[*].public_ip : "http://${ip}:8080/"]
-}
-
-output "worker_log_urls" {
-  description = "URLs to download worker logs"
-  value       = [for ip in aws_instance.workers[*].public_ip : "http://${ip}:8080/"]
-}
-
-output "redis_private_ip" {
-  description = "Private IP of the Redis instance"
-  value       = aws_instance.redis.private_ip
-}
-
-output "ssh_lb_command" {
-  description = "SSH command to connect to Load Balancer"
-  value       = "ssh ubuntu@${aws_instance.lb.public_ip}"
-}
-
-output "load_generator_public_ip" {
-  description = "Public IP of the first dedicated k6 Load Generator instance"
-  value       = try(aws_instance.load_generator[0].public_ip, "disabled")
-}
-
-output "load_generator_public_ips" {
-  description = "Public IPs of all dedicated k6 Load Generator instances"
-  value       = aws_instance.load_generator[*].public_ip
-}
-
-output "ssh_k6_runner_command" {
-  description = "SSH command to connect to the first in-VPC k6 Load Generator"
-  value       = try("ssh ubuntu@${aws_instance.load_generator[0].public_ip}", "disabled")
-}
-
-output "ssh_k6_runner_commands" {
-  description = "SSH commands to connect to each in-VPC k6 Load Generator"
-  value       = [for ip in aws_instance.load_generator[*].public_ip : "ssh ubuntu@${ip}"]
-}
-
-output "in_vpc_k6_quick_run" {
-  description = "Command to run once connected inside the k6 runner EC2 instance"
-  value       = "./run-test.sh 1000 5 20 30 2400"
-}
-
-output "k6_load_test_command" {
-  description = "Sample k6 command to run coordinated load test from your local laptop against the cluster"
-  value       = "k6 run -e HOST=${aws_instance.lb.public_ip} -e PORT=80 -e COORD_PORT=0 -e VUS=500 -e PLAYERS_PER_ROOM=5 -e STROKE_HZ=20 scripts/k6_grpc_load_test.js"
-}
-

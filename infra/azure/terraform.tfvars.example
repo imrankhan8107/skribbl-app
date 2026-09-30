@@ -23,6 +23,15 @@ allowed_cidrs = [
 # SSH Public Key for Azure Linux VMs
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
 
+# ==============================================================================
+# DEPLOYMENT MODE
+# ==============================================================================
+# Set true for single-machine deployment (1 Azure VM running unified container)
+# Set false for multi-host distributed cluster (separate VMs for LB, Gateways, Workers, Redis)
+single_instance_mode    = false
+single_instance_vm_size = "Standard_B2s"
+
+# --- Multi-Host Cluster Sizing (Used when single_instance_mode = false) ---
 # Cluster sizing
 gateway_count     = 2
 gateways_per_host = 1

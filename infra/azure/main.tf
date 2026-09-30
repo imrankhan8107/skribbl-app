@@ -189,9 +189,80 @@ resource "azurerm_subnet_network_security_group_association" "subnet_assoc" {
   network_security_group_id = azurerm_network_security_group.nsg.id
 }
 
+# ==============================================================================
+# MODE 1: SINGLE INSTANCE DEPLOYMENT
+# ==============================================================================
+
+resource "azurerm_public_ip" "single" {
+  count               = var.single_instance_mode ? 1 : 0
+  name                = "${var.app_name}-server-pip"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+resource "azurerm_network_interface" "single" {
+  count               = var.single_instance_mode ? 1 : 0
+  name                = "${var.app_name}-server-nic"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.subnet.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.single[0].id
+  }
+}
+
+resource "azurerm_linux_virtual_machine" "single" {
+  count               = var.single_instance_mode ? 1 : 0
+  name                = "${var.app_name}-server"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  size                = var.single_instance_vm_size
+  admin_username      = "ubuntu"
+
+  network_interface_ids = [azurerm_network_interface.single[0].id]
+
+  admin_ssh_key {
+    username   = "ubuntu"
+    public_key = var.ssh_public_key
+  }
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Premium_LRS"
+    disk_size_gb         = 30
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts-gen2"
+    version   = "latest"
+  }
+
+  custom_data = base64encode(templatefile("${path.module}/templates/cloud-init-single-instance.tftpl", {
+    git_repo_url = var.git_repo_url
+    git_branch   = var.git_branch
+  }))
+
+  tags = {
+    Application = var.app_name
+    Tier        = "single-instance"
+  }
+}
+
+# ==============================================================================
+# MODE 2: MULTI-HOST DISTRIBUTED CLUSTER DEPLOYMENT
+# ==============================================================================
+
 # --- Redis Instance ---
 
 resource "azurerm_public_ip" "redis" {
+  count               = var.single_instance_mode ? 0 : 1
   name                = "${var.app_name}-redis-pip"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -200,6 +271,7 @@ resource "azurerm_public_ip" "redis" {
 }
 
 resource "azurerm_network_interface" "redis" {
+  count               = var.single_instance_mode ? 0 : 1
   name                = "${var.app_name}-redis-nic"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
@@ -208,18 +280,19 @@ resource "azurerm_network_interface" "redis" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.subnet.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.redis.id
+    public_ip_address_id          = length(azurerm_public_ip.redis) > 0 ? azurerm_public_ip.redis[0].id : null
   }
 }
 
 resource "azurerm_linux_virtual_machine" "redis" {
+  count               = var.single_instance_mode ? 0 : 1
   name                = "${var.app_name}-redis"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
   size                = var.redis_vm_size
   admin_username      = "ubuntu"
 
-  network_interface_ids = [azurerm_network_interface.redis.id]
+  network_interface_ids = [azurerm_network_interface.redis[0].id]
 
   admin_ssh_key {
     username   = "ubuntu"
@@ -253,7 +326,7 @@ resource "azurerm_linux_virtual_machine" "redis" {
 # --- Python Worker Instances ---
 
 resource "azurerm_public_ip" "workers" {
-  count               = var.worker_count
+  count               = var.single_instance_mode ? 0 : var.worker_count
   name                = "${var.app_name}-worker-${count.index + 1}-pip"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -262,7 +335,7 @@ resource "azurerm_public_ip" "workers" {
 }
 
 resource "azurerm_network_interface" "workers" {
-  count               = var.worker_count
+  count               = var.single_instance_mode ? 0 : var.worker_count
   name                = "${var.app_name}-worker-${count.index + 1}-nic"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
@@ -276,7 +349,7 @@ resource "azurerm_network_interface" "workers" {
 }
 
 resource "azurerm_linux_virtual_machine" "workers" {
-  count               = var.worker_count
+  count               = var.single_instance_mode ? 0 : var.worker_count
   name                = "${var.app_name}-worker-${count.index + 1}"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -304,7 +377,7 @@ resource "azurerm_linux_virtual_machine" "workers" {
   }
 
   custom_data = base64encode(templatefile("${path.module}/templates/cloud-init-worker.tftpl", {
-    redis_ip                = azurerm_network_interface.redis.private_ip_address
+    redis_ip                = length(azurerm_network_interface.redis) > 0 ? azurerm_network_interface.redis[0].private_ip_address : ""
     git_repo_url            = var.git_repo_url
     git_branch              = var.git_branch
     workers_per_host        = var.workers_per_host
@@ -323,7 +396,7 @@ resource "azurerm_linux_virtual_machine" "workers" {
 # --- Go Gateway Instances ---
 
 resource "azurerm_public_ip" "gateways" {
-  count               = var.gateway_count
+  count               = var.single_instance_mode ? 0 : var.gateway_count
   name                = "${var.app_name}-gateway-${count.index + 1}-pip"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -332,7 +405,7 @@ resource "azurerm_public_ip" "gateways" {
 }
 
 resource "azurerm_network_interface" "gateways" {
-  count               = var.gateway_count
+  count               = var.single_instance_mode ? 0 : var.gateway_count
   name                = "${var.app_name}-gateway-${count.index + 1}-nic"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
@@ -346,7 +419,7 @@ resource "azurerm_network_interface" "gateways" {
 }
 
 resource "azurerm_linux_virtual_machine" "gateways" {
-  count               = var.gateway_count
+  count               = var.single_instance_mode ? 0 : var.gateway_count
   name                = "${var.app_name}-gateway-${count.index + 1}"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -375,7 +448,7 @@ resource "azurerm_linux_virtual_machine" "gateways" {
 
   custom_data = base64encode(templatefile("${path.module}/templates/cloud-init-gateway.tftpl", {
     gateway_id              = "gateway-${count.index + 1}"
-    redis_ip                = azurerm_network_interface.redis.private_ip_address
+    redis_ip                = length(azurerm_network_interface.redis) > 0 ? azurerm_network_interface.redis[0].private_ip_address : ""
     git_repo_url            = var.git_repo_url
     git_branch              = var.git_branch
     gateways_per_host       = var.gateways_per_host
@@ -394,6 +467,7 @@ resource "azurerm_linux_virtual_machine" "gateways" {
 # --- Nginx Load Balancer Instance ---
 
 resource "azurerm_public_ip" "lb" {
+  count               = var.single_instance_mode ? 0 : 1
   name                = "${var.app_name}-lb-pip"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -402,6 +476,7 @@ resource "azurerm_public_ip" "lb" {
 }
 
 resource "azurerm_network_interface" "lb" {
+  count               = var.single_instance_mode ? 0 : 1
   name                = "${var.app_name}-lb-nic"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
@@ -410,18 +485,19 @@ resource "azurerm_network_interface" "lb" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.subnet.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.lb.id
+    public_ip_address_id          = length(azurerm_public_ip.lb) > 0 ? azurerm_public_ip.lb[0].id : null
   }
 }
 
 resource "azurerm_linux_virtual_machine" "lb" {
+  count               = var.single_instance_mode ? 0 : 1
   name                = "${var.app_name}-lb"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
   size                = var.lb_vm_size
   admin_username      = "ubuntu"
 
-  network_interface_ids = [azurerm_network_interface.lb.id]
+  network_interface_ids = [azurerm_network_interface.lb[0].id]
 
   admin_ssh_key {
     username   = "ubuntu"
@@ -466,7 +542,7 @@ resource "azurerm_linux_virtual_machine" "lb" {
 # --- In-VNet k6 Load Generator Instance ---
 
 resource "azurerm_public_ip" "load_generator" {
-  count               = var.enable_load_generator ? var.load_generator_count : 0
+  count               = (!var.single_instance_mode && var.enable_load_generator) ? var.load_generator_count : 0
   name                = "${var.app_name}-k6-${count.index + 1}-pip"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -475,7 +551,7 @@ resource "azurerm_public_ip" "load_generator" {
 }
 
 resource "azurerm_network_interface" "load_generator" {
-  count               = var.enable_load_generator ? var.load_generator_count : 0
+  count               = (!var.single_instance_mode && var.enable_load_generator) ? var.load_generator_count : 0
   name                = "${var.app_name}-k6-${count.index + 1}-nic"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
@@ -489,7 +565,7 @@ resource "azurerm_network_interface" "load_generator" {
 }
 
 resource "azurerm_linux_virtual_machine" "load_generator" {
-  count               = var.enable_load_generator ? var.load_generator_count : 0
+  count               = (!var.single_instance_mode && var.enable_load_generator) ? var.load_generator_count : 0
   name                = var.load_generator_count > 1 ? "${var.app_name}-k6-${count.index + 1}" : "${var.app_name}-k6"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -521,8 +597,8 @@ resource "azurerm_linux_virtual_machine" "load_generator" {
     git_branch    = var.git_branch
     runner_id     = count.index + 1
     runner_count  = var.load_generator_count
-    lb_private_ip = azurerm_network_interface.lb.private_ip_address
-    coord_host    = azurerm_network_interface.gateways[0].private_ip_address
+    lb_private_ip = length(azurerm_network_interface.lb) > 0 ? azurerm_network_interface.lb[0].private_ip_address : ""
+    coord_host    = length(azurerm_network_interface.gateways) > 0 ? azurerm_network_interface.gateways[0].private_ip_address : ""
     coord_hosts   = join(",", azurerm_network_interface.gateways[*].private_ip_address)
     coord_urls = join(",", flatten([
       for ip in azurerm_network_interface.gateways[*].private_ip_address : [
@@ -535,8 +611,8 @@ resource "azurerm_linux_virtual_machine" "load_generator" {
       ]
     ]))
     cluster_nodes = join(",", flatten([
-      ["lb:${azurerm_network_interface.lb.private_ip_address}:9101"],
-      ["redis:${azurerm_network_interface.redis.private_ip_address}:9101"],
+      length(azurerm_network_interface.lb) > 0 ? ["lb:${azurerm_network_interface.lb[0].private_ip_address}:9101"] : [],
+      length(azurerm_network_interface.redis) > 0 ? ["redis:${azurerm_network_interface.redis[0].private_ip_address}:9101"] : [],
       [for idx, ip in azurerm_network_interface.gateways[*].private_ip_address : "gateway-${idx + 1}:${ip}:9101"],
       [for idx, ip in azurerm_network_interface.workers[*].private_ip_address : "worker-${idx + 1}:${ip}:9101"],
     ]))

@@ -200,9 +200,43 @@ resource "aws_key_pair" "deployer" {
   }
 }
 
+# ==============================================================================
+# MODE 1: SINGLE INSTANCE DEPLOYMENT
+# ==============================================================================
+
+resource "aws_instance" "single" {
+  count                  = var.single_instance_mode ? 1 : 0
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = var.single_instance_type
+  subnet_id              = aws_subnet.public.id
+  vpc_security_group_ids = [aws_security_group.cluster.id]
+  key_name               = aws_key_pair.deployer.key_name
+
+  user_data = templatefile("${path.module}/templates/cloud-init-single-instance.tftpl", {
+    git_repo_url = var.git_repo_url
+    git_branch   = var.git_branch
+  })
+
+  root_block_device {
+    volume_size           = 30
+    volume_type           = "gp3"
+    delete_on_termination = true
+  }
+
+  tags = {
+    Name = "${var.app_name}-server"
+    Tier = "single-instance"
+  }
+}
+
+# ==============================================================================
+# MODE 2: MULTI-HOST DISTRIBUTED CLUSTER DEPLOYMENT
+# ==============================================================================
+
 # --- Redis Instance ---
 
 resource "aws_instance" "redis" {
+  count                  = var.single_instance_mode ? 0 : 1
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.redis_instance_type
   subnet_id              = aws_subnet.public.id
@@ -228,7 +262,7 @@ resource "aws_instance" "redis" {
 # --- Python Worker Instances ---
 
 resource "aws_instance" "workers" {
-  count                  = var.worker_count
+  count                  = var.single_instance_mode ? 0 : var.worker_count
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.worker_instance_type
   subnet_id              = aws_subnet.public.id
@@ -236,7 +270,7 @@ resource "aws_instance" "workers" {
   key_name               = aws_key_pair.deployer.key_name
 
   user_data = templatefile("${path.module}/templates/cloud-init-worker.tftpl", {
-    redis_ip                = aws_instance.redis.private_ip
+    redis_ip                = length(aws_instance.redis) > 0 ? aws_instance.redis[0].private_ip : ""
     git_repo_url            = var.git_repo_url
     git_branch              = var.git_branch
     workers_per_host        = var.workers_per_host
@@ -260,7 +294,7 @@ resource "aws_instance" "workers" {
 # --- Go Gateway Instances ---
 
 resource "aws_instance" "gateways" {
-  count                  = var.gateway_count
+  count                  = var.single_instance_mode ? 0 : var.gateway_count
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.gateway_instance_type
   subnet_id              = aws_subnet.public.id
@@ -269,7 +303,7 @@ resource "aws_instance" "gateways" {
 
   user_data = templatefile("${path.module}/templates/cloud-init-gateway.tftpl", {
     gateway_id              = "gateway-${count.index + 1}"
-    redis_ip                = aws_instance.redis.private_ip
+    redis_ip                = length(aws_instance.redis) > 0 ? aws_instance.redis[0].private_ip : ""
     git_repo_url            = var.git_repo_url
     git_branch              = var.git_branch
     gateways_per_host       = var.gateways_per_host
@@ -293,6 +327,7 @@ resource "aws_instance" "gateways" {
 # --- Nginx Load Balancer Instance ---
 
 resource "aws_instance" "lb" {
+  count                  = var.single_instance_mode ? 0 : 1
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.lb_instance_type
   subnet_id              = aws_subnet.public.id
@@ -330,7 +365,7 @@ resource "aws_instance" "lb" {
 # --- In-VPC k6 Load Generator Instance ---
 
 resource "aws_instance" "load_generator" {
-  count                  = var.enable_load_generator ? var.load_generator_count : 0
+  count                  = (!var.single_instance_mode && var.enable_load_generator) ? var.load_generator_count : 0
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.load_generator_instance_type
   subnet_id              = aws_subnet.public.id
@@ -342,8 +377,8 @@ resource "aws_instance" "load_generator" {
     git_branch    = var.git_branch
     runner_id     = count.index + 1
     runner_count  = var.load_generator_count
-    lb_private_ip = aws_instance.lb.private_ip
-    coord_host    = aws_instance.gateways[0].private_ip
+    lb_private_ip = length(aws_instance.lb) > 0 ? aws_instance.lb[0].private_ip : ""
+    coord_host    = length(aws_instance.gateways) > 0 ? aws_instance.gateways[0].private_ip : ""
     coord_hosts   = join(",", aws_instance.gateways[*].private_ip)
     # Full host:port coord URLs for every gateway container (port = 9100 + (i*2)).
     # This distributes coordination across all containers, not just port 9100.
@@ -358,8 +393,8 @@ resource "aws_instance" "load_generator" {
       ]
     ]))
     cluster_nodes = join(",", flatten([
-      ["lb:${aws_instance.lb.private_ip}:9101"],
-      ["redis:${aws_instance.redis.private_ip}:9101"],
+      length(aws_instance.lb) > 0 ? ["lb:${aws_instance.lb[0].private_ip}:9101"] : [],
+      length(aws_instance.redis) > 0 ? ["redis:${aws_instance.redis[0].private_ip}:9101"] : [],
       [for idx, ip in aws_instance.gateways[*].private_ip : "gateway-${idx + 1}:${ip}:9101"],
       [for idx, ip in aws_instance.workers[*].private_ip : "worker-${idx + 1}:${ip}:9101"],
     ]))

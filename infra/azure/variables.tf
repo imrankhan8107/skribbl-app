@@ -4,6 +4,18 @@ variable "azure_location" {
   default     = "eastus"
 }
 
+variable "location" {
+  description = "Alias for azure_location (for backward compatibility)"
+  type        = string
+  default     = ""
+}
+
+variable "image_tag" {
+  description = "Docker image tag (legacy)"
+  type        = string
+  default     = "latest"
+}
+
 variable "app_name" {
   description = "Base name for resources"
   type        = string
@@ -43,6 +55,20 @@ variable "allowed_cidr" {
 variable "ssh_public_key" {
   description = "SSH public key for Azure VM instance access"
   type        = string
+}
+
+# --- Deployment Mode ---
+
+variable "single_instance_mode" {
+  description = "If true, deploys a single Azure VM running the unified container (React + FastAPI on port 80/9000). Zero Nginx, Go Gateway, or Redis overhead. If false, deploys multi-host distributed cluster."
+  type        = bool
+  default     = false
+}
+
+variable "single_instance_vm_size" {
+  description = "Azure VM size for single-instance mode (e.g. Standard_B1s, Standard_B2s, Standard_D2as_v5)"
+  type        = string
+  default     = "Standard_B2s"
 }
 
 variable "gateway_count" {

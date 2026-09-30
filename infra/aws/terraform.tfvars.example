@@ -22,6 +22,15 @@ allowed_cidrs = [
 # e.g. "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
 ssh_public_key = "ssh-ed25519 AAAA..."
 
+# ==============================================================================
+# DEPLOYMENT MODE
+# ==============================================================================
+# Set true for single-machine deployment (1 EC2 instance running unified container)
+# Set false for multi-host distributed cluster (separate VMs for LB, Gateways, Workers, Redis)
+single_instance_mode = false
+single_instance_type = "t3.small"
+
+# --- Multi-Host Cluster Sizing (Used when single_instance_mode = false) ---
 # Scale presets:
 # Dev / baseline: gateway_count=2, gateways_per_host=1, worker_count=2, workers_per_host=2 (t3.medium)
 # 25k load:       gateway_count=3, gateways_per_host=2 (6 gw), worker_count=4, workers_per_host=6 (24 workers, c5a.2xlarge)

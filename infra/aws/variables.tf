@@ -39,6 +39,20 @@ variable "ssh_public_key" {
   type        = string
 }
 
+# --- Deployment Mode ---
+
+variable "single_instance_mode" {
+  description = "If true, deploys a single EC2 instance running the unified container (React + FastAPI on port 80/9000). Zero Nginx, Go Gateway, or Redis overhead. If false, deploys multi-host distributed cluster."
+  type        = bool
+  default     = false
+}
+
+variable "single_instance_type" {
+  description = "EC2 instance type for single-instance mode (e.g. t3.micro, t3.small, t3.medium)"
+  type        = string
+  default     = "t3.small"
+}
+
 variable "gateway_count" {
   description = "Number of dedicated Go Gateway EC2 instances"
   type        = number
