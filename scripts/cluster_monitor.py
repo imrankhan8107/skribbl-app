@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import collections
 import http.server
 import json
 import logging
@@ -30,7 +31,12 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
+
+
+def _bounded_deque(maxlen: int) -> "collections.deque[float]":
+    """A bounded FIFO for per-sample series; oldest samples drop at the cap."""
+    return collections.deque(maxlen=maxlen)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -183,15 +189,137 @@ class SystemSampler:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Statistics helpers (zero-dependency: percentiles + threshold dwell analysis)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# WHY THIS EXISTS: min/avg/max throws away the SHAPE of the signal. A node that
+# averages 22% but peaks at 90% looks like it has headroom — but if it spends 40%
+# of the run above 85%, it's actually near saturation and the low average is just
+# the turn-based duty cycle (idle between turns, spiking on each turn broadcast).
+# These helpers recover the distribution (percentiles) and the dwell time above
+# capacity thresholds, which is what you actually size a fleet against.
+
+# CPU thresholds (percent) we report dwell time / crossings against.
+CPU_THRESHOLDS = (70.0, 85.0, 95.0)
+# Microburst threshold for the fast (200ms) CPU series — "pegged a core" territory.
+BURST_THRESHOLD = 90.0
+
+
+def percentile(sorted_vals: List[float], pct: float) -> float:
+    """Linear-interpolation percentile over an already-SORTED list.
+
+    pct in [0,100]. Returns 0.0 for an empty list. Matches the common
+    "nearest-rank with interpolation" method (same family as numpy's default),
+    implemented without numpy to keep this script dependency-free.
+    """
+    n = len(sorted_vals)
+    if n == 0:
+        return 0.0
+    if n == 1:
+        return sorted_vals[0]
+    rank = (pct / 100.0) * (n - 1)
+    lo = int(rank)
+    hi = min(lo + 1, n - 1)
+    frac = rank - lo
+    return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * frac
+
+
+def threshold_stats(
+    series: List[float],
+    interval_sec: float,
+    thresholds: Tuple[float, ...],
+) -> Dict[str, Dict[str, float]]:
+    """For each threshold, compute dwell time and crossing/burst behaviour.
+
+    Returns {"70": {...}, "85": {...}, ...} where each entry has:
+      - pct_time: fraction of samples >= threshold, as a percentage (0-100)
+      - seconds_above: approx wall-seconds >= threshold (samples * interval)
+      - crossings: number of times the signal rose from below to >= threshold
+                   (counts distinct spike EVENTS, not samples)
+      - longest_streak_sec: longest CONSECUTIVE run >= threshold, in seconds
+                            (a 1s blip at 95% is harmless; a 90s plateau is not —
+                             this is what separates them)
+    """
+    out: Dict[str, Dict[str, float]] = {}
+    n = len(series)
+    for th in thresholds:
+        above = 0
+        crossings = 0
+        longest = 0
+        cur = 0
+        prev_above = False
+        for v in series:
+            is_above = v >= th
+            if is_above:
+                above += 1
+                cur += 1
+                if cur > longest:
+                    longest = cur
+                if not prev_above:
+                    crossings += 1
+            else:
+                cur = 0
+            prev_above = is_above
+        out[str(int(th))] = {
+            "pct_time": round((above / n) * 100.0, 2) if n else 0.0,
+            "seconds_above": round(above * interval_sec, 1),
+            "crossings": crossings,
+            "longest_streak_sec": round(longest * interval_sec, 1),
+        }
+    return out
+
+
+def cpu_distribution(series: List[float], interval_sec: float) -> Dict[str, Any]:
+    """Full CPU distribution + dwell stats for one resolution's series."""
+    if not series:
+        return {
+            "samples": 0,
+            "interval_ms": round(interval_sec * 1000),
+            "p50": 0.0, "p90": 0.0, "p95": 0.0, "p99": 0.0, "max": 0.0,
+            "thresholds": {},
+            "bursts_ge_90": {"count": 0, "pct_time": 0.0},
+        }
+    s = sorted(series)
+    th = threshold_stats(series, interval_sec, CPU_THRESHOLDS)
+    burst = threshold_stats(series, interval_sec, (BURST_THRESHOLD,))[str(int(BURST_THRESHOLD))]
+    return {
+        "samples": len(series),
+        "interval_ms": round(interval_sec * 1000),
+        "p50": round(percentile(s, 50), 2),
+        "p90": round(percentile(s, 90), 2),
+        "p95": round(percentile(s, 95), 2),
+        "p99": round(percentile(s, 99), 2),
+        "max": round(s[-1], 2),
+        "thresholds": th,
+        "bursts_ge_90": {"count": burst["crossings"], "pct_time": burst["pct_time"]},
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Metric Accumulator (Thread-safe running window statistics)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class MetricAccumulator:
-    """Computes Min, Max, Avg, and Cumulative statistics over a test window."""
+    """Computes Min/Max/Avg plus full-distribution statistics over a test window.
+
+    Beyond the legacy running min/avg/max, this retains the per-sample CPU series
+    at TWO resolutions so we can see both sustained load and microbursts:
+      - cpu_series_1s:   one CPU sample/sec (sustained-load / capacity signal)
+      - cpu_series_fast: one CPU sample every ~200ms (microburst signal that 1s
+                         averaging smears away — a 200ms 100% spike reads ~20% at
+                         1s resolution, but ~100% at 200ms)
+    Series are bounded ring buffers so a very long run can't grow memory without
+    bound (a 60-min run at 200ms is ~18k floats ≈ 150 KB; the cap is well above).
+    """
 
     def __init__(self, role: str = "node") -> None:
         self.role = role
         self.lock = threading.Lock()
+        # Ring-buffer caps (samples). ~24h at 1s, ~2h at 200ms — generous; real
+        # runs are <1h. Prevents unbounded growth if an agent is left running.
+        self._cap_1s = 90000
+        self._cap_fast = 90000
+        self.fast_interval_sec = 0.2
         self.reset()
 
     def reset(self) -> None:
@@ -199,6 +327,11 @@ class MetricAccumulator:
         with self.lock:
             self.start_time = time.time()
             self.samples_count = 0
+
+            # Per-sample CPU series at two resolutions (bounded ring buffers).
+            # collections.deque(maxlen=...) drops oldest automatically at the cap.
+            self.cpu_series_1s = _bounded_deque(self._cap_1s)
+            self.cpu_series_fast = _bounded_deque(self._cap_fast)
 
             # CPU
             self.cpu_min = 100.0
@@ -260,7 +393,8 @@ class MetricAccumulator:
             self.last_rx_bytes = raw_rx_bytes
             self.last_tx_bytes = raw_tx_bytes
 
-            # CPU
+            # CPU — retain the per-second value for distribution/dwell analysis.
+            self.cpu_series_1s.append(cpu_pct)
             self.cpu_current = cpu_pct
             self.cpu_min = min(self.cpu_min, cpu_pct)
             self.cpu_max = max(self.cpu_max, cpu_pct)
@@ -290,6 +424,16 @@ class MetricAccumulator:
             self.tcp_max = max(self.tcp_max, tcp_conns)
             self.tcp_sum += tcp_conns
 
+    def record_fast_cpu(self, cpu_pct: float) -> None:
+        """Record a high-resolution (~200ms) CPU sample only.
+
+        Kept separate and cheap: the fast loop samples CPU alone (network/TCP are
+        smooth and don't need sub-second resolution), feeding the microburst
+        series that 1s averaging would hide.
+        """
+        with self.lock:
+            self.cpu_series_fast.append(cpu_pct)
+
     def get_summary(self) -> Dict[str, Any]:
         """Return the window summary dict."""
         with self.lock:
@@ -298,6 +442,14 @@ class MetricAccumulator:
 
             tot_rx = max(0, self.last_rx_bytes - (self.window_start_rx_bytes or self.last_rx_bytes))
             tot_tx = max(0, self.last_tx_bytes - (self.window_start_tx_bytes or self.last_tx_bytes))
+
+            # Snapshot the series under the lock, then compute distributions.
+            # 1s = sustained-load signal; fast(200ms) = microburst signal.
+            cpu_1s = list(self.cpu_series_1s)
+            cpu_fast = list(self.cpu_series_fast)
+            # Derive the fast interval from samples vs duration if we have data;
+            # fall back to the configured value.
+            fast_iv = self.fast_interval_sec
 
             return {
                 "role": self.role,
@@ -310,6 +462,13 @@ class MetricAccumulator:
                     "avg": round(self.cpu_sum / n, 2),
                     "max": round(self.cpu_max, 2),
                 },
+                # Rich CPU distribution + dwell-above-threshold at BOTH resolutions.
+                # Read these, not min/avg/max, for capacity decisions:
+                #   cpu_dist_1s.p95        -> sustained busy level
+                #   cpu_dist_1s.thresholds -> how long/often above 70/85/95%
+                #   cpu_dist_fast.p99      -> microburst peaks 1s averaging hides
+                "cpu_dist_1s": cpu_distribution(cpu_1s, 1.0),
+                "cpu_dist_fast": cpu_distribution(cpu_fast, fast_iv),
                 "memory_mb": {
                     "current": round(self.mem_current, 1),
                     "min": round(self.mem_min if self.samples_count > 0 else 0.0, 1),
@@ -346,6 +505,32 @@ class MetricAccumulator:
 # Background Polling Thread & HTTP Agent
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def run_fast_cpu_loop(
+    accumulator: MetricAccumulator,
+    stop_event: threading.Event,
+    interval_sec: float = 0.2,
+) -> None:
+    """High-resolution CPU-only loop (~200ms) for microburst detection.
+
+    Uses its OWN SystemSampler: sample_cpu_percent() is a stateful delta since
+    the last call, so sharing one sampler with the 1s loop would corrupt both
+    series' deltas. A dedicated sampler keeps the fast CPU deltas self-consistent.
+
+    Only CPU is sampled here — network rates and TCP counts are smooth and don't
+    benefit from sub-second resolution, so sampling them at 200ms would add
+    overhead for no signal.
+    """
+    fast_sampler = SystemSampler()
+    fast_sampler.sample_cpu_percent()  # prime the delta
+    time.sleep(interval_sec)
+    while not stop_event.is_set():
+        try:
+            accumulator.record_fast_cpu(fast_sampler.sample_cpu_percent())
+        except Exception as exc:
+            logger.debug("Fast CPU loop error: %s", exc)
+        stop_event.wait(interval_sec)
+
+
 def run_sampler_loop(
     sampler: SystemSampler,
     accumulator: MetricAccumulator,
@@ -353,7 +538,7 @@ def run_sampler_loop(
     interval_sec: float = 1.0,
     metrics_file: Optional[str] = "/var/log/skribbl/metrics.json",
 ) -> None:
-    """Background sampling loop running every second."""
+    """Background sampling loop running every second (full multi-metric sample)."""
     # Warm up first differential counters
     sampler.sample_cpu_percent()
     sampler.sample_network_rates()
@@ -446,10 +631,16 @@ def create_http_handler(accumulator: MetricAccumulator):
     return AgentHandler
 
 
-def run_agent(role: str, port: int) -> None:
-    """Start agent daemon on the host."""
+def run_agent(role: str, port: int, fast_interval_sec: float = 0.2) -> None:
+    """Start agent daemon on the host.
+
+    Runs TWO sampling threads:
+      - slow (1s): full multi-metric sample (CPU, mem, net, TCP)
+      - fast (~200ms): CPU-only, for microburst detection
+    """
     sampler = SystemSampler()
     accumulator = MetricAccumulator(role=role)
+    accumulator.fast_interval_sec = fast_interval_sec
     stop_event = threading.Event()
 
     sampler_thread = threading.Thread(
@@ -458,6 +649,16 @@ def run_agent(role: str, port: int) -> None:
         daemon=True,
     )
     sampler_thread.start()
+
+    if fast_interval_sec and fast_interval_sec > 0:
+        fast_thread = threading.Thread(
+            target=run_fast_cpu_loop,
+            args=(accumulator, stop_event, fast_interval_sec),
+            daemon=True,
+        )
+        fast_thread.start()
+    else:
+        logger.info("Fast CPU loop disabled (fast-interval-ms=0)")
 
     handler_cls = create_http_handler(accumulator)
     server = http.server.ThreadingHTTPServer(("0.0.0.0", port), handler_cls)
@@ -615,6 +816,87 @@ def format_table(results: List[Tuple[str, str, Optional[Dict[str, Any]]]]) -> st
     return "\n".join(lines)
 
 
+def format_cpu_saturation_table(results: List[Tuple[str, str, Optional[Dict[str, Any]]]]) -> str:
+    """CPU distribution + saturation-dwell table — the capacity-decision view.
+
+    This is the table to read instead of min/avg/max. Columns:
+      - p50/p95 (1s): median and sustained-busy level over the run
+      - p99 (200ms):  microburst peak the 1s series averages away
+      - %>=70 / %>=85 / %>=95 (1s): fraction of the run spent above each capacity
+        band — the real "do we have headroom?" signal
+      - MaxRun>=85s: longest CONSECUTIVE stretch above 85% in seconds (a plateau,
+        not a blip) — the strongest saturation red flag
+      - Bursts>=90: count of distinct 200ms spikes to >=90% (frame-drop risk)
+
+    Interpretation guide printed below the table so the numbers are actionable.
+    """
+    lines = []
+    border = "=" * 126
+    sep = "-" * 126
+    lines.append(border)
+    lines.append("CPU SATURATION ANALYSIS  (read this, not min/avg/max, for capacity decisions)".center(126))
+    lines.append(border)
+    header = (
+        f"{'Instance / Host':<22} {'Role':<10} "
+        f"{'p50/p95 1s':<14} {'p99 200ms':<10} "
+        f"{'%>=70':<7} {'%>=85':<7} {'%>=95':<7} "
+        f"{'MaxRun>=85s':<12} {'Bursts>=90':<11} {'Verdict'}"
+    )
+    lines.append(header)
+    lines.append(sep)
+
+    for name, host, data in results:
+        label = f"{name} ({host})" if host != name else name
+        if not data:
+            lines.append(f"{label:<22} {'?':<10} {'[UNREACHABLE]'}")
+            continue
+        role = data.get("role", "node")
+        d1 = data.get("cpu_dist_1s", {}) or {}
+        df = data.get("cpu_dist_fast", {}) or {}
+        th = d1.get("thresholds", {}) or {}
+        t70 = th.get("70", {}) or {}
+        t85 = th.get("85", {}) or {}
+        t95 = th.get("95", {}) or {}
+
+        p50 = d1.get("p50", 0.0)
+        p95 = d1.get("p95", 0.0)
+        p99f = df.get("p99", 0.0)
+        pct70 = t70.get("pct_time", 0.0)
+        pct85 = t85.get("pct_time", 0.0)
+        pct95 = t95.get("pct_time", 0.0)
+        maxrun85 = t85.get("longest_streak_sec", 0.0)
+        bursts = df.get("bursts_ge_90", {}).get("count", 0)
+
+        # Verdict heuristic: translate the dwell numbers into a plain call.
+        if pct95 >= 10.0 or maxrun85 >= 30.0:
+            verdict = "SATURATED"
+        elif pct85 >= 20.0 or p95 >= 85.0:
+            verdict = "HOT (scale soon)"
+        elif pct70 >= 25.0 or p95 >= 70.0:
+            verdict = "busy"
+        else:
+            verdict = "healthy"
+
+        lines.append(
+            f"{label:<22} {role:<10} "
+            f"{f'{p50:.0f}/{p95:.0f}%':<14} {f'{p99f:.0f}%':<10} "
+            f"{f'{pct70:.0f}%':<7} {f'{pct85:.0f}%':<7} {f'{pct95:.0f}%':<7} "
+            f"{f'{maxrun85:.0f}s':<12} {str(bursts):<11} {verdict}"
+        )
+
+    lines.append(sep)
+    lines.append(
+        "Read: p95(1s)=sustained busy level | p99(200ms)=microburst peak hidden by 1s avg | "
+        "%>=85=time near cap"
+    )
+    lines.append(
+        "Size the fleet so p95(1s) sits <~70% and MaxRun>=85s stays small; "
+        "SATURATED/HOT => add capacity for that tier."
+    )
+    lines.append(border)
+    return "\n".join(lines)
+
+
 def cmd_report(nodes: List[Tuple[str, str, int]], output_json: Optional[str] = None) -> None:
     """Poll all nodes and print formatted report."""
     results = []
@@ -628,6 +910,10 @@ def cmd_report(nodes: List[Tuple[str, str, int]], output_json: Optional[str] = N
 
     table = format_table(results)
     print("\n" + table + "\n")
+
+    # Second table: the CPU distribution / saturation view that min/avg/max hides.
+    cpu_table = format_cpu_saturation_table(results)
+    print(cpu_table + "\n")
 
     if output_json:
         try:
@@ -650,6 +936,12 @@ def main() -> None:
     agent_p = subparsers.add_parser("agent", help="Run monitor agent daemon on host")
     agent_p.add_argument("--role", default="node", help="Instance role (gateway, worker, lb, redis, etc.)")
     agent_p.add_argument("--port", type=int, default=9101, help="Port to listen on (default 9101)")
+    agent_p.add_argument(
+        "--fast-interval-ms", type=int, default=200,
+        help="High-resolution CPU sampling interval in ms (default 200). "
+             "Floor ~100ms: /proc/stat accounts CPU in ~10ms ticks, so below "
+             "~100ms the deltas get noisy. Set 0 to disable the fast loop.",
+    )
 
     # Report subcommand
     report_p = subparsers.add_parser("report", help="Fetch and display summary table from cluster nodes")
@@ -663,7 +955,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "agent":
-        run_agent(args.role, args.port)
+        run_agent(args.role, args.port, fast_interval_sec=max(0.0, args.fast_interval_ms / 1000.0))
     elif args.command == "reset":
         nodes = parse_nodes_arg(args.nodes)
         cmd_reset(nodes)
