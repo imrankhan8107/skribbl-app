@@ -11,12 +11,17 @@ This Terraform configuration provisions a production-grade, multi-host distribut
                                              │
                                              ▼
                      ┌────────────────────────────────────────────────┐
-                     │          Nginx Reverse Proxy / LB              │
-                     │          (Public Subnet, Port 80/443)          │
-                     │   hash "$arg_gw$arg_room$arg_cid" consistent   │
+                     │        AWS L4 Network Load Balancer (NLB)      │
+                     │  Multi-AZ (Port 80/9000, 100+ Gbps wire speed) │
                      └───────────────┬────────────────┬───────────────┘
                                      │                │
                      ┌───────────────▼┐              ┌▼───────────────┐
+                     │ Nginx LB 1     │              │ Nginx LB N     │
+                     │ (EC2, Port 80) │  ...         │ (EC2, Port 80) │
+                     │ Consistent Hash│              │ Consistent Hash│
+                     └───────┬────────┘              └────────┬───────┘
+                             │                                │
+                     ┌───────▼────────┐              ┌────────▼───────┐
                      │ Go Gateway 1   │              │ Go Gateway N   │
                      │ (EC2, :9000)   │  ...         │ (EC2, :9000)   │
                      │ + Coord :9100  │              │ + Coord :9100  │
@@ -81,6 +86,7 @@ allowed_cidrs = [
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
 
 # Cluster sizing & multi-container tuning
+lb_count          = 2
 gateway_count     = 2
 gateways_per_host = 1
 worker_count      = 2

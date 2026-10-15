@@ -89,13 +89,15 @@ scrape_configs:
           role: 'worker'
 EOF
 
-# Start Prometheus and Grafana monitoring stack via Docker Compose
+%{ if is_primary ~}
+# Start Prometheus and Grafana monitoring stack via Docker Compose (primary LB node only)
 cd /opt/skribbl-app/monitoring
 docker compose up -d
+%{ endif ~}
 
 # Start cluster monitor agent on port 9101
 if [ -f /opt/skribbl-app/scripts/cluster_monitor.py ]; then
-  nohup python3 /opt/skribbl-app/scripts/cluster_monitor.py agent --role "lb" --port 9101 > /var/log/skribbl-monitor.log 2>&1 &
+  nohup python3 /opt/skribbl-app/scripts/cluster_monitor.py agent --role "lb-${lb_id}" --port 9101 > /var/log/skribbl-monitor.log 2>&1 &
 fi
 
 echo "=== Load Balancer initialization finished at $(date) ==="

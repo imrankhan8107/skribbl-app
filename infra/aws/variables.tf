@@ -77,6 +77,12 @@ variable "workers_per_host" {
   default     = 2
 }
 
+variable "lb_count" {
+  description = "Number of dedicated Nginx Load Balancer EC2 instances behind the L4 Network Load Balancer"
+  type        = number
+  default     = 2
+}
+
 variable "lb_instance_type" {
   description = "EC2 instance type for Nginx Load Balancer"
   type        = string

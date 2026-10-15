@@ -49,7 +49,18 @@ resource "aws_subnet" "public" {
   availability_zone       = "${var.aws_region}a"
 
   tags = {
-    Name = "${var.app_name}-public-subnet"
+    Name = "${var.app_name}-public-subnet-a"
+  }
+}
+
+resource "aws_subnet" "public_b" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = cidrsubnet(var.vpc_cidr, 8, 2)
+  map_public_ip_on_launch = true
+  availability_zone       = "${var.aws_region}b"
+
+  tags = {
+    Name = "${var.app_name}-public-subnet-b"
   }
 }
 
@@ -68,6 +79,11 @@ resource "aws_route_table" "public" {
 
 resource "aws_route_table_association" "public" {
   subnet_id      = aws_subnet.public.id
+  route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "public_b" {
+  subnet_id      = aws_subnet.public_b.id
   route_table_id = aws_route_table.public.id
 }
 
@@ -324,17 +340,19 @@ resource "aws_instance" "gateways" {
   }
 }
 
-# --- Nginx Load Balancer Instance ---
+# --- Nginx Load Balancer Instances ---
 
 resource "aws_instance" "lb" {
-  count                  = var.single_instance_mode ? 0 : 1
+  count                  = var.single_instance_mode ? 0 : var.lb_count
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.lb_instance_type
-  subnet_id              = aws_subnet.public.id
+  subnet_id              = count.index % 2 == 0 ? aws_subnet.public.id : aws_subnet.public_b.id
   vpc_security_group_ids = [aws_security_group.cluster.id]
   key_name               = aws_key_pair.deployer.key_name
 
   user_data = templatefile("${path.module}/templates/cloud-init-lb.tftpl", {
+    lb_id         = count.index + 1
+    is_primary    = count.index == 0
     git_repo_url  = var.git_repo_url
     git_branch    = var.git_branch
     gateway_ips   = aws_instance.gateways[*].private_ip
@@ -357,8 +375,80 @@ resource "aws_instance" "lb" {
   depends_on = [aws_instance.gateways, aws_instance.workers]
 
   tags = {
-    Name = "${var.app_name}-lb"
+    Name = "${var.app_name}-lb-${count.index + 1}"
     Tier = "load-balancer"
+  }
+}
+
+# --- L4 Network Load Balancer (NLB) ---
+# Terminates ingress TCP traffic across multiple AZs and distributes connections
+# across the horizontal Nginx LB instances at wire speed (100+ Gbps capable).
+
+resource "aws_lb" "nlb" {
+  count                            = var.single_instance_mode ? 0 : 1
+  name                             = "${var.app_name}-nlb"
+  internal                         = false
+  load_balancer_type               = "network"
+  subnets                          = [aws_subnet.public.id, aws_subnet.public_b.id]
+  enable_cross_zone_load_balancing = true
+
+  tags = {
+    Name = "${var.app_name}-nlb"
+    Tier = "l4-nlb"
+  }
+}
+
+resource "aws_lb_target_group" "nginx_80" {
+  count       = var.single_instance_mode ? 0 : 1
+  name        = "${var.app_name}-tg-80"
+  port        = 80
+  protocol    = "TCP"
+  vpc_id      = aws_vpc.main.id
+  target_type = "instance"
+
+  health_check {
+    protocol            = "HTTP"
+    port                = "80"
+    path                = "/nginx-health"
+    interval            = 10
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+  }
+
+  tags = {
+    Name = "${var.app_name}-tg-80"
+    Tier = "l4-nlb"
+  }
+}
+
+resource "aws_lb_target_group_attachment" "nginx_80" {
+  count            = var.single_instance_mode ? 0 : var.lb_count
+  target_group_arn = aws_lb_target_group.nginx_80[0].arn
+  target_id        = aws_instance.lb[count.index].id
+  port             = 80
+}
+
+resource "aws_lb_listener" "tcp_80" {
+  count             = var.single_instance_mode ? 0 : 1
+  load_balancer_arn = aws_lb.nlb[0].arn
+  port              = 80
+  protocol          = "TCP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.nginx_80[0].arn
+  }
+}
+
+resource "aws_lb_listener" "tcp_9000" {
+  count             = var.single_instance_mode ? 0 : 1
+  load_balancer_arn = aws_lb.nlb[0].arn
+  port              = 9000
+  protocol          = "TCP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.nginx_80[0].arn
   }
 }
 
@@ -373,13 +463,13 @@ resource "aws_instance" "load_generator" {
   key_name               = aws_key_pair.deployer.key_name
 
   user_data = templatefile("${path.module}/templates/cloud-init-k6.tftpl", {
-    git_repo_url  = var.git_repo_url
-    git_branch    = var.git_branch
-    runner_id     = count.index + 1
-    runner_count  = var.load_generator_count
-    lb_private_ip = length(aws_instance.lb) > 0 ? aws_instance.lb[0].private_ip : ""
-    coord_host    = length(aws_instance.gateways) > 0 ? aws_instance.gateways[0].private_ip : ""
-    coord_hosts   = join(",", aws_instance.gateways[*].private_ip)
+    git_repo_url   = var.git_repo_url
+    git_branch     = var.git_branch
+    runner_id      = count.index + 1
+    runner_count   = var.load_generator_count
+    lb_target_host = length(aws_lb.nlb) > 0 ? aws_lb.nlb[0].dns_name : (length(aws_instance.lb) > 0 ? aws_instance.lb[0].private_ip : "")
+    coord_host     = length(aws_instance.gateways) > 0 ? aws_instance.gateways[0].private_ip : ""
+    coord_hosts    = join(",", aws_instance.gateways[*].private_ip)
     # Full host:port coord URLs for every gateway container (port = 9100 + (i*2)).
     # This distributes coordination across all containers, not just port 9100.
     coord_urls = join(",", flatten([
@@ -393,7 +483,7 @@ resource "aws_instance" "load_generator" {
       ]
     ]))
     cluster_nodes = join(",", flatten([
-      length(aws_instance.lb) > 0 ? ["lb:${aws_instance.lb[0].private_ip}:9101"] : [],
+      [for idx, inst in aws_instance.lb : "lb-${idx + 1}:${inst.private_ip}:9101"],
       length(aws_instance.redis) > 0 ? ["redis:${aws_instance.redis[0].private_ip}:9101"] : [],
       [for idx, ip in aws_instance.gateways[*].private_ip : "gateway-${idx + 1}:${ip}:9101"],
       [for idx, ip in aws_instance.workers[*].private_ip : "worker-${idx + 1}:${ip}:9101"],
@@ -405,7 +495,7 @@ resource "aws_instance" "load_generator" {
     volume_type = "gp3"
   }
 
-  depends_on = [aws_instance.lb, aws_instance.workers, aws_instance.gateways, aws_instance.redis]
+  depends_on = [aws_lb.nlb, aws_instance.lb, aws_instance.workers, aws_instance.gateways, aws_instance.redis]
 
   tags = {
     Name = var.load_generator_count > 1 ? "${var.app_name}-k6-runner-${count.index + 1}" : "${var.app_name}-k6-runner"

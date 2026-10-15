@@ -39,6 +39,13 @@ http {
     server {
         listen 80;
 
+        # Lightweight healthcheck endpoint for L4 Network Load Balancer (NLB) target groups
+        location /nginx-health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+
         # Coord REST endpoint — routed to coord upstream (bypasses WS stickiness)
         location /rooms/ {
             proxy_pass http://coord;

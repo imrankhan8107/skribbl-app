@@ -48,6 +48,12 @@ workers_per_host  = 6
 # For 35k-50k: c5a.2xlarge for gateways and workers, c5a.xlarge for LB, c5a.large for Redis
 # For 75k+:    c5a.2xlarge for LB, gateways, and workers
 # For 100k-120k: c5a.4xlarge for LB, c5a.xlarge for Redis, c5a.2xlarge for Gateways/Workers
+# LB Tier:
+# Behind AWS L4 Network Load Balancer (NLB), distributes incoming TCP traffic across horizontal Nginx instances
+# Dev / baseline: lb_count=1 (t3.medium)
+# 50k-100k load:  lb_count=2 (c5a.xlarge)
+# 120k-150k load: lb_count=2-3 (c5a.2xlarge)
+lb_count              = 2
 lb_instance_type      = "c5a.xlarge"
 gateway_instance_type = "c5a.2xlarge"
 worker_instance_type  = "c5a.2xlarge"
