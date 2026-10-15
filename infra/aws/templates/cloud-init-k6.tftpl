@@ -90,6 +90,16 @@ echo "=== Resetting measurement window across all cluster instances ==="
 python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py reset --nodes "$CLUSTER_NODES" || true
 echo ""
 
+# Explicitly raise this shell's file-descriptor limit before launching k6.
+# /etc/security/limits.conf only applies via PAM to login shells, so a process
+# started from cloud-init (or any non-login context) can still inherit the old
+# 1024 default — which would silently cap k6 at ~1000 concurrent sockets and
+# produce connect failures + huge RTTs at LOW CPU (looks like a server problem,
+# isn't). Setting it here guarantees k6 gets the headroom regardless of how the
+# shell was spawned. Falls back gracefully if the hard limit is lower.
+ulimit -n 131072 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+echo "k6 process file-descriptor limit (ulimit -n): $(ulimit -n)"
+
 cd /home/ubuntu/skribbl-app
 k6 run \
   -e HOST=${lb_private_ip} \

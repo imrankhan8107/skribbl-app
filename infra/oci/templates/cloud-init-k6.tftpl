@@ -91,6 +91,13 @@ echo "=== Resetting measurement window across all cluster instances ==="
 python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py reset --nodes "$CLUSTER_NODES" || true
 echo ""
 
+# Explicitly raise this shell's FD limit before k6 (see AWS k6 template for the
+# full rationale): limits.conf only applies via PAM to login shells, so a
+# cloud-init/non-login context can inherit the 1024 default and silently cap k6
+# at ~1000 sockets — connect failures + huge RTTs at LOW CPU.
+ulimit -n 131072 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+echo "k6 process file-descriptor limit (ulimit -n): $(ulimit -n)"
+
 cd /home/ubuntu/skribbl-app
 k6 run \
   -e HOST=${lb_private_ip} \
