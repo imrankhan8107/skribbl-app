@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -253,6 +254,52 @@ func TestWritePumpDelivery(t *testing.T) {
 	}
 	if string(msg) != string(testMsg) {
 		t.Errorf("expected %s, got %s", testMsg, msg)
+	}
+}
+
+func TestWritePumpBatchCoalescing(t *testing.T) {
+	sr := NewSessionRegistry()
+	clientConn, serverConn, cleanup := newTestConn(t)
+	defer cleanup()
+
+	sr.Register("player-batch", "ROOM01", serverConn)
+	defer sr.Unregister("player-batch")
+
+	session := sr.GetByPlayer("player-batch")
+
+	// Pre-fill SendCh with multiple messages
+	msg1 := []byte(`{"type":"stroke","id":1}`)
+	msg2 := []byte(`{"type":"stroke","id":2}`)
+	msg3 := []byte(`{"type":"stroke","id":3}`)
+
+	session.SendCh <- msg1
+	session.SendCh <- msg2
+	session.SendCh <- msg3
+
+	// Read from client side. With write-coalescing, all queued messages
+	// arrive properly formatted (either as a coalesced JSON array or individual valid JSON).
+	clientConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	receivedTotal := 0
+	for receivedTotal < 3 {
+		_, raw, err := clientConn.ReadMessage()
+		if err != nil {
+			t.Fatalf("failed to read message (received %d so far): %v", receivedTotal, err)
+		}
+
+		var parsed interface{}
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			t.Fatalf("received malformed JSON: %v, raw: %s", err, string(raw))
+		}
+
+		if arr, ok := parsed.([]interface{}); ok {
+			receivedTotal += len(arr)
+		} else {
+			receivedTotal++
+		}
+	}
+
+	if receivedTotal != 3 {
+		t.Fatalf("expected 3 total messages received, got %d", receivedTotal)
 	}
 }
 

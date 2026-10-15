@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"strconv"
 	"sync"
@@ -237,10 +238,19 @@ func (sr *SessionRegistry) removeLocked(session *PlayerSession) {
 	}
 }
 
+// maxBatchSize is the maximum number of queued messages coalesced into a single
+// WebSocket frame during bursts.
+const maxBatchSize = 64
+
 // writePump is a per-session goroutine that drains SendCh and writes messages
 // to the WebSocket connection. It exits when the session's done channel is closed
 // or when a write error occurs. This ensures that writes to a single WebSocket
 // connection are serialized (no concurrent WriteMessage calls).
+//
+// Under high burst (e.g. stroke fan-out), writePump drains up to maxBatchSize
+// messages already queued in SendCh and coalesces them into a single JSON array
+// frame `[msg1,msg2,...]` in a single WriteMessage syscall. If only one message
+// is pending, it writes it directly as an unbatched frame without extra allocations.
 func (sr *SessionRegistry) writePump(session *PlayerSession) {
 	for {
 		select {
@@ -250,7 +260,41 @@ func (sr *SessionRegistry) writePump(session *PlayerSession) {
 			if !ok {
 				return
 			}
-			if err := session.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+
+			// Fast path: if no other messages are currently waiting in SendCh,
+			// send as a normal unbatched frame (zero allocations, backward compatible).
+			n := len(session.SendCh)
+			if n == 0 {
+				if err := session.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+					debugf("[session] writePump error player=%s err=%v", session.PlayerID, err)
+					return
+				}
+				continue
+			}
+
+			// Burst path: coalesce up to maxBatchSize queued messages into a single frame.
+			if n > maxBatchSize-1 {
+				n = maxBatchSize - 1
+			}
+
+			var buf bytes.Buffer
+			buf.WriteByte('[')
+			buf.Write(msg)
+			for i := 0; i < n; i++ {
+				select {
+				case nextMsg, ok := <-session.SendCh:
+					if !ok {
+						return
+					}
+					buf.WriteByte(',')
+					buf.Write(nextMsg)
+				default:
+					break
+				}
+			}
+			buf.WriteByte(']')
+
+			if err := session.Conn.WriteMessage(websocket.TextMessage, buf.Bytes()); err != nil {
 				debugf("[session] writePump error player=%s err=%v", session.PlayerID, err)
 				return
 			}

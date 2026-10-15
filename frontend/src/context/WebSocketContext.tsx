@@ -996,9 +996,24 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    ws.onmessage = (event: MessageEvent) => {
+    const handleWsMessage = (msg: any) => {
+      if (!msg) return;
+
+      // Handle batched frames: gateway coalesces bursts into a JSON array or {type: "batch", payload: [...]}
+      if (Array.isArray(msg)) {
+        for (const item of msg) {
+          handleWsMessage(item);
+        }
+        return;
+      }
+      if (msg.type === "batch" && Array.isArray(msg.payload)) {
+        for (const item of msg.payload) {
+          handleWsMessage(item);
+        }
+        return;
+      }
+
       try {
-        const msg = JSON.parse(event.data);
         console.log("[WS] Received:", msg.type, msg.payload);
 
         // Room-sticky routing: the gateway we connected to doesn't own our room.
@@ -1154,6 +1169,15 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (err) {
         console.error("[WS] Error processing message:", err);
+      }
+    };
+
+    ws.onmessage = (event: MessageEvent) => {
+      try {
+        const raw = JSON.parse(event.data);
+        handleWsMessage(raw);
+      } catch (err) {
+        console.error("[WS] Parse error:", err);
       }
     };
 
