@@ -242,6 +242,24 @@ func (sr *SessionRegistry) removeLocked(session *PlayerSession) {
 // WebSocket frame during bursts.
 const maxBatchSize = 64
 
+// writeCoalesceEnabled toggles the burst write-coalescing path in writePump.
+// It exists so a 150k A/B ("on" vs "off") run can isolate whether coalescing is
+// the cause of the gateway p95/SATURATED regression seen vs the Sep baseline,
+// WITHOUT touching the coalescing logic itself. Set env WRITE_COALESCE=0 (or
+// "false"/"off") to force the single-message fast path on every send; any other
+// value (or unset) keeps coalescing on, which is the committed default.
+//
+//   WRITE_COALESCE unset / 1 / true  -> coalescing ON  (current committed behavior)
+//   WRITE_COALESCE = 0 / false / off -> coalescing OFF (one WriteMessage per msg)
+var writeCoalesceEnabled = func() bool {
+	switch os.Getenv("WRITE_COALESCE") {
+	case "0", "false", "off", "FALSE", "OFF", "no", "NO":
+		return false
+	default:
+		return true
+	}
+}()
+
 // writePump is a per-session goroutine that drains SendCh and writes messages
 // to the WebSocket connection. It exits when the session's done channel is closed
 // or when a write error occurs. This ensures that writes to a single WebSocket
@@ -261,10 +279,12 @@ func (sr *SessionRegistry) writePump(session *PlayerSession) {
 				return
 			}
 
-			// Fast path: if no other messages are currently waiting in SendCh,
-			// send as a normal unbatched frame (zero allocations, backward compatible).
+			// Fast path: if coalescing is disabled, or no other messages are
+			// currently waiting in SendCh, send as a normal unbatched frame
+			// (zero allocations, backward compatible). The WRITE_COALESCE=0
+			// case lets an A/B run bypass the burst path entirely.
 			n := len(session.SendCh)
-			if n == 0 {
+			if !writeCoalesceEnabled || n == 0 {
 				if err := session.Conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 					debugf("[session] writePump error player=%s err=%v", session.PlayerID, err)
 					return

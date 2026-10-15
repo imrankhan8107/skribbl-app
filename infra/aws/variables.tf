@@ -155,5 +155,11 @@ variable "grpc_stream_buffer_size" {
   default     = 4096
 }
 
+variable "write_coalesce" {
+  description = "Enable gateway writePump burst write-coalescing (default true = committed behavior). Set false for an A/B run to isolate whether coalescing causes the 150k gateway p95/SATURATED regression."
+  type        = bool
+  default     = true
+}
+
 
 

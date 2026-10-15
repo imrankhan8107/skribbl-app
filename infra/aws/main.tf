@@ -328,6 +328,7 @@ resource "aws_instance" "gateways" {
     gateways_per_host       = var.gateways_per_host
     trace_enabled           = var.trace_enabled
     grpc_stream_buffer_size = var.grpc_stream_buffer_size
+    write_coalesce          = var.write_coalesce
   })
 
   root_block_device {
