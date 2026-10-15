@@ -468,10 +468,11 @@ resource "aws_instance" "load_generator" {
   user_data = templatefile("${path.module}/templates/cloud-init-k6.tftpl", {
     git_repo_url   = var.git_repo_url
     git_branch     = var.git_branch
-    runner_id      = count.index + 1
-    runner_count   = var.load_generator_count
-    lb_target_host = length(aws_lb.nlb) > 0 ? aws_lb.nlb[0].dns_name : (length(aws_instance.lb) > 0 ? aws_instance.lb[0].private_ip : "")
-    coord_host     = length(aws_instance.gateways) > 0 ? aws_instance.gateways[0].private_ip : ""
+    runner_id       = count.index + 1
+    runner_count    = var.load_generator_count
+    lb_target_host  = length(aws_instance.lb) > 0 ? aws_instance.lb[0].private_ip : ""
+    lb_target_hosts = join(",", aws_instance.lb[*].private_ip)
+    coord_host      = length(aws_instance.gateways) > 0 ? aws_instance.gateways[0].private_ip : ""
     coord_hosts    = join(",", aws_instance.gateways[*].private_ip)
     # Full host:port coord URLs for every gateway container (port = 9100 + (i*2)).
     # This distributes coordination across all containers, not just port 9100.

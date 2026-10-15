@@ -161,7 +161,13 @@ function recordError(category) {
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-const HOST = __ENV.HOST || 'localhost';
+// HOSTS supports a comma-separated list of LB endpoints (e.g. multi-Nginx in AWS).
+// When multiple LB hosts are provided, k6 balances VUs and coord requests across them.
+const HOSTS = (__ENV.HOSTS || __ENV.HOST || 'localhost')
+  .split(',')
+  .map((h) => h.trim())
+  .filter((h) => h.length > 0);
+const HOST = HOSTS[0];
 const PORT = __ENV.PORT || '9000';
 const COORD_HOST = __ENV.COORD_HOST || HOST;
 const COORD_HOSTS = (__ENV.COORD_HOSTS || COORD_HOST)
@@ -182,12 +188,6 @@ const COORD_HOSTS = (__ENV.COORD_HOSTS || COORD_HOST)
 const COORD_VIA_LB = (__ENV.COORD_VIA_LB !== '0'); // default: true
 const COORD_PORT = __ENV.COORD_PORT || '9100';
 const COORD_HOST_PORT = COORD_PORT === '0' ? PORT : COORD_PORT;
-// LB-based coord URL: uses HOST:PORT (port 80 in AWS) so all coord HTTP goes
-// through nginx's /rooms/ proxy → coord upstream → gateway containers.
-const COORD_URL_LB = `http://${HOST}:${PORT}/rooms`;
-// Direct coord URL (legacy/local): hits a gateway coord port directly.
-const COORD_URL_DIRECT = `http://${COORD_HOST}:${COORD_HOST_PORT}/rooms`;
-const COORD_URL = COORD_VIA_LB ? COORD_URL_LB : COORD_URL_DIRECT;
 
 // COORD_URLS = comma-separated "host:port" pairs for direct gateway coord
 // endpoints. Used only when COORD_VIA_LB=0. Kept for backward compat.
@@ -197,19 +197,23 @@ const _rawCoordUrls = __ENV.COORD_URLS
 
 function getCoordUrl(roomIndex) {
   if (COORD_VIA_LB) {
-    // All coord goes through the LB — no per-room routing needed; LB balances.
-    return COORD_URL_LB;
+    const targetHost = HOSTS[roomIndex % HOSTS.length];
+    return `http://${targetHost}:${PORT}/rooms`;
   }
   const endpoint = _rawCoordUrls[roomIndex % _rawCoordUrls.length];
   return `http://${endpoint}/rooms`;
 }
 
+function getWsBaseUrl(vuIndex) {
+  const targetHost = HOSTS[vuIndex % HOSTS.length];
+  return `ws://${targetHost}:${PORT}/ws`;
+}
 
 const WS_URL = `ws://${HOST}:${PORT}/ws`;
 // Comma-separated full /health URLs. In AWS this is populated with every
 // gateway's private address by run-test.sh. A single LB health URL remains a
 // useful fallback for local runs.
-const HEALTH_URLS = (__ENV.HEALTH_URLS || `http://${HOST}:${PORT}/health`)
+const HEALTH_URLS = (__ENV.HEALTH_URLS || HOSTS.map((h) => `http://${h}:${PORT}/health`).join(','))
   .split(',').map((url) => url.trim()).filter((url) => url.length > 0);
 const HEALTH_POLL_SECONDS = parseInt(__ENV.HEALTH_POLL_SECONDS || '15');
 const PLAYERS_PER_ROOM = parseInt(__ENV.PLAYERS_PER_ROOM || '2');
@@ -435,7 +439,8 @@ export default function () {
       // gateways at the LB hash instead of all landing on one (single source IP).
       params.push(`cid=${vu}-${Math.random().toString(36).slice(2)}`);
     }
-    return params.length ? `${WS_URL}?${params.join('&')}` : WS_URL;
+    const wsBase = getWsBaseUrl(vu);
+    return params.length ? `${wsBase}?${params.join('&')}` : wsBase;
   }
 
   // Per-VU session state (persists across a redirect reconnect).

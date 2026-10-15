@@ -79,7 +79,7 @@ CLUSTER_NODES="${cluster_nodes},load-gen-${runner_id}:127.0.0.1:9101"
 
 echo "=========================================================="
 echo " Starting Skribbl In-VPC k6 Load Test (Runner $RUNNER_ID/${runner_count})"
-echo " Target LB: http://${lb_target_host}:80"
+echo " Target LBs: ${lb_target_hosts} (Primary: ${lb_target_host}:80)"
 echo " Coord URLs: $COORD_URLS"
 echo " Gateway health targets: $HEALTH_URLS"
 echo " VUs: $VUS (VU_OFFSET: $VU_OFFSET) | Players/Room: $PLAYERS | Stroke: $${HZ}Hz | Ramp: $${RAMP}s | Hold: $${HOLD}s"
@@ -102,6 +102,7 @@ echo "k6 process file-descriptor limit (ulimit -n): $(ulimit -n)"
 
 cd /home/ubuntu/skribbl-app
 k6 run \
+  -e HOSTS="${lb_target_hosts}" \
   -e HOST=${lb_target_host} \
   -e PORT=80 \
   -e COORD_HOST=$COORD_HOST \
