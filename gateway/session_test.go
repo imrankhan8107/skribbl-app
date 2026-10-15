@@ -262,12 +262,18 @@ func TestWritePumpBatchCoalescing(t *testing.T) {
 	clientConn, serverConn, cleanup := newTestConn(t)
 	defer cleanup()
 
-	sr.Register("player-batch", "ROOM01", serverConn)
-	defer sr.Unregister("player-batch")
+	// Construct session directly so writePump is NOT started until SendCh is populated.
+	// This guarantees writePump encounters len(SendCh) > 0 on its very first iteration,
+	// exercising the coalesced burst path deterministically without races.
+	session := &PlayerSession{
+		PlayerID: "player-batch",
+		RoomCode: "ROOM01",
+		Conn:     serverConn,
+		SendCh:   make(chan []byte, 10),
+		done:     make(chan struct{}),
+	}
 
-	session := sr.GetByPlayer("player-batch")
-
-	// Pre-fill SendCh with multiple messages
+	// Pre-fill SendCh with 3 messages
 	msg1 := []byte(`{"type":"stroke","id":1}`)
 	msg2 := []byte(`{"type":"stroke","id":2}`)
 	msg3 := []byte(`{"type":"stroke","id":3}`)
@@ -276,30 +282,28 @@ func TestWritePumpBatchCoalescing(t *testing.T) {
 	session.SendCh <- msg2
 	session.SendCh <- msg3
 
-	// Read from client side. With write-coalescing, all queued messages
-	// arrive properly formatted (either as a coalesced JSON array or individual valid JSON).
+	// Now launch writePump
+	go sr.writePump(session)
+	defer close(session.done)
+
+	// Read from client side. Must arrive in a SINGLE coalesced frame formatted as a JSON array.
 	clientConn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	receivedTotal := 0
-	for receivedTotal < 3 {
-		_, raw, err := clientConn.ReadMessage()
-		if err != nil {
-			t.Fatalf("failed to read message (received %d so far): %v", receivedTotal, err)
-		}
-
-		var parsed interface{}
-		if err := json.Unmarshal(raw, &parsed); err != nil {
-			t.Fatalf("received malformed JSON: %v, raw: %s", err, string(raw))
-		}
-
-		if arr, ok := parsed.([]interface{}); ok {
-			receivedTotal += len(arr)
-		} else {
-			receivedTotal++
-		}
+	_, raw, err := clientConn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read message: %v", err)
 	}
 
-	if receivedTotal != 3 {
-		t.Fatalf("expected 3 total messages received, got %d", receivedTotal)
+	var batch []map[string]interface{}
+	if err := json.Unmarshal(raw, &batch); err != nil {
+		t.Fatalf("expected batched JSON array, got malformed: %v (raw: %s)", err, string(raw))
+	}
+
+	if len(batch) != 3 {
+		t.Fatalf("expected exactly 3 coalesced messages in single frame, got %d", len(batch))
+	}
+
+	if batch[0]["type"] != "stroke" || batch[1]["type"] != "stroke" || batch[2]["type"] != "stroke" {
+		t.Errorf("unexpected payload structure: %+v", batch)
 	}
 }
 

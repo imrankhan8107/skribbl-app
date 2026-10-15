@@ -19,7 +19,10 @@ locals {
     var.allowed_cidrs,
     var.allowed_cidr != "" ? [var.allowed_cidr] : []
   )))
-  web_allowed_cidrs = var.is_private ? local.effective_allowed_cidrs : ["0.0.0.0/0"]
+  # Web ingress: when is_private = true, restrict external internet to allowed IPs but
+  # always permit var.vpc_cidr so that AWS NLB health check probes (which originate from
+  # internal subnet ENIs) succeed and don't mark targets unhealthy.
+  web_allowed_cidrs = var.is_private ? distinct(concat(local.effective_allowed_cidrs, [var.vpc_cidr])) : ["0.0.0.0/0"]
 }
 
 # --- Networking ---

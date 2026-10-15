@@ -280,6 +280,7 @@ func (sr *SessionRegistry) writePump(session *PlayerSession) {
 			var buf bytes.Buffer
 			buf.WriteByte('[')
 			buf.Write(msg)
+		drainLoop:
 			for i := 0; i < n; i++ {
 				select {
 				case nextMsg, ok := <-session.SendCh:
@@ -289,7 +290,7 @@ func (sr *SessionRegistry) writePump(session *PlayerSession) {
 					buf.WriteByte(',')
 					buf.Write(nextMsg)
 				default:
-					break
+					break drainLoop
 				}
 			}
 			buf.WriteByte(']')
