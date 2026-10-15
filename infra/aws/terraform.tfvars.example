@@ -80,3 +80,12 @@ grpc_send_queue_maxsize = 8096
 
 # Go Gateway outbound gRPC stream buffer capacity per worker stream (prevents room creation drops at 100k scale)
 grpc_stream_buffer_size = 4096
+
+# Gateway writePump burst write-coalescing (batches queued messages into one
+# WebSocket frame during fan-out bursts to cut syscalls).
+#   true  = coalescing ON (default, committed behavior)
+#   false = one WriteMessage per message (fast path only)
+# Flip to false for an A/B run to isolate whether coalescing drives gateway
+# CPU p95/SATURATION at high scale; re-provision gateways after changing so the
+# containers restart with the new WRITE_COALESCE env.
+write_coalesce = true
