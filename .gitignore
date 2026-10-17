@@ -52,3 +52,8 @@ roadmaps
 LEARNING_ROADMAP.md
 .kiro
 screenshots/
+
+# Binaries & local runner scripts
+*.exe
+loadtest-bin
+run-test*.sh

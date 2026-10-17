@@ -43,7 +43,7 @@ fi
 
 # 2. Install Git, Python3, and k6
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg git htop python3
+apt-get install -y ca-certificates curl gnupg git htop python3 golang-go
 
 curl -fsSL https://dl.k6.io/key.gpg | gpg --dearmor --yes -o /usr/share/keyrings/k6-archive-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | tee /etc/apt/sources.list.d/k6.list
@@ -123,4 +123,59 @@ EOF
 chmod +x /home/ubuntu/run-test.sh
 chown ubuntu:ubuntu /home/ubuntu/run-test.sh
 
-echo "=== k6 Load Generator initialization finished at $(date) ==="
+# ------------------------------------------------------------------------------
+# Pre-compile the Go Load Tester and generate /home/ubuntu/run-test-2.sh
+# ------------------------------------------------------------------------------
+(cd /home/ubuntu/skribbl-app/loadtest && go build -o /home/ubuntu/skribbl-app/loadtest-bin .)
+
+cat << 'EOF' > /home/ubuntu/run-test-2.sh
+#!/bin/bash
+VUS=$${1:-100}
+PLAYERS=$${2:-2}
+HZ=$${3:-20}
+RAMP=$${4:-0}
+HOLD=$${5:-$${HOLD_SECONDS:-2400}}
+
+RUNNER_ID=${runner_id}
+DEFAULT_OFFSET=$(( (RUNNER_ID - 1) * VUS ))
+VU_OFFSET=$${6:-$${VU_OFFSET:-$DEFAULT_OFFSET}}
+
+export HOST=${lb_private_ip}
+export PORT=80
+export COORD_HOST=$COORD_HOST
+export COORD_HOSTS="$COORD_HOSTS"
+export COORD_URLS="$COORD_URLS"
+export COORD_PORT=$COORD_PORT
+export HEALTH_URLS="$HEALTH_URLS"
+CLUSTER_NODES="${cluster_nodes},load-gen-${runner_id}:127.0.0.1:9101"
+
+echo "=========================================================="
+echo " Starting Skribbl In-VCN Go Load Test (Runner $RUNNER_ID/${runner_count})"
+echo " Target LB: ${lb_private_ip}:80"
+echo " VUs: $VUS (VU_OFFSET: $VU_OFFSET) | Players/Room: $PLAYERS | Stroke: $${HZ}Hz | Ramp: $${RAMP}s | Hold: $${HOLD}s"
+echo "=========================================================="
+
+ulimit -n 131072 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+
+cd /home/ubuntu/skribbl-app
+if [ ! -f ./loadtest-bin ] || [ ./loadtest/main.go -nt ./loadtest-bin ]; then
+  (cd loadtest && go build -o ../loadtest-bin .)
+fi
+
+./loadtest-bin \
+  -vus $VUS \
+  -players $PLAYERS \
+  -hz $HZ \
+  -ramp $RAMP \
+  -hold $HOLD \
+  -offset $VU_OFFSET
+
+echo ""
+echo "=== Fetching cluster post-test resource summary ==="
+python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py summary --nodes "$CLUSTER_NODES" || true
+EOF
+
+chmod +x /home/ubuntu/run-test-2.sh
+chown ubuntu:ubuntu /home/ubuntu/run-test-2.sh
+
+echo "=== Load Generator initialization finished at $(date) ==="

@@ -40,7 +40,7 @@ fi
 
 # 2. Install Git and k6
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg git htop
+apt-get install -y ca-certificates curl gnupg git htop golang-go
 
 curl -fsSL https://dl.k6.io/key.gpg | gpg --dearmor --yes -o /usr/share/keyrings/k6-archive-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | tee /etc/apt/sources.list.d/k6.list
@@ -129,5 +129,69 @@ EOF
 chmod +x /home/ubuntu/run-test.sh
 chown ubuntu:ubuntu /home/ubuntu/run-test.sh
 
-echo "=== k6 Load Generator initialization finished at $(date) ==="
+# ------------------------------------------------------------------------------
+# Pre-compile the Go Load Tester and generate /home/ubuntu/run-test-2.sh
+# ------------------------------------------------------------------------------
+(cd /home/ubuntu/skribbl-app/loadtest && go build -o /home/ubuntu/skribbl-app/loadtest-bin .)
+
+cat << 'EOF' > /home/ubuntu/run-test-2.sh
+#!/bin/bash
+VUS=$${1:-100}
+PLAYERS=$${2:-2}
+HZ=$${3:-20}
+RAMP=$${4:-0}
+HOLD=$${5:-$${HOLD_SECONDS:-2400}}
+
+# Runner identity & automated VU_OFFSET calculation
+RUNNER_ID=${runner_id}
+DEFAULT_OFFSET=$(( (RUNNER_ID - 1) * VUS ))
+VU_OFFSET=$${6:-$${VU_OFFSET:-$DEFAULT_OFFSET}}
+
+export HOSTS="${lb_target_hosts}"
+export HOST=${lb_target_host}
+export PORT=80
+export COORD_HOST="${coord_host}"
+export COORD_HOSTS="${coord_hosts}"
+export COORD_URLS="${coord_urls}"
+export COORD_PORT=9100
+export HEALTH_URLS="${gateway_health_urls}"
+CLUSTER_NODES="${cluster_nodes},load-gen-${runner_id}:127.0.0.1:9101"
+
+echo "=========================================================="
+echo " Starting Skribbl In-VPC Go Load Test (Runner $RUNNER_ID/${runner_count})"
+echo " Target LBs: ${lb_target_hosts} (Primary: ${lb_target_host}:80)"
+echo " Coord URLs: $COORD_URLS"
+echo " Gateway health targets: $HEALTH_URLS"
+echo " VUs: $VUS (VU_OFFSET: $VU_OFFSET) | Players/Room: $PLAYERS | Stroke: $${HZ}Hz | Ramp: $${RAMP}s | Hold: $${HOLD}s"
+echo "=========================================================="
+
+echo ""
+echo "=== Resetting measurement window across all cluster instances ==="
+python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py reset --nodes "$CLUSTER_NODES" || true
+echo ""
+
+ulimit -n 131072 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+
+cd /home/ubuntu/skribbl-app
+if [ ! -f ./loadtest-bin ] || [ ./loadtest/main.go -nt ./loadtest-bin ]; then
+  (cd loadtest && go build -o ../loadtest-bin .)
+fi
+
+./loadtest-bin \
+  -vus $VUS \
+  -players $PLAYERS \
+  -hz $HZ \
+  -ramp $RAMP \
+  -hold $HOLD \
+  -offset $VU_OFFSET
+
+echo ""
+echo "=== Fetching Cluster Performance & Network Traffic Report ==="
+python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py report --nodes "$CLUSTER_NODES" --output /home/ubuntu/go-cluster-metrics.json
+EOF
+
+chmod +x /home/ubuntu/run-test-2.sh
+chown ubuntu:ubuntu /home/ubuntu/run-test-2.sh
+
+echo "=== Load Generator initialization finished at $(date) ==="
 
