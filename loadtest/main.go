@@ -860,26 +860,41 @@ func printSummaryReport(cfg *Config, duration time.Duration) {
 		sessRate = float64(sessDone) / float64(sessTotal) * 100.0
 	}
 
+	totalErrors := globalMetrics.ErrorsConnect.Load() + globalMetrics.ErrorsRoom.Load() + globalMetrics.ErrorsProtocol.Load() + globalMetrics.ErrorsTimeout.Load()
 	fmt.Printf("     data_received....................: %s   %s/s\n", formatBytes(dataRecv), formatBytes(uint64(float64(dataRecv)/durSec)))
 	fmt.Printf("     data_sent........................: %s   %s/s\n", formatBytes(dataSent), formatBytes(uint64(float64(dataSent)/durSec)))
-	fmt.Printf("     messages_received................: %d   %.1f/s\n", msgsRecv, float64(msgsRecv)/durSec)
-	fmt.Printf("     messages_sent....................: %d   %.1f/s\n", msgsSent, float64(msgsSent)/durSec)
-	fmt.Printf("     ws_connections_opened............: %d   %.1f/s\n", opened, float64(opened)/durSec)
-	fmt.Printf("     ws_connections_closed............: %d   %.1f/s\n", globalMetrics.WSConnectionsClosed.Load(), float64(globalMetrics.WSConnectionsClosed.Load())/durSec)
-	fmt.Printf("   ✓ ws_connection_success............: %.2f%%   ✓ %d   ✗ %d\n", connSuccessRate, opened, failures)
-
-	printTrend("ws_open_rtt", globalMetrics.WSOpenRTT.Snapshot(), "ms")
-	printTrend("message_latency", globalMetrics.MessageLatency.Snapshot(), "ms")
-	printTrend("room_create_rtt", globalMetrics.RoomCreateRTT.Snapshot(), "ms")
-	printTrend("room_join_rtt", globalMetrics.RoomJoinRTT.Snapshot(), "ms")
+	fmt.Printf("     errors...........................: %d   %.6f/s\n", totalErrors, float64(totalErrors)/durSec)
+	if errTimeout := globalMetrics.ErrorsTimeout.Load(); errTimeout > 0 {
+		fmt.Printf("     errors_timeout...................: %d   %.6f/s\n", errTimeout, float64(errTimeout)/durSec)
+	}
+	if errConn := globalMetrics.ErrorsConnect.Load(); errConn > 0 {
+		fmt.Printf("     errors_connect...................: %d   %.6f/s\n", errConn, float64(errConn)/durSec)
+	}
+	if errRoom := globalMetrics.ErrorsRoom.Load(); errRoom > 0 {
+		fmt.Printf("     errors_room......................: %d   %.6f/s\n", errRoom, float64(errRoom)/durSec)
+	}
 
 	fmt.Printf("   ✓ game_completion_rate.............: %.2f%%   ✓ %d   ✗ %d\n", gameCompletionRate, gamesDone, totalRooms-gamesDone)
-	fmt.Printf("   ✓ player_session_completion_rate...: %.2f%%   ✓ %d   ✗ %d\n", sessRate, sessDone, sessAborted)
-	fmt.Printf("     rooms_created....................: %d\n", globalMetrics.RoomsCreated.Load())
-	fmt.Printf("     rooms_joined.....................: %d\n", globalMetrics.RoomsJoined.Load())
+	fmt.Printf("     game_start_requests..............: %d   %.6f/s\n", globalMetrics.GameStartRequests.Load(), float64(globalMetrics.GameStartRequests.Load())/durSec)
+	fmt.Printf("     games_started....................: %d   %.6f/s\n", globalMetrics.GamesStarted.Load(), float64(globalMetrics.GamesStarted.Load())/durSec)
+	fmt.Printf("     games_completed..................: %d   %.6f/s\n", gamesDone, float64(gamesDone)/durSec)
+	fmt.Printf("     games_aborted....................: %d   %.6f/s\n", globalMetrics.GamesAborted.Load(), float64(globalMetrics.GamesAborted.Load())/durSec)
 
-	totalErrors := globalMetrics.ErrorsConnect.Load() + globalMetrics.ErrorsRoom.Load() + globalMetrics.ErrorsProtocol.Load() + globalMetrics.ErrorsTimeout.Load()
-	fmt.Printf("     errors...........................: %d\n", totalErrors)
+	printTrend("message_latency", globalMetrics.MessageLatency.Snapshot(), "ms")
+	fmt.Printf("     messages_received................: %d   %.1f/s\n", msgsRecv, float64(msgsRecv)/durSec)
+	fmt.Printf("     messages_sent....................: %d   %.1f/s\n", msgsSent, float64(msgsSent)/durSec)
+	fmt.Printf("   ✓ player_session_completion_rate...: %.2f%%   ✓ %d   ✗ %d\n", sessRate, sessDone, sessAborted)
+
+	printTrend("room_create_rtt", globalMetrics.RoomCreateRTT.Snapshot(), "ms")
+	printTrend("room_join_rtt", globalMetrics.RoomJoinRTT.Snapshot(), "ms")
+	fmt.Printf("     rooms_created....................: %d   %.6f/s\n", globalMetrics.RoomsCreated.Load(), float64(globalMetrics.RoomsCreated.Load())/durSec)
+	fmt.Printf("     rooms_joined.....................: %d   %.6f/s\n", globalMetrics.RoomsJoined.Load(), float64(globalMetrics.RoomsJoined.Load())/durSec)
+
+	printTrend("ws_connection_duration", globalMetrics.SessionDuration.Snapshot(), "ms")
+	fmt.Printf("   ✓ ws_connection_success............: %.2f%%   ✓ %d   ✗ %d\n", connSuccessRate, opened, failures)
+	fmt.Printf("     ws_connections_closed............: %d   %.1f/s\n", globalMetrics.WSConnectionsClosed.Load(), float64(globalMetrics.WSConnectionsClosed.Load())/durSec)
+	fmt.Printf("     ws_connections_opened............: %d   %.1f/s\n", opened, float64(opened)/durSec)
+	printTrend("ws_open_rtt", globalMetrics.WSOpenRTT.Snapshot(), "ms")
 
 	fmt.Println("\n════ ACCEPTANCE (requirements, not guardrails) ════")
 
