@@ -610,9 +610,9 @@ export default function () {
       clearAllTimers();
     };
 
-    socket.onmessage = function (e) {
+    function handleIncomingMessage(msg) {
+      if (!msg || typeof msg !== 'object' || sessionEnded) return;
       messagesReceived.add(1);
-      let msg; try { msg = JSON.parse(e.data); } catch (err) { return; }
       if (msg.type === 'ping') { sendMsg({ type: 'pong', payload: {} }); return; }
       // Request/response latency probe: the first player_list after OUR
       // toggle_ready is the server's response to that request. Record it and
@@ -641,6 +641,48 @@ export default function () {
         case 'lobby': handleLobby(msg); break;
         case 'waiting_start': handleWaitingStart(msg); break;
         case 'playing': handlePlaying(msg); break;
+      }
+    }
+
+    socket.onmessage = function (e) {
+      // Binary drawing events (Phase 1 binary protocol)
+      if (e.data instanceof ArrayBuffer) {
+        const view = new DataView(e.data);
+        let offset = 0;
+        let count = 0;
+        while (offset < view.byteLength) {
+          count++;
+          const op = view.getUint8(offset);
+          if (op === 0x01 || op === 0x04) {
+            if (offset + 7 > view.byteLength) break;
+            const ptCount = view.getUint16(offset + 5, false);
+            offset += 7 + ptCount * 4;
+          } else if (op === 0x02) {
+            offset += 1;
+          } else if (op === 0x03) {
+            offset += 8;
+          } else {
+            break;
+          }
+        }
+        messagesReceived.add(Math.max(1, count));
+        return;
+      }
+
+      let raw;
+      try { raw = JSON.parse(e.data); } catch (err) { return; }
+      // Unpack batched frames: gateway coalesces bursts into a JSON array [msg1,msg2,...]
+      // or an envelope {type: "batch", payload: [...]}.
+      if (Array.isArray(raw)) {
+        for (let i = 0; i < raw.length; i++) {
+          handleIncomingMessage(raw[i]);
+        }
+      } else if (raw && raw.type === 'batch' && Array.isArray(raw.payload)) {
+        for (let i = 0; i < raw.payload.length; i++) {
+          handleIncomingMessage(raw.payload[i]);
+        }
+      } else {
+        handleIncomingMessage(raw);
       }
     };
 
@@ -767,6 +809,25 @@ export default function () {
         }, Math.floor(randomBetween(2000, 5000)));
         return;
       }
+      function encodeBinaryStroke(pts, r, g, b, size) {
+        const count = pts.length;
+        const buf = new ArrayBuffer(7 + count * 4);
+        const view = new DataView(buf);
+        view.setUint8(0, 0x01); // STROKE opcode
+        view.setUint8(1, r);
+        view.setUint8(2, g);
+        view.setUint8(3, b);
+        view.setUint8(4, Math.max(1, Math.min(255, size)));
+        view.setUint16(5, count, false); // Big-Endian
+        let off = 7;
+        for (let i = 0; i < count; i++) {
+          view.setUint16(off, Math.max(0, Math.min(65535, Math.round(pts[i].x))), false);
+          view.setUint16(off + 2, Math.max(0, Math.min(65535, Math.round(pts[i].y))), false);
+          off += 4;
+        }
+        return buf;
+      }
+
       // Stroke storm: emit STROKE_HZ messages/sec, each carrying STROKE_POINTS
       // points — the real fan-out hot path (broadcast to all guessers).
       const intervalMs = Math.max(1, Math.floor(1000 / STROKE_HZ));
@@ -780,7 +841,12 @@ export default function () {
           lastY = Math.max(0, Math.min(600, lastY + randomBetween(-15, 15)));
           points.push({ x: lastX, y: lastY });
         }
-        sendMsg({ type: 'stroke', payload: { points: points, color: '#000', lineWidth: 3 } });
+        if (socket.sendBinary) {
+          const bin = encodeBinaryStroke(points, 0, 0, 0, 3);
+          socket.sendBinary(bin);
+        } else {
+          sendMsg({ type: 'stroke', payload: { points: points, color: '#000', lineWidth: 3 } });
+        }
       }, intervalMs);
     }
 

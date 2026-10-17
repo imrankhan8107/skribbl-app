@@ -71,6 +71,21 @@ func (f *FanOutDispatcher) Deliver(msg *proto.BroadcastMessage) {
 	}
 }
 
+// DeliverBinary fans out a binary drawing payload to all other players in the room
+// (excluding the sender). Bypasses the worker entirely for ultra-low latency (<1ms).
+func (f *FanOutDispatcher) DeliverBinary(roomCode string, senderPlayerID string, payload []byte) {
+	if roomCode == "" {
+		return
+	}
+	sessions := f.registry.GetByRoom(roomCode)
+	for _, s := range sessions {
+		if s.PlayerID == senderPlayerID {
+			continue // Don't echo stroke back to drawer
+		}
+		f.enqueueNonBlocking(s, payload, "lossy")
+	}
+}
+
 // enqueueNonBlocking delivers the payload to the player's SendCh with
 // CLASS-AWARE backpressure:
 //

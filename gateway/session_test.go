@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -390,3 +391,68 @@ func TestUpdateIdentityCleansUpOldRoom(t *testing.T) {
 		t.Fatalf("expected real-p1, got %s", sessions[0].PlayerID)
 	}
 }
+
+func TestWritePumpBinaryDelivery(t *testing.T) {
+	sr := NewSessionRegistry()
+	clientConn, serverConn, cleanup := newTestConn(t)
+	defer cleanup()
+
+	sr.Register("player-bin", "ROOM01", serverConn)
+	defer sr.Unregister("player-bin")
+
+	session := sr.GetByPlayer("player-bin")
+
+	// Binary stroke: opcode 0x01, RGB 0,0,0, size 3, 1 point: (100, 200)
+	binStroke := []byte{0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x64, 0x00, 0xC8}
+	session.SendCh <- binStroke
+
+	clientConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	msgType, msg, err := clientConn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read binary message: %v", err)
+	}
+	if msgType != websocket.BinaryMessage {
+		t.Errorf("expected BinaryMessage (%d), got %d", websocket.BinaryMessage, msgType)
+	}
+	if !bytes.Equal(msg, binStroke) {
+		t.Errorf("expected %v, got %v", binStroke, msg)
+	}
+}
+
+func TestWritePumpBinaryCoalescing(t *testing.T) {
+	sr := NewSessionRegistry()
+	clientConn, serverConn, cleanup := newTestConn(t)
+	defer cleanup()
+
+	session := &PlayerSession{
+		PlayerID: "player-bin-batch",
+		RoomCode: "ROOM01",
+		Conn:     serverConn,
+		SendCh:   make(chan []byte, 10),
+		done:     make(chan struct{}),
+	}
+
+	binStroke1 := []byte{0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x64, 0x00, 0xC8}
+	binStroke2 := []byte{0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x6E, 0x00, 0xD2}
+
+	session.SendCh <- binStroke1
+	session.SendCh <- binStroke2
+
+	go sr.writePump(session)
+	defer close(session.done)
+
+	clientConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	msgType, raw, err := clientConn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read coalesced binary message: %v", err)
+	}
+	if msgType != websocket.BinaryMessage {
+		t.Errorf("expected BinaryMessage (%d), got %d", websocket.BinaryMessage, msgType)
+	}
+
+	expected := append(binStroke1, binStroke2...)
+	if !bytes.Equal(raw, expected) {
+		t.Errorf("expected %d bytes coalesced, got %d bytes", len(expected), len(raw))
+	}
+}
+

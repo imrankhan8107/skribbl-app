@@ -10,6 +10,7 @@ import type {
 import { publishDrawing, getCanvasSnapshot, getCanvasHistory } from "./drawingBus";
 import { publishReaction } from "./reactionBus";
 import { getStoredAvatarId, getStoredPlayerName, getAvatarForPlayer } from "../utils/avatars";
+import { decodeBinaryDrawEvents } from "../utils/binaryDrawing";
 
 // ---------------------------------------------------------------------------
 // Initial state
@@ -795,6 +796,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
 export interface WebSocketContextValue {
   gameState: GameState;
   send: (type: string, payload?: unknown) => void;
+  sendBinary?: (data: ArrayBuffer | Uint8Array) => void;
   dispatch: React.Dispatch<Action>;
   isConnected: boolean;
   mutedPlayerIds: Set<string>;
@@ -804,6 +806,7 @@ export interface WebSocketContextValue {
 export const WebSocketContext = createContext<WebSocketContextValue>({
   gameState: initialGameState,
   send: () => {},
+  sendBinary: () => {},
   dispatch: () => {},
   isConnected: false,
   mutedPlayerIds: new Set(),
@@ -933,6 +936,12 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const sendBinary = useCallback((data: ArrayBuffer | Uint8Array) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(data);
+    }
+  }, []);
+
   // redirectGatewayRef holds the owning gateway's ID when we were redirected
   // (room-sticky routing). We reconnect to the SAME origin with ?gw=<id> so the
   // LB consistent-hashes us onto the owner. Cleared is unnecessary — it only
@@ -968,6 +977,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     }
     const query = params.toString() ? `?${params.toString()}` : "";
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws${query}`);
+    ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -1173,6 +1183,14 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     };
 
     ws.onmessage = (event: MessageEvent) => {
+      // Binary drawing events bypass JSON completely (Phase 1 binary protocol)
+      if (event.data instanceof ArrayBuffer) {
+        const drawEvents = decodeBinaryDrawEvents(event.data);
+        for (let i = 0; i < drawEvents.length; i++) {
+          publishDrawing(drawEvents[i]);
+        }
+        return;
+      }
       try {
         const raw = JSON.parse(event.data);
         handleWsMessage(raw);
@@ -1202,6 +1220,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
         gameState,
         dispatch,
         send,
+        sendBinary,
         isConnected,
         mutedPlayerIds,
         toggleMutePlayer,

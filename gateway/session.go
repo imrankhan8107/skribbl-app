@@ -260,15 +260,22 @@ var writeCoalesceEnabled = func() bool {
 	}
 }()
 
+// isBinaryDrawMessage returns true if the message is a binary drawing protocol frame.
+// Drawing frames begin with an opcode byte < 0x20 (0x01: stroke, 0x02: clear, 0x03: fill, 0x04: highlighter).
+func isBinaryDrawMessage(msg []byte) bool {
+	return len(msg) > 0 && msg[0] < 0x20
+}
+
 // writePump is a per-session goroutine that drains SendCh and writes messages
 // to the WebSocket connection. It exits when the session's done channel is closed
 // or when a write error occurs. This ensures that writes to a single WebSocket
 // connection are serialized (no concurrent WriteMessage calls).
 //
 // Under high burst (e.g. stroke fan-out), writePump drains up to maxBatchSize
-// messages already queued in SendCh and coalesces them into a single JSON array
-// frame `[msg1,msg2,...]` in a single WriteMessage syscall. If only one message
-// is pending, it writes it directly as an unbatched frame without extra allocations.
+// messages already queued in SendCh and coalesces them into a single frame:
+//   - Binary draw frames (opcodes < 0x20) are packed into a single BinaryMessage frame.
+//   - Text frames are coalesced into a single JSON array `[msg1,msg2,...]` TextMessage frame.
+// If only one message is pending, it writes it directly without extra allocations.
 func (sr *SessionRegistry) writePump(session *PlayerSession) {
 	for {
 		select {
@@ -279,6 +286,53 @@ func (sr *SessionRegistry) writePump(session *PlayerSession) {
 				return
 			}
 
+			if isBinaryDrawMessage(msg) {
+				n := len(session.SendCh)
+				if !writeCoalesceEnabled || n == 0 {
+					if err := session.Conn.WriteMessage(websocket.BinaryMessage, msg); err != nil {
+						debugf("[session] writePump binary error player=%s err=%v", session.PlayerID, err)
+						return
+					}
+					continue
+				}
+
+				if n > maxBatchSize-1 {
+					n = maxBatchSize - 1
+				}
+
+				var buf bytes.Buffer
+				buf.Write(msg)
+			drainLoopBin:
+				for i := 0; i < n; i++ {
+					select {
+					case nextMsg, ok := <-session.SendCh:
+						if !ok {
+							return
+						}
+						if isBinaryDrawMessage(nextMsg) {
+							buf.Write(nextMsg)
+						} else {
+							// Flush binary burst first, then proceed to process the text message
+							if err := session.Conn.WriteMessage(websocket.BinaryMessage, buf.Bytes()); err != nil {
+								debugf("[session] writePump binary error player=%s err=%v", session.PlayerID, err)
+								return
+							}
+							msg = nextMsg
+							goto processTextMessage
+						}
+					default:
+						break drainLoopBin
+					}
+				}
+
+				if err := session.Conn.WriteMessage(websocket.BinaryMessage, buf.Bytes()); err != nil {
+					debugf("[session] writePump binary error player=%s err=%v", session.PlayerID, err)
+					return
+				}
+				continue
+			}
+
+		processTextMessage:
 			// Fast path: if coalescing is disabled, or no other messages are
 			// currently waiting in SendCh, send as a normal unbatched frame
 			// (zero allocations, backward compatible). The WRITE_COALESCE=0
@@ -306,6 +360,19 @@ func (sr *SessionRegistry) writePump(session *PlayerSession) {
 				case nextMsg, ok := <-session.SendCh:
 					if !ok {
 						return
+					}
+					if isBinaryDrawMessage(nextMsg) {
+						// Flush JSON array batch first, then write binary message
+						buf.WriteByte(']')
+						if err := session.Conn.WriteMessage(websocket.TextMessage, buf.Bytes()); err != nil {
+							debugf("[session] writePump error player=%s err=%v", session.PlayerID, err)
+							return
+						}
+						if err := session.Conn.WriteMessage(websocket.BinaryMessage, nextMsg); err != nil {
+							debugf("[session] writePump binary error player=%s err=%v", session.PlayerID, err)
+							return
+						}
+						continue
 					}
 					buf.WriteByte(',')
 					buf.Write(nextMsg)

@@ -10,6 +10,7 @@ export type BrushSize = "xs" | "small" | "medium" | "large" | "xl";
 
 import type { DrawingAction } from "../types";
 import { getConstrainedEnd, type ConstrainableShape } from "../utils/shapeSnap";
+import { encodeStroke } from "../utils/binaryDrawing";
 export type { DrawingAction };
 
 export interface UseCanvasReturn {
@@ -67,7 +68,7 @@ export function useCanvas(
   canvasRef: React.RefObject<HTMLCanvasElement>,
   isDrawer: boolean
 ): UseCanvasReturn {
-  const { send } = useWebSocket();
+  const { send, sendBinary } = useWebSocket();
 
   const [color, setColor] = useState<string>("#000000");
   const [brushSize, setBrushSize] = useState<BrushSize>("medium");
@@ -769,8 +770,13 @@ export function useCanvas(
         pendingStrokePointsRef.current[pendingStrokePointsRef.current.length - 1];
       pendingStrokePointsRef.current = [];
 
-      const msgType = currentTool === "highlighter" ? "highlighter" : "stroke";
-      send(msgType, { points: batchPoints, color: strokeColor, size });
+      const isHighlighter = currentTool === "highlighter";
+      if (sendBinary) {
+        sendBinary(encodeStroke(batchPoints, strokeColor, size, isHighlighter));
+      } else {
+        const msgType = isHighlighter ? "highlighter" : "stroke";
+        send(msgType, { points: batchPoints, color: strokeColor, size });
+      }
     };
 
     const handlePointerDown = (e: MouseEvent) => {
@@ -818,10 +824,18 @@ export function useCanvas(
 
       if (currentTool === "highlighter") {
         drawHighlighter([[x, y]], strokeColor, size);
-        send("highlighter", { points: [[x, y]], color: strokeColor, size });
+        if (sendBinary) {
+          sendBinary(encodeStroke([[x, y]], strokeColor, size, true));
+        } else {
+          send("highlighter", { points: [[x, y]], color: strokeColor, size });
+        }
       } else {
         // Send the starting point immediately
-        send("stroke", { points: [[x, y]], color: strokeColor, size });
+        if (sendBinary) {
+          sendBinary(encodeStroke([[x, y]], strokeColor, size, false));
+        } else {
+          send("stroke", { points: [[x, y]], color: strokeColor, size });
+        }
       }
     };
 

@@ -371,10 +371,19 @@ func (gw *Gateway) handleGRPCPath(clientConn *websocket.Conn, connID int64) {
 
 	// Read loop: read messages from client and route through the Multiplexer
 	for {
-		_, msg, err := clientConn.ReadMessage()
+		msgType, msg, err := clientConn.ReadMessage()
 		if err != nil {
 			debugf("[gateway] GRPC_READ_ERROR connID=%d player=%s room=%s err=%v", connID, session.PlayerID, session.RoomCode, err)
 			return
+		}
+
+		// Fast path: binary drawing messages from client (Phase 1 binary protocol).
+		// Fans out directly to other room sessions in Go memory (<1ms latency, zero JSON/gRPC overhead).
+		if msgType == websocket.BinaryMessage {
+			if session.RoomCode != "" {
+				gw.fanOut.DeliverBinary(session.RoomCode, session.PlayerID, msg)
+			}
+			continue
 		}
 
 		// Log every raw message received from the client BEFORE dispatch.
