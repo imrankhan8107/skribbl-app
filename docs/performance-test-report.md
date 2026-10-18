@@ -3619,6 +3619,34 @@ running (0h43m57.7s), 00000/30001 VUs, 29539 complete and 630 interrupted iterat
 - **Redis (1 node):** `redis` (`10.10.1.241`) providing room discovery and coordinator registration.
 - **Load Generators (5 nodes):** `load-gen-1` through `load-gen-5` running 40,000 VUs each with staggered room ramps.
 
+```hcl
+# --- Terraform Cluster Sizing (200k Benchmark) ---
+# Gateways: 8 hosts x 3 = 24 gateway containers (c6i.2xlarge, 12.5 Gbps network)
+gateway_count         = 8
+gateways_per_host     = 3
+gateway_instance_type = "c6i.2xlarge"
+
+# Workers: 14 hosts x 6 = 84 worker containers (c6i.4xlarge, 16 vCPUs, 32 GB RAM)
+worker_count          = 14
+workers_per_host      = 6
+worker_instance_type  = "c6i.4xlarge"
+
+# Dual Nginx Load Balancers behind AWS L4 NLB (c6i.4xlarge, 12.5 Gbps network)
+lb_count              = 2
+lb_instance_type      = "c6i.4xlarge"
+redis_instance_type   = "c5a.xlarge"
+
+# Load Generators: 5 nodes x 40,000 VUs
+enable_load_generator        = true
+load_generator_count         = 5
+load_generator_instance_type = "c5a.8xlarge"
+
+# Streaming & Coalescing optimizations
+write_coalesce          = true
+grpc_send_queue_maxsize = 8192
+grpc_stream_buffer_size = 8192
+```
+
 ---
 
 ### 15.1 Executive Milestone Summary (200,000 VUs)
