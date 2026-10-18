@@ -12,6 +12,7 @@ from prometheus_client import (
     Counter,
     Gauge,
     Histogram,
+    ProcessCollector,
     generate_latest,
     CONTENT_TYPE_LATEST,
 )
@@ -20,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 # Dedicated registry for worker metrics
 REGISTRY = CollectorRegistry(auto_describe=True)
+
+# Register standard OS process metrics (CPU seconds, memory RSS, open FDs) from Linux /proc
+try:
+    ProcessCollector(registry=REGISTRY)
+except Exception as exc:
+    logger.debug("ProcessCollector registration skipped: %s", exc)
 
 # ─── Metrics Definitions ──────────────────────────────────────────────────────
 

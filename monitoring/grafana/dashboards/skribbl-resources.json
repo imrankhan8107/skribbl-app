@@ -56,7 +56,7 @@
       "pluginVersion": "10.3.0",
       "targets": [
         {
-          "expr": "sum(rate(process_cpu_seconds_total{role=\"worker\"}[30s]))",
+          "expr": "sum(rate(process_cpu_seconds_total{role=\"worker\"}[30s])) or sum(node_cpu_utilization_percent{role=~\"worker.*\"} / 100 * 16)",
           "legendFormat": "Worker Cores",
           "refId": "A"
         }
@@ -132,7 +132,7 @@
       "pluginVersion": "10.3.0",
       "targets": [
         {
-          "expr": "sum(process_resident_memory_bytes{role=\"worker\"})",
+          "expr": "sum(process_resident_memory_bytes{role=\"worker\"}) or sum(node_memory_used_mb{role=~\"worker.*\"} * 1024 * 1024)",
           "legendFormat": "Worker RAM",
           "refId": "A"
         }
@@ -285,7 +285,7 @@
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "last"] } },
       "targets": [
         {
-          "expr": "rate(process_cpu_seconds_total{role=\"worker\"}[30s]) * 100",
+          "expr": "rate(process_cpu_seconds_total{role=\"worker\"}[30s]) * 100 or node_cpu_utilization_percent{role=~\"worker.*\"}",
           "legendFormat": "{{instance}}",
           "refId": "A"
         }
@@ -307,7 +307,7 @@
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max", "last"] } },
       "targets": [
         {
-          "expr": "process_resident_memory_bytes{role=\"worker\"}",
+          "expr": "process_resident_memory_bytes{role=\"worker\"} or (node_memory_used_mb{role=~\"worker.*\"} * 1024 * 1024)",
           "legendFormat": "{{instance}}",
           "refId": "A"
         }
