@@ -178,7 +178,8 @@ async def metrics_endpoint():
     from backend.ws_handler import room_manager
     from backend.metrics_exporter import set_active_rooms, set_active_players, generate_prometheus_metrics
     set_active_rooms(len(room_manager.rooms))
-    set_active_players(len(room_manager._player_to_room))
+    active_players = sum(1 for r in room_manager.rooms.values() for p in r.players if p.is_connected)
+    set_active_players(active_players)
     data, content_type = generate_prometheus_metrics()
     return Response(content=data, media_type=content_type)
 

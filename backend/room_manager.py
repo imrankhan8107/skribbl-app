@@ -104,7 +104,10 @@ class RoomManager:
 
     async def _delete_room(self, room_code: str) -> None:
         """Delete a room and clean up Redis registrations."""
-        self.rooms.pop(room_code, None)
+        room = self.rooms.pop(room_code, None)
+        if room is not None:
+            for p in room.players:
+                self._player_to_room.pop(p.id, None)
 
         # Cancel and clean up any pending join requests for this room
         to_cancel = [rid for rid, req in self._pending_join_requests.items() if req.room_code == room_code]
