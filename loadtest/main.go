@@ -1,3 +1,19 @@
+// Skribbl Go load generator — behavioural port of scripts/k6_grpc_load_test.js
+//
+// Run (env vars mirror the k6 script; flags override env):
+//
+//	HOSTS=10.0.0.5 PORT=9000 go run . -vus 100 -players 5 -hz 5 -ramp 30
+//	HOSTS=lb1,lb2 HEALTH_URLS=http://gw1:9000/health,http://gw2:9000/health STRICT=1 ./loadgen -vus 15000 -players 5 -hz 20 -ramp 90
+//
+// Positional args (optional, legacy): vus players hz ramp hold offset
+//
+// Parity-related knobs (defaults chosen to match the k6 script):
+//
+//	STROKE_FORMAT=binary|json     wire format for strokes (k6 likely used json; see notes)
+//	HTTP_TIMEOUT_SECONDS=60       coord HTTP timeout (k6 default is 60s)
+//	COORD_PUBLISH_ATTEMPTS=1      publish attempts (k6 does one, no retry)
+//
+// Exit codes: 0 = acceptance PASS, 1 = acceptance FAIL, 2 = invalid configuration.
 package main
 
 import (
@@ -28,32 +44,64 @@ import (
 // ─── Configuration ──────────────────────────────────────────────────────────
 
 type Config struct {
-	VUs                        int
-	PlayersPerRoom             int
-	StrokeHz                   int
-	StrokePoints               int
-	RampSeconds                int
-	HoldSeconds                int
-	VuOffset                   int
-	Hosts                      []string
-	Port                       string
-	CoordHosts                 []string
-	CoordPort                  string
-	CoordViaLB                 bool
-	CoordURLs                  []string
-	HealthURLs                 []string
-	TurnDuration               int
-	NumRounds                  int
-	PerTurnSlack               int
-	HoldFixedBuffer            int
-	ConnectTimeoutMs           int
-	MinPlayersToStart          int
-	StartGraceMs               int
-	LobbyTimeoutMs             int
-	Strict                     bool
-	HealthPollSeconds          int
-	AutoStopConsecutiveZeros   int
-	AutoStopMinElapsedS        int
+	VUs                      int
+	PlayersPerRoom           int
+	StrokeHz                 int
+	StrokePoints             int
+	StrokeFormat             string // "binary" | "json"
+	RampSeconds              int
+	HoldSeconds              int
+	VuOffset                 int
+	Hosts                    []string
+	Port                     string
+	CoordHosts               []string
+	CoordPort                string
+	CoordViaLB               bool
+	CoordURLs                []string
+	HealthURLs               []string
+	TurnDuration             int
+	NumRounds                int
+	PerTurnSlack             int
+	HoldFixedBuffer          int
+	ConnectTimeoutMs         int
+	MinPlayersToStart        int
+	StartGraceMs             int
+	LobbyTimeoutMs           int
+	Strict                   bool
+	HealthPollSeconds        int
+	AutoStopConsecutiveZeros int
+	AutoStopMinElapsedS      int
+	HTTPTimeoutSeconds       int
+	PublishAttempts          int
+}
+
+func getEnvInt(key string, defaultVal int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return n
+	}
+	return defaultVal
+}
+
+func getEnvStr(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
+func parseList(raw string) []string {
+	var out []string
+	for _, s := range strings.Split(raw, ",") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func loadConfig() *Config {
@@ -61,12 +109,13 @@ func loadConfig() *Config {
 
 	vusEnv := getEnvInt("VUS", 100)
 	playersEnv := getEnvInt("PLAYERS_PER_ROOM", 2)
-	strokeHzEnv := getEnvInt("STROKE_HZ", 30) // Script 1 default: 30
+	strokeHzEnv := getEnvInt("STROKE_HZ", 30)
 	rampEnv := getEnvInt("RAMP_SECONDS", 0)
 	offsetEnv := getEnvInt("VU_OFFSET", 0)
 
 	cfg.StrokePoints = getEnvInt("STROKE_POINTS", 4)
-	cfg.TurnDuration = getEnvInt("TURN_DURATION", 80) // Script 1 default: 80s
+	cfg.StrokeFormat = strings.ToLower(getEnvStr("STROKE_FORMAT", "binary"))
+	cfg.TurnDuration = getEnvInt("TURN_DURATION", 80)
 	cfg.NumRounds = getEnvInt("NUM_ROUNDS", 3)
 	cfg.PerTurnSlack = getEnvInt("PER_TURN_SLACK", 70)
 	cfg.HoldFixedBuffer = getEnvInt("HOLD_FIXED_BUFFER", 300)
@@ -76,6 +125,8 @@ func loadConfig() *Config {
 	cfg.HealthPollSeconds = getEnvInt("HEALTH_POLL_SECONDS", 15)
 	cfg.AutoStopConsecutiveZeros = getEnvInt("AUTO_STOP_ZEROS", 2)
 	cfg.AutoStopMinElapsedS = getEnvInt("AUTO_STOP_MIN_S", 300)
+	cfg.HTTPTimeoutSeconds = getEnvInt("HTTP_TIMEOUT_SECONDS", 60)
+	cfg.PublishAttempts = getEnvInt("COORD_PUBLISH_ATTEMPTS", 1)
 
 	holdExplicit := false
 	holdEnv := 0
@@ -88,11 +139,12 @@ func loadConfig() *Config {
 
 	flagVUs := flag.Int("vus", vusEnv, "Total virtual users")
 	flagPlayers := flag.Int("players", playersEnv, "Players per room")
-	flagHz := flag.Int("hz", strokeHzEnv, "Stroke frequency (Hz)")
+	flagHz := flag.Int("hz", strokeHzEnv, "Stroke frequency (Hz); 0 = slow JSON strokes (k6 parity)")
 	flagRamp := flag.Int("ramp", rampEnv, "Arrival ramp duration (seconds)")
 	flagHold := flag.Int("hold", 0, "Hold/game duration (seconds)")
 	flagOffset := flag.Int("offset", offsetEnv, "VU index offset for multi-runner tests")
 	flagStrict := flag.Bool("strict", os.Getenv("STRICT") == "1", "Enforce strict acceptance thresholds")
+	flagFmt := flag.String("stroke-format", cfg.StrokeFormat, "Stroke wire format: binary | json")
 
 	flag.Parse()
 
@@ -104,37 +156,24 @@ func loadConfig() *Config {
 	})
 
 	args := flag.Args()
-	if len(args) > 0 {
-		if v, err := strconv.Atoi(args[0]); err == nil {
-			*flagVUs = v
+	argInt := func(i int, dst *int) {
+		if len(args) > i {
+			if v, err := strconv.Atoi(args[i]); err == nil {
+				*dst = v
+			}
 		}
 	}
-	if len(args) > 1 {
-		if v, err := strconv.Atoi(args[1]); err == nil {
-			*flagPlayers = v
-		}
-	}
-	if len(args) > 2 {
-		if v, err := strconv.Atoi(args[2]); err == nil {
-			*flagHz = v
-		}
-	}
-	if len(args) > 3 {
-		if v, err := strconv.Atoi(args[3]); err == nil {
-			*flagRamp = v
-		}
-	}
+	argInt(0, flagVUs)
+	argInt(1, flagPlayers)
+	argInt(2, flagHz)
+	argInt(3, flagRamp)
 	if len(args) > 4 {
 		if v, err := strconv.Atoi(args[4]); err == nil {
 			*flagHold = v
 			holdArgPassed = true
 		}
 	}
-	if len(args) > 5 {
-		if v, err := strconv.Atoi(args[5]); err == nil {
-			*flagOffset = v
-		}
-	}
+	argInt(5, flagOffset)
 
 	cfg.VUs = *flagVUs
 	cfg.PlayersPerRoom = *flagPlayers
@@ -142,24 +181,14 @@ func loadConfig() *Config {
 	cfg.RampSeconds = *flagRamp
 	cfg.VuOffset = *flagOffset
 	cfg.Strict = *flagStrict
+	cfg.StrokeFormat = strings.ToLower(*flagFmt)
 
-	// Validation guards
-	if cfg.PlayersPerRoom <= 0 {
-		cfg.PlayersPerRoom = 2
-	}
-	if cfg.VUs <= 0 {
-		cfg.VUs = 1
-	}
-	if cfg.StrokeHz < 0 {
-		cfg.StrokeHz = 0
-	}
-
+	// Hold default is computed from the RESOLVED players-per-room.
 	if holdArgPassed && *flagHold > 0 {
 		cfg.HoldSeconds = *flagHold
 	} else if holdExplicit && holdEnv > 0 {
 		cfg.HoldSeconds = holdEnv
 	} else {
-		// Calculate default hold using RESOLVED players per room
 		cfg.HoldSeconds = cfg.NumRounds*cfg.PlayersPerRoom*(cfg.TurnDuration+cfg.PerTurnSlack) + cfg.HoldFixedBuffer
 	}
 
@@ -169,7 +198,7 @@ func loadConfig() *Config {
 	}
 	cfg.LobbyTimeoutMs = getEnvInt("LOBBY_TIMEOUT_MS", defaultLobbyTimeout)
 
-	// Host & Network resolution
+	// Hosts & network
 	rawHosts := os.Getenv("HOSTS")
 	if rawHosts == "" {
 		rawHosts = os.Getenv("HOST")
@@ -177,61 +206,35 @@ func loadConfig() *Config {
 	if rawHosts == "" {
 		rawHosts = "localhost"
 	}
-	for _, h := range strings.Split(rawHosts, ",") {
-		h = strings.TrimSpace(h)
-		if h != "" {
-			cfg.Hosts = append(cfg.Hosts, h)
-		}
-	}
-
-	cfg.Port = os.Getenv("PORT")
-	if cfg.Port == "" {
-		cfg.Port = "9000" // Script 1 default: 9000
-	}
+	cfg.Hosts = parseList(rawHosts)
+	cfg.Port = getEnvStr("PORT", "9000")
 
 	rawCoordHosts := os.Getenv("COORD_HOSTS")
 	if rawCoordHosts == "" {
 		rawCoordHosts = os.Getenv("COORD_HOST")
 	}
-	if rawCoordHosts == "" {
-		rawCoordHosts = cfg.Hosts[0]
-	}
-	for _, h := range strings.Split(rawCoordHosts, ",") {
-		h = strings.TrimSpace(h)
-		if h != "" {
-			cfg.CoordHosts = append(cfg.CoordHosts, h)
-		}
+	cfg.CoordHosts = parseList(rawCoordHosts)
+	if len(cfg.CoordHosts) == 0 && len(cfg.Hosts) > 0 {
+		cfg.CoordHosts = []string{cfg.Hosts[0]}
 	}
 
-	cfg.CoordPort = os.Getenv("COORD_PORT")
-	if cfg.CoordPort == "" {
-		cfg.CoordPort = "9100"
+	cfg.CoordPort = getEnvStr("COORD_PORT", "9100")
+	effectiveCoordPort := cfg.CoordPort
+	if effectiveCoordPort == "0" { // k6 parity: COORD_PORT=0 means "use PORT"
+		effectiveCoordPort = cfg.Port
 	}
-
 	cfg.CoordViaLB = os.Getenv("COORD_VIA_LB") != "0"
 
-	rawCoordURLs := os.Getenv("COORD_URLS")
-	if rawCoordURLs != "" {
-		for _, u := range strings.Split(rawCoordURLs, ",") {
-			u = strings.TrimSpace(u)
-			if u != "" {
-				cfg.CoordURLs = append(cfg.CoordURLs, u)
-			}
-		}
+	if raw := os.Getenv("COORD_URLS"); raw != "" {
+		cfg.CoordURLs = parseList(raw)
 	} else {
 		for _, h := range cfg.CoordHosts {
-			cfg.CoordURLs = append(cfg.CoordURLs, fmt.Sprintf("%s:%s", h, cfg.CoordPort))
+			cfg.CoordURLs = append(cfg.CoordURLs, fmt.Sprintf("%s:%s", h, effectiveCoordPort))
 		}
 	}
 
-	rawHealthURLs := os.Getenv("HEALTH_URLS")
-	if rawHealthURLs != "" {
-		for _, u := range strings.Split(rawHealthURLs, ",") {
-			u = strings.TrimSpace(u)
-			if u != "" {
-				cfg.HealthURLs = append(cfg.HealthURLs, u)
-			}
-		}
+	if raw := os.Getenv("HEALTH_URLS"); raw != "" {
+		cfg.HealthURLs = parseList(raw)
 	} else {
 		for _, h := range cfg.Hosts {
 			cfg.HealthURLs = append(cfg.HealthURLs, fmt.Sprintf("http://%s:%s/health", h, cfg.Port))
@@ -241,15 +244,97 @@ func loadConfig() *Config {
 	return cfg
 }
 
-func getEnvInt(key string, defaultVal int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return defaultVal
+// validate fails fast instead of silently coercing bad values.
+func (c *Config) validate() []string {
+	var errs []string
+	bad := func(format string, a ...any) { errs = append(errs, fmt.Sprintf(format, a...)) }
+
+	if c.VUs <= 0 {
+		bad("VUS must be > 0 (got %d)", c.VUs)
 	}
-	if n, err := strconv.Atoi(v); err == nil {
-		return n
+	if c.PlayersPerRoom <= 0 {
+		bad("PLAYERS_PER_ROOM must be > 0 (got %d)", c.PlayersPerRoom)
 	}
-	return defaultVal
+	if c.StrokeHz < 0 || c.StrokeHz > 1000 {
+		bad("STROKE_HZ must be in [0,1000] (got %d)", c.StrokeHz)
+	}
+	if c.StrokePoints < 1 {
+		bad("STROKE_POINTS must be >= 1 (got %d)", c.StrokePoints)
+	}
+	if c.StrokeFormat != "binary" && c.StrokeFormat != "json" {
+		bad("STROKE_FORMAT must be 'binary' or 'json' (got %q)", c.StrokeFormat)
+	}
+	if c.NumRounds < 1 {
+		bad("NUM_ROUNDS must be >= 1 (got %d)", c.NumRounds)
+	}
+	if c.TurnDuration < 1 {
+		bad("TURN_DURATION must be >= 1 (got %d)", c.TurnDuration)
+	}
+	if c.HoldSeconds < 1 {
+		bad("HOLD_SECONDS must be >= 1 (got %d)", c.HoldSeconds)
+	}
+	if c.RampSeconds < 0 {
+		bad("RAMP_SECONDS must be >= 0 (got %d)", c.RampSeconds)
+	}
+	if c.VuOffset < 0 {
+		bad("VU_OFFSET must be >= 0 (got %d)", c.VuOffset)
+	}
+	if c.MinPlayersToStart < 1 {
+		bad("MIN_PLAYERS_TO_START must be >= 1 (got %d)", c.MinPlayersToStart)
+	}
+	if c.PlayersPerRoom > 0 && c.MinPlayersToStart > c.PlayersPerRoom {
+		bad("MIN_PLAYERS_TO_START (%d) exceeds PLAYERS_PER_ROOM (%d): games could never start", c.MinPlayersToStart, c.PlayersPerRoom)
+	}
+	if c.ConnectTimeoutMs < 1 || c.LobbyTimeoutMs < 1 || c.StartGraceMs < 0 {
+		bad("CONNECT_TIMEOUT_MS/LOBBY_TIMEOUT_MS must be > 0 and START_GRACE_MS >= 0")
+	}
+	if len(c.Hosts) == 0 {
+		bad("HOSTS/HOST resolved to an empty list")
+	}
+	if !c.CoordViaLB && len(c.CoordURLs) == 0 {
+		bad("COORD_VIA_LB=0 requires COORD_URLS or COORD_HOSTS")
+	}
+	if c.HealthPollSeconds < 1 {
+		bad("HEALTH_POLL_SECONDS must be >= 1 (got %d)", c.HealthPollSeconds)
+	}
+	if c.HTTPTimeoutSeconds < 1 {
+		bad("HTTP_TIMEOUT_SECONDS must be >= 1 (got %d)", c.HTTPTimeoutSeconds)
+	}
+	if c.PublishAttempts < 1 {
+		bad("COORD_PUBLISH_ATTEMPTS must be >= 1 (got %d)", c.PublishAttempts)
+	}
+	return errs
+}
+
+// ─── Per-VU RNG (own seed, no global lock, no determinism across runners) ────
+
+type lockedRand struct {
+	mu sync.Mutex
+	r  *rand.Rand
+}
+
+func newLockedRand(vuID int) *lockedRand {
+	seed := int64(uint64(time.Now().UnixNano()) ^ (uint64(vuID) * 0x9E3779B97F4A7C15) ^ (uint64(os.Getpid()) << 32))
+	return &lockedRand{r: rand.New(rand.NewSource(seed))}
+}
+
+func (l *lockedRand) Intn(n int) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.r.Intn(n)
+}
+
+func (l *lockedRand) Int63() int64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.r.Int63()
+}
+
+// Between returns a float in [min,max).
+func (l *lockedRand) Between(min, max float64) float64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return min + l.r.Float64()*(max-min)
 }
 
 // ─── Metrics Collection ─────────────────────────────────────────────────────
@@ -295,22 +380,20 @@ type TrendStats struct {
 
 func (t *TrendMetric) Snapshot() TrendStats {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	n := len(t.samples)
 	if n == 0 {
+		t.mu.Unlock()
 		return TrendStats{}
 	}
-
 	sorted := make([]float64, n)
 	copy(sorted, t.samples)
-	sort.Float64s(sorted)
+	t.mu.Unlock()
 
+	sort.Float64s(sorted)
 	var sum float64
 	for _, v := range sorted {
 		sum += v
 	}
-
 	return TrendStats{
 		Count: float64(n),
 		Min:   sorted[0],
@@ -322,30 +405,15 @@ func (t *TrendMetric) Snapshot() TrendStats {
 	}
 }
 
-type AtomicUint64 struct {
-	val uint64
-}
+type AtomicUint64 struct{ val uint64 }
 
-func (a *AtomicUint64) Add(delta uint64) uint64 {
-	return atomic.AddUint64(&a.val, delta)
-}
+func (a *AtomicUint64) Add(delta uint64) uint64 { return atomic.AddUint64(&a.val, delta) }
+func (a *AtomicUint64) Load() uint64            { return atomic.LoadUint64(&a.val) }
+func (a *AtomicUint64) Store(val uint64)        { atomic.StoreUint64(&a.val, val) }
 
-func (a *AtomicUint64) Load() uint64 {
-	return atomic.LoadUint64(&a.val)
-}
+type AtomicBool struct{ val uint32 }
 
-func (a *AtomicUint64) Store(val uint64) {
-	atomic.StoreUint64(&a.val, val)
-}
-
-type AtomicBool struct {
-	val uint32
-}
-
-func (a *AtomicBool) Load() bool {
-	return atomic.LoadUint32(&a.val) != 0
-}
-
+func (a *AtomicBool) Load() bool { return atomic.LoadUint32(&a.val) != 0 }
 func (a *AtomicBool) Store(val bool) {
 	var v uint32
 	if val {
@@ -358,68 +426,63 @@ type Metrics struct {
 	DataReceived AtomicUint64
 	DataSent     AtomicUint64
 
+	// Messages: received is counted per INNER message (batches unpacked, binary
+	// drawing ops counted) to match the k6 script.
 	MsgsReceived AtomicUint64
 	MsgsSent     AtomicUint64
 
-	// Connection Accounting
 	WSConnectionsOpened  AtomicUint64
 	WSConnectionsClosed  AtomicUint64
 	WSConnectionFailures AtomicUint64
 	RedirectsFollowed    AtomicUint64
 
-	// Definitive Per-Player Initial Connect Outcome (1 sample per VU)
-	PlayersAttempted AtomicUint64
+	PlayersPlanned   AtomicUint64 // every VU that started (incl. coordinator failures)
+	PlayersAttempted AtomicUint64 // VUs that reached the first WebSocket dial (k6 parity)
 	PlayersConnected AtomicUint64
 
-	// Room Creation / Join
 	RoomsCreated              AtomicUint64
 	RoomsJoined               AtomicUint64
 	RoomCreateErrors          AtomicUint64
 	RoomJoinErrors            AtomicUint64
 	RoomCodeDiscoveryFailures AtomicUint64
-	CoordFailures             AtomicUint64
+	CoordPublishFailures      AtomicUint64
 
-	// Server Errors
 	ServerErrors       AtomicUint64
 	ServerCreateErrors AtomicUint64
 	ServerJoinErrors   AtomicUint64
 
-	// Game Lifecycle
 	GameStartRequests AtomicUint64
 	GamesStarted      AtomicUint64
 	GamesCompleted    AtomicUint64
 	GamesAborted      AtomicUint64
 
-	// Session Outcomes
 	SessionsCompleted AtomicUint64
 	SessionsAborted   AtomicUint64
 
-	// Error Categorization
 	ErrorsConnect  AtomicUint64
 	ErrorsRoom     AtomicUint64
 	ErrorsProtocol AtomicUint64
 	ErrorsGame     AtomicUint64
 	ErrorsTimeout  AtomicUint64
 
-	// Gateway Observability
-	GatewayHealthFailures   AtomicUint64
-	GatewayHealthPollsDone  AtomicUint64
-	GatewayControlDrops     AtomicUint64
-	GatewayLossyDrops       AtomicUint64
-	GatewaySendDrops        AtomicUint64
-	GatewayActiveClients    AtomicUint64
-	GatewayStreamsActive    AtomicUint64
-	GatewayMaxStreamsPerGW  AtomicUint64
-	GatewayPeakStreamsTotal AtomicUint64
-	GatewayPeakStreamsPerGW AtomicUint64
+	GatewayHealthFailures    AtomicUint64
+	GatewayHealthPollsDone   AtomicUint64 // complete polls (every URL answered validly)
+	GatewayHealthPartialPoll AtomicUint64
+	GatewayControlDrops      AtomicUint64
+	GatewayLossyDrops        AtomicUint64
+	GatewaySendDrops         AtomicUint64
+	GatewayActiveClients     AtomicUint64
+	GatewayStreamsActive     AtomicUint64
+	GatewayPeakActiveClients AtomicUint64
+	GatewayPeakStreamsTotal  AtomicUint64
+	GatewayPeakStreamsPerGW  AtomicUint64
 
-	// Trend Latencies
 	WSOpenRTT            TrendMetric
-	MessageLatency       TrendMetric
+	MessageLatency       TrendMetric // toggle_ready -> next player_list (approximation)
 	RoomCreateRTT        TrendMetric
 	RoomJoinRTT          TrendMetric
-	WSConnectionDuration TrendMetric
-	SessionDuration      TrendMetric
+	WSConnectionDuration TrendMetric // per socket
+	SessionDuration      TrendMetric // per VU lifetime
 }
 
 var globalMetrics = &Metrics{}
@@ -439,16 +502,45 @@ func recordError(category string) {
 	}
 }
 
+func totalErrors() uint64 {
+	m := globalMetrics
+	return m.ErrorsConnect.Load() + m.ErrorsRoom.Load() + m.ErrorsProtocol.Load() +
+		m.ErrorsGame.Load() + m.ErrorsTimeout.Load()
+}
+
 // ─── Network Helpers ────────────────────────────────────────────────────────
 
-var httpClient = &http.Client{
-	Timeout: 10 * time.Second,
-	Transport: &http.Transport{
+var (
+	httpClient   *http.Client
+	healthClient *http.Client
+)
+
+func initHTTPClients(cfg *Config) {
+	transport := &http.Transport{
 		MaxIdleConns:        20000,
 		MaxIdleConnsPerHost: 5000,
 		IdleConnTimeout:     90 * time.Second,
-		DisableKeepAlives:   false,
-	},
+	}
+	httpClient = &http.Client{
+		Timeout:   time.Duration(cfg.HTTPTimeoutSeconds) * time.Second,
+		Transport: transport,
+	}
+	healthClient = &http.Client{Timeout: 5 * time.Second}
+}
+
+// sleepCtx sleeps for d, returning false early if ctx is cancelled.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }
 
 func getCoordURL(cfg *Config, roomIndex int) string {
@@ -460,61 +552,72 @@ func getCoordURL(cfg *Config, roomIndex int) string {
 	return fmt.Sprintf("http://%s/rooms", endpoint)
 }
 
-func publishRoomCode(cfg *Config, roomIndex int, roomCode string) error {
+func publishRoomCode(ctx context.Context, cfg *Config, roomIndex int, roomCode string) error {
 	u := fmt.Sprintf("%s/%d", getCoordURL(cfg, roomIndex), roomIndex)
 	b, _ := json.Marshal(map[string]string{"room_code": roomCode})
 
 	var lastErr error
-	for attempt := 0; attempt < 5; attempt++ {
-		req, err := http.NewRequest("POST", u, bytes.NewReader(b))
+	for attempt := 0; attempt < cfg.PublishAttempts; attempt++ {
+		if attempt > 0 {
+			if !sleepCtx(ctx, time.Duration(100*(1<<uint(attempt-1)))*time.Millisecond) {
+				return ctx.Err()
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(b))
 		if err != nil {
 			return err
 		}
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := httpClient.Do(req)
-		if err == nil {
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				return nil
-			}
-			lastErr = fmt.Errorf("status: %d", resp.StatusCode)
-		} else {
+		if err != nil {
 			lastErr = err
+			continue
 		}
-		time.Sleep(time.Duration(100*(1<<attempt)) * time.Millisecond)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return nil
+		}
+		lastErr = fmt.Errorf("status %d", resp.StatusCode)
 	}
 	return lastErr
 }
 
-func pollRoomCode(cfg *Config, roomIndex int, timeout time.Duration) string {
+// pollRoomCode polls the coord endpoint until the host's code appears, the
+// timeout elapses, or ctx is cancelled. A 404 simply means "not published yet".
+func pollRoomCode(ctx context.Context, cfg *Config, rng *lockedRand, roomIndex int, timeout time.Duration) string {
 	start := time.Now()
 	u := fmt.Sprintf("%s/%d", getCoordURL(cfg, roomIndex), roomIndex)
 
 	for time.Since(start) < timeout {
-		req, err := http.NewRequest("GET", u, nil)
+		if ctx.Err() != nil {
+			return ""
+		}
+		req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 		if err == nil {
 			resp, err := httpClient.Do(req)
 			if err == nil {
-				if resp.Status == "200 OK" || resp.StatusCode == 200 {
+				if resp.StatusCode == 200 {
 					var res struct {
 						RoomCode string `json:"room_code"`
 					}
-					if err := json.NewDecoder(resp.Body).Decode(&res); err == nil && res.RoomCode != "" {
+					if jerr := json.NewDecoder(resp.Body).Decode(&res); jerr == nil && res.RoomCode != "" {
 						resp.Body.Close()
 						return res.RoomCode
 					}
 				}
+				_, _ = io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
 			}
 		}
-		jitter := time.Duration(1200+rand.Intn(800)) * time.Millisecond
-		time.Sleep(jitter)
+		if !sleepCtx(ctx, time.Duration(1200+rng.Intn(800))*time.Millisecond) {
+			return ""
+		}
 	}
 	return ""
 }
 
-func buildWSURL(cfg *Config, vuID int, isHost bool, roomCode, redirectGW string) string {
+func buildWSURL(cfg *Config, rng *lockedRand, vuID int, isHost bool, roomCode, redirectGW string) string {
 	targetHost := cfg.Hosts[vuID%len(cfg.Hosts)]
 	base := fmt.Sprintf("ws://%s:%s/ws", targetHost, cfg.Port)
 
@@ -524,9 +627,8 @@ func buildWSURL(cfg *Config, vuID int, isHost bool, roomCode, redirectGW string)
 	} else if !isHost && roomCode != "" {
 		params.Set("room", roomCode)
 	} else {
-		params.Set("cid", fmt.Sprintf("%d-%x", vuID, rand.Int63()))
+		params.Set("cid", fmt.Sprintf("%d-%x", vuID, rng.Int63()))
 	}
-
 	return fmt.Sprintf("%s?%s", base, params.Encode())
 }
 
@@ -537,28 +639,67 @@ type Point struct {
 	Y float64
 }
 
+type strokePointJSON struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+type strokeJSON struct {
+	Points    []strokePointJSON `json:"points"`
+	Color     string            `json:"color"`
+	LineWidth int               `json:"lineWidth"`
+}
+
+func clamp(v, lo, hi float64) float64 { return math.Max(lo, math.Min(hi, v)) }
+
+// encodeBinaryStroke: [0x01][r][g][b][size][u16 count BE]{[u16 x BE][u16 y BE]}*
 func encodeBinaryStroke(points []Point, r, g, b, size uint8) []byte {
 	count := len(points)
 	buf := make([]byte, 7+count*4)
-	buf[0] = 0x01 // STROKE opcode
+	buf[0] = 0x01
 	buf[1] = r
 	buf[2] = g
 	buf[3] = b
 	buf[4] = size
 	binary.BigEndian.PutUint16(buf[5:7], uint16(count))
-
 	off := 7
 	for _, p := range points {
-		x := uint16(math.Max(0, math.Min(65535, p.X)))
-		y := uint16(math.Max(0, math.Min(65535, p.Y)))
-		binary.BigEndian.PutUint16(buf[off:off+2], x)
-		binary.BigEndian.PutUint16(buf[off+2:off+4], y)
+		binary.BigEndian.PutUint16(buf[off:off+2], uint16(math.Round(clamp(p.X, 0, 65535))))
+		binary.BigEndian.PutUint16(buf[off+2:off+4], uint16(math.Round(clamp(p.Y, 0, 65535))))
 		off += 4
 	}
 	return buf
 }
 
-// ─── Word Dictionary ────────────────────────────────────────────────────────
+// countBinaryOps mirrors the k6 receive-side parser so messages_received is
+// comparable (one count per drawing op, minimum 1 per frame).
+func countBinaryOps(data []byte) int {
+	off, count := 0, 0
+	for off < len(data) {
+		count++
+		switch data[off] {
+		case 0x01, 0x04:
+			if off+7 > len(data) {
+				goto done
+			}
+			ptCount := int(binary.BigEndian.Uint16(data[off+5 : off+7]))
+			off += 7 + ptCount*4
+		case 0x02:
+			off++
+		case 0x03:
+			off += 8
+		default:
+			goto done
+		}
+	}
+done:
+	if count < 1 {
+		count = 1
+	}
+	return count
+}
+
+// ─── Word Dictionary (matches backend/words.py as copied into the k6 script) ─
 
 var wordPacks = map[string][]string{
 	"animals": {
@@ -628,14 +769,14 @@ var wordPacks = map[string][]string{
 var allWordsList []string
 
 func init() {
-	seen := make(map[string]bool)
-	for _, ws := range wordPacks {
-		for _, w := range ws {
-			if !seen[w] {
-				seen[w] = true
-				allWordsList = append(allWordsList, w)
-			}
-		}
+	// Deterministic order (map iteration is random) so runs are comparable.
+	names := make([]string, 0, len(wordPacks))
+	for k := range wordPacks {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	for _, k := range names {
+		allWordsList = append(allWordsList, wordPacks[k]...)
 	}
 }
 
@@ -650,29 +791,37 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 	defer wg.Done()
 
 	vuID := localVUID + cfg.VuOffset
+	rng := newLockedRand(vuID)
 	roomIndex := (vuID - 1) / cfg.PlayersPerRoom
 	isHost := ((vuID - 1) % cfg.PlayersPerRoom) == 0
-	playerName := fmt.Sprintf("k%s", strconv.FormatInt(int64(vuID), 36))
+	playerName := "k" + strconv.FormatInt(int64(vuID), 36)
 
+	globalMetrics.PlayersPlanned.Add(1)
+
+	// Arrival ramp, staggered per ROOM (runner-local room index, k6 parity).
 	totalRooms := int(math.Ceil(float64(cfg.VUs) / float64(cfg.PlayersPerRoom)))
 	if cfg.RampSeconds > 0 && totalRooms > 0 {
 		localRoomIndex := (localVUID - 1) / cfg.PlayersPerRoom
 		rampOffset := time.Duration(float64(localRoomIndex) / float64(totalRooms) * float64(cfg.RampSeconds) * float64(time.Second))
-		select {
-		case <-ctx.Done():
+		if !sleepCtx(ctx, rampOffset) {
 			return
-		case <-time.After(rampOffset):
 		}
 	}
 
 	var coordRoomCode string
 	if isHost {
-		time.Sleep(time.Duration(rand.Intn(200)) * time.Millisecond)
+		if !sleepCtx(ctx, time.Duration(rng.Intn(200))*time.Millisecond) {
+			return
+		}
 	} else {
-		time.Sleep(time.Duration(1000+rand.Intn(500)) * time.Millisecond)
-		coordRoomCode = pollRoomCode(cfg, roomIndex, time.Duration(cfg.LobbyTimeoutMs)*time.Millisecond)
+		if !sleepCtx(ctx, time.Duration(1000+rng.Intn(500))*time.Millisecond) {
+			return
+		}
+		coordRoomCode = pollRoomCode(ctx, cfg, rng, roomIndex, time.Duration(cfg.LobbyTimeoutMs)*time.Millisecond)
 		if coordRoomCode == "" {
-			globalMetrics.CoordFailures.Add(1)
+			if ctx.Err() != nil {
+				return // cancelled, not a real failure
+			}
 			globalMetrics.RoomJoinErrors.Add(1)
 			globalMetrics.RoomCodeDiscoveryFailures.Add(1)
 			recordError("room")
@@ -687,9 +836,6 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 		globalMetrics.SessionDuration.Add(float64(time.Since(sessionStart).Milliseconds()))
 	}()
 
-	var initialConnectOutcomeRecorded bool
-	var initialConnectSucceeded bool
-
 	dialer := websocket.Dialer{
 		HandshakeTimeout: time.Duration(cfg.ConnectTimeoutMs) * time.Millisecond,
 		ReadBufferSize:   4096,
@@ -698,27 +844,57 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 
 	globalMetrics.PlayersAttempted.Add(1)
 
-	// Session State across redirects (protected by sessionMu)
+	// Session state (persists across redirect reconnects), guarded by sessionMu
+	// unless noted.
 	var sessionMu sync.Mutex
-	var roomCode = coordRoomCode
+	roomCode := coordRoomCode
 	var redirectGW string
-	var redirectAttempts int
+	redirectAttempts := 0
 	const maxRedirects = 3
 	var playerID string
-	var state = "connecting" // connecting -> lobby -> waiting_start -> playing
+	state := "connecting" // connecting -> lobby -> waiting_start -> playing
 	var isDrawer AtomicBool
 	var turnActive AtomicBool
-	var startArmed bool
-	var gameStartedCounted bool
-	var sessionEnded bool
-	var gameCompleted bool
-	var reconnectForRedirect bool
+	var endedFlag AtomicBool // lock-free mirror of sessionEnded
+	startArmed := false
+	gameStartedCounted := false
+	sessionEnded := false
+	gameCompleted := false
+	reconnectForRedirect := false
 
 	var pendingReadyAt time.Time
 	var pendingReadyMu sync.Mutex
 
 	var turnCancel context.CancelFunc
 	var turnMu sync.Mutex
+
+	// Only touched from the connection-loop goroutine.
+	initialConnectOutcomeRecorded := false
+	initialConnectSucceeded := false
+
+	sessionCtx, cancelSession := context.WithCancel(ctx)
+	defer cancelSession()
+
+	// Tracked timers so none outlive the session.
+	var timersMu sync.Mutex
+	var timers []*time.Timer
+	afterFunc := func(d time.Duration, fn func()) {
+		if endedFlag.Load() {
+			return
+		}
+		t := time.AfterFunc(d, fn)
+		timersMu.Lock()
+		timers = append(timers, t)
+		timersMu.Unlock()
+	}
+	defer func() {
+		timersMu.Lock()
+		for _, t := range timers {
+			t.Stop()
+		}
+		timers = nil
+		timersMu.Unlock()
+	}()
 
 	stopTurnLoops := func() {
 		turnMu.Lock()
@@ -730,10 +906,6 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 		}
 	}
 
-	// Session-level cancellable context
-	sessionCtx, cancelSession := context.WithCancel(ctx)
-	defer cancelSession()
-
 	recordConnectSuccess := func() {
 		if !initialConnectOutcomeRecorded {
 			initialConnectOutcomeRecorded = true
@@ -741,7 +913,6 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			globalMetrics.PlayersConnected.Add(1)
 		}
 	}
-
 	recordConnectFailure := func() {
 		if !initialConnectOutcomeRecorded {
 			initialConnectOutcomeRecorded = true
@@ -757,6 +928,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			return
 		}
 		sessionEnded = true
+		endedFlag.Store(true)
 		completed := reason == "completed"
 		if completed {
 			gameCompleted = true
@@ -779,7 +951,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 		cancelSession()
 	}
 
-	// ─── Connection Loop (Handles Initial Dial & Application-level Redirects) ───
+	// ─── Connection loop (initial dial + application-level redirects) ───
 	for {
 		sessionMu.Lock()
 		ended := sessionEnded
@@ -788,15 +960,16 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 		sessionMu.Unlock()
 
 		if ended || sessionCtx.Err() != nil {
-			break
+			return
 		}
 
-		wsURL := buildWSURL(cfg, vuID, isHost, curRoomCode, curRedirectGW)
-		conn, _, err := dialer.Dial(wsURL, nil)
+		wsURL := buildWSURL(cfg, rng, vuID, isHost, curRoomCode, curRedirectGW)
+		conn, _, err := dialer.DialContext(sessionCtx, wsURL, nil)
 		if err != nil {
-			if !initialConnectSucceeded {
-				recordConnectFailure()
+			if sessionCtx.Err() != nil {
+				return // cancelled mid-dial
 			}
+			recordConnectFailure()
 			endSession("error")
 			return
 		}
@@ -809,35 +982,42 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 		recordConnectSuccess()
 
 		var writeMu sync.Mutex
+		recordSendError := func() {
+			if !endedFlag.Load() {
+				recordError("connect")
+			}
+		}
 		sendJSON := func(msgType string, payload any) error {
-			b, err := json.Marshal(map[string]any{
-				"type":    msgType,
-				"payload": payload,
-			})
+			b, err := json.Marshal(map[string]any{"type": msgType, "payload": payload})
 			if err != nil {
 				return err
 			}
 			globalMetrics.DataSent.Add(uint64(len(b)))
 			globalMetrics.MsgsSent.Add(1)
 			writeMu.Lock()
-			defer writeMu.Unlock()
-			return conn.WriteMessage(websocket.TextMessage, b)
+			err = conn.WriteMessage(websocket.TextMessage, b)
+			writeMu.Unlock()
+			if err != nil {
+				recordSendError()
+			}
+			return err
 		}
-
 		sendBinary := func(data []byte) error {
 			globalMetrics.DataSent.Add(uint64(len(data)))
 			globalMetrics.MsgsSent.Add(1)
 			writeMu.Lock()
-			defer writeMu.Unlock()
-			return conn.WriteMessage(websocket.BinaryMessage, data)
+			err := conn.WriteMessage(websocket.BinaryMessage, data)
+			writeMu.Unlock()
+			if err != nil {
+				recordSendError()
+			}
+			return err
 		}
-
 		sendClose := func(code int, text string) {
 			writeMu.Lock()
-			defer writeMu.Unlock()
 			_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(code, text))
+			writeMu.Unlock()
 		}
-
 		sendReady := func() {
 			pendingReadyMu.Lock()
 			pendingReadyAt = time.Now()
@@ -845,19 +1025,49 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			_ = sendJSON("toggle_ready", map[string]any{})
 		}
 
+		sendJSONStroke := func(pts []Point) {
+			sp := make([]strokePointJSON, len(pts))
+			for i, p := range pts {
+				sp[i] = strokePointJSON{X: p.X, Y: p.Y}
+			}
+			_ = sendJSON("stroke", strokeJSON{Points: sp, Color: "#000", LineWidth: 3})
+		}
+
 		startDrawing := func(tCtx context.Context) {
 			if cfg.StrokeHz <= 0 {
+				// k6 parity: slow JSON strokes (2 random points every 2-5s).
+				ticker := time.NewTicker(time.Duration(rng.Between(2000, 5000)) * time.Millisecond)
+				go func() {
+					defer ticker.Stop()
+					for {
+						select {
+						case <-tCtx.Done():
+							return
+						case <-sessionCtx.Done():
+							return
+						case <-ticker.C:
+							if !turnActive.Load() || !isDrawer.Load() {
+								return
+							}
+							sendJSONStroke([]Point{
+								{X: rng.Between(0, 800), Y: rng.Between(0, 600)},
+								{X: rng.Between(0, 800), Y: rng.Between(0, 600)},
+							})
+						}
+					}
+				}()
 				return
 			}
+
 			interval := time.Duration(float64(time.Second) / float64(cfg.StrokeHz))
-			if interval < 500*time.Microsecond {
-				interval = 500 * time.Microsecond
+			if interval < time.Millisecond {
+				interval = time.Millisecond
 			}
 			ticker := time.NewTicker(interval)
 			go func() {
 				defer ticker.Stop()
-				lastX := float64(rand.Intn(800))
-				lastY := float64(rand.Intn(600))
+				lastX := rng.Between(0, 800)
+				lastY := rng.Between(0, 600)
 				for {
 					select {
 					case <-tCtx.Done():
@@ -869,13 +1079,16 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 							return
 						}
 						pts := make([]Point, cfg.StrokePoints)
-						for i := 0; i < cfg.StrokePoints; i++ {
-							lastX = math.Max(0, math.Min(800, lastX+float64(rand.Intn(31)-15)))
-							lastY = math.Max(0, math.Min(600, lastY+float64(rand.Intn(31)-15)))
+						for i := range pts {
+							lastX = clamp(lastX+rng.Between(-15, 15), 0, 800)
+							lastY = clamp(lastY+rng.Between(-15, 15), 0, 600)
 							pts[i] = Point{X: lastX, Y: lastY}
 						}
-						bin := encodeBinaryStroke(pts, 0, 0, 0, 3)
-						_ = sendBinary(bin)
+						if cfg.StrokeFormat == "json" {
+							sendJSONStroke(pts)
+						} else {
+							_ = sendBinary(encodeBinaryStroke(pts, 0, 0, 0, 3))
+						}
 					}
 				}
 			}()
@@ -900,10 +1113,10 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 				}
 			}
 
-			ticker := time.NewTicker(time.Duration(2000+rand.Intn(2000)) * time.Millisecond)
+			ticker := time.NewTicker(time.Duration(rng.Between(2000, 4000)) * time.Millisecond)
+			idx := rng.Intn(len(candidatePool))
 			go func() {
 				defer ticker.Stop()
-				idx := rand.Intn(len(candidatePool))
 				for {
 					select {
 					case <-tCtx.Done():
@@ -922,44 +1135,44 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			}()
 		}
 
-		sessionMu.Lock()
-		curRoomCode = roomCode
-		sessionMu.Unlock()
-
-		if isHost && curRoomCode == "" {
-			_ = sendJSON("create_room", map[string]string{
-				"name": playerName,
-			})
-			time.AfterFunc(time.Duration(cfg.ConnectTimeoutMs)*time.Millisecond, func() {
+		// Timers shared by create/join paths.
+		connectTimeout := func(onFail func()) {
+			afterFunc(time.Duration(cfg.ConnectTimeoutMs)*time.Millisecond, func() {
 				sessionMu.Lock()
 				st := state
 				ended := sessionEnded
 				sessionMu.Unlock()
 				if st == "connecting" && !ended {
-					globalMetrics.RoomCreateErrors.Add(1)
-					recordError("timeout")
-					endSession("error")
-				}
-			})
-		} else {
-			_ = sendJSON("join_room", map[string]string{
-				"name":      playerName,
-				"room_code": curRoomCode,
-			})
-			time.AfterFunc(time.Duration(cfg.ConnectTimeoutMs)*time.Millisecond, func() {
-				sessionMu.Lock()
-				st := state
-				ended := sessionEnded
-				sessionMu.Unlock()
-				if st == "connecting" && !ended {
-					globalMetrics.RoomJoinErrors.Add(1)
+					onFail()
 					recordError("timeout")
 					endSession("error")
 				}
 			})
 		}
+		lobbyTimeout := func() {
+			afterFunc(time.Duration(cfg.LobbyTimeoutMs)*time.Millisecond, func() {
+				sessionMu.Lock()
+				st := state
+				ended := sessionEnded
+				sessionMu.Unlock()
+				if (st == "lobby" || st == "waiting_start") && !ended {
+					recordError("timeout")
+					endSession("aborted")
+				}
+			})
+		}
 
-		// Playing frame handler
+		// k6 parity: hosts ALWAYS create_room, joiners ALWAYS join_room.
+		if isHost {
+			_ = sendJSON("create_room", map[string]string{"name": playerName})
+			connectTimeout(func() { globalMetrics.RoomCreateErrors.Add(1) })
+		} else {
+			_ = sendJSON("join_room", map[string]string{"name": playerName, "room_code": curRoomCode})
+			connectTimeout(func() { globalMetrics.RoomJoinErrors.Add(1) })
+		}
+
+		// Playing-state handler (also invoked on the frame that triggers the
+		// transition so a missed game_started doesn't stall the turn).
 		handlePlaying := func(fType string, fPayload json.RawMessage) {
 			switch fType {
 			case "drawer_selecting":
@@ -980,12 +1193,9 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 				}
 				_ = json.Unmarshal(fPayload, &p)
 				if len(p.Choices) > 0 {
-					choice := p.Choices[rand.Intn(len(p.Choices))]
-					time.AfterFunc(time.Duration(1000+rand.Intn(2000))*time.Millisecond, func() {
-						sessionMu.Lock()
-						ended := sessionEnded
-						sessionMu.Unlock()
-						if !ended {
+					choice := p.Choices[rng.Intn(len(p.Choices))]
+					afterFunc(time.Duration(1000+rng.Intn(2000))*time.Millisecond, func() {
+						if !endedFlag.Load() {
 							_ = sendJSON("select_word", map[string]string{"word": choice})
 						}
 					})
@@ -994,8 +1204,8 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			case "turn_started":
 				stopTurnLoops()
 				var p struct {
-					DrawerID string   `json:"drawer_id"`
-					Hint     []string `json:"hint"`
+					DrawerID string            `json:"drawer_id"`
+					Hint     []json.RawMessage `json:"hint"` // element type agnostic
 					Theme    struct {
 						ID string `json:"id"`
 					} `json:"theme"`
@@ -1007,12 +1217,13 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 
 				turnMu.Lock()
 				turnActive.Store(true)
-				isDrawer.Store(p.DrawerID == myID)
-				var tCtx context.Context
-				tCtx, turnCancel = context.WithCancel(sessionCtx)
+				drawer := p.DrawerID == myID
+				isDrawer.Store(drawer)
+				tCtx, cancel := context.WithCancel(sessionCtx)
+				turnCancel = cancel
 				turnMu.Unlock()
 
-				if isDrawer.Load() {
+				if drawer {
 					startDrawing(tCtx)
 				} else {
 					startGuessing(tCtx, p.Theme.ID, len(p.Hint))
@@ -1034,15 +1245,32 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			}
 		}
 
-		// Pre-defined frame handler to avoid initialization data race
-		processFrame := func(frameData []byte) {
+		onGameStart := func(t string, payload json.RawMessage) {
 			sessionMu.Lock()
-			if sessionEnded {
-				sessionMu.Unlock()
+			if t == "game_started" && isHost && !gameStartedCounted {
+				gameStartedCounted = true
+				globalMetrics.GamesStarted.Add(1)
+			}
+			state = "playing"
+			sessionMu.Unlock()
+			handlePlaying(t, payload)
+		}
+		onPreStartGameOver := func() {
+			sessionMu.Lock()
+			started := gameStartedCounted
+			sessionMu.Unlock()
+			if isHost && !started {
+				recordError("game")
+				endSession("aborted")
+			} else {
+				endSession("completed")
+			}
+		}
+
+		processFrame := func(frameData []byte) {
+			if endedFlag.Load() {
 				return
 			}
-			sessionMu.Unlock()
-
 			var f struct {
 				Type    string          `json:"type"`
 				Payload json.RawMessage `json:"payload"`
@@ -1050,24 +1278,24 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			if err := json.Unmarshal(frameData, &f); err != nil {
 				return
 			}
+			globalMetrics.MsgsReceived.Add(1)
 
 			if f.Type == "ping" {
 				_ = sendJSON("pong", map[string]any{})
 				return
 			}
 
-			// Latency probe: matched on toggle_ready -> player_list
+			// Latency probe: first player_list after OUR toggle_ready.
 			if f.Type == "player_list" {
 				pendingReadyMu.Lock()
 				if !pendingReadyAt.IsZero() {
-					lat := float64(time.Since(pendingReadyAt).Milliseconds())
-					globalMetrics.MessageLatency.Add(lat)
+					globalMetrics.MessageLatency.Add(float64(time.Since(pendingReadyAt).Milliseconds()))
 					pendingReadyAt = time.Time{}
 				}
 				pendingReadyMu.Unlock()
 			}
 
-			// ─── P0: Application-Level Sticky Redirect Handler ───
+			// Application-level sticky redirect.
 			if f.Type == "redirect" {
 				var p struct {
 					GatewayID string `json:"gateway_id"`
@@ -1078,18 +1306,18 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 				canRedirect := p.GatewayID != "" && redirectAttempts < maxRedirects
 				if canRedirect {
 					redirectGW = p.GatewayID
-					if p.RoomCode != "" {
+					if p.RoomCode != "" && !isHost { // hosts always re-create
 						roomCode = p.RoomCode
 					}
 					redirectAttempts++
 					reconnectForRedirect = true
-					sessionMu.Unlock()
-
+				}
+				sessionMu.Unlock()
+				if canRedirect {
 					globalMetrics.RedirectsFollowed.Add(1)
 					_ = conn.Close()
 					return
 				}
-				sessionMu.Unlock()
 				endSession("error")
 				return
 			}
@@ -1114,18 +1342,13 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 					playerID = p.PlayerID
 					state = "lobby"
 					sessionMu.Unlock()
-					_ = publishRoomCode(cfg, roomIndex, p.RoomCode)
-
-					time.AfterFunc(time.Duration(cfg.LobbyTimeoutMs)*time.Millisecond, func() {
-						sessionMu.Lock()
-						st := state
-						ended := sessionEnded
-						sessionMu.Unlock()
-						if (st == "lobby" || st == "waiting_start") && !ended {
-							recordError("timeout")
-							endSession("aborted")
+					// Don't block the read loop on coordinator HTTP.
+					go func(code string) {
+						if err := publishRoomCode(sessionCtx, cfg, roomIndex, code); err != nil && sessionCtx.Err() == nil {
+							globalMetrics.CoordPublishFailures.Add(1)
 						}
-					})
+					}(p.RoomCode)
+					lobbyTimeout()
 
 				case "room_joined":
 					globalMetrics.RoomJoinRTT.Add(float64(time.Since(connectStart).Milliseconds()))
@@ -1142,34 +1365,17 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 					playerID = p.PlayerID
 					state = "lobby"
 					sessionMu.Unlock()
-
-					time.AfterFunc(time.Duration(1000+rand.Intn(1000))*time.Millisecond, func() {
+					afterFunc(time.Duration(1000+rng.Intn(1000))*time.Millisecond, func() {
 						sessionMu.Lock()
 						st := state
-						ended := sessionEnded
 						sessionMu.Unlock()
-						if st == "lobby" && !ended {
+						if st == "lobby" && !endedFlag.Load() {
 							sendReady()
 						}
 					})
-
-					time.AfterFunc(time.Duration(cfg.LobbyTimeoutMs)*time.Millisecond, func() {
-						sessionMu.Lock()
-						st := state
-						ended := sessionEnded
-						sessionMu.Unlock()
-						if (st == "lobby" || st == "waiting_start") && !ended {
-							recordError("timeout")
-							endSession("aborted")
-						}
-					})
+					lobbyTimeout()
 
 				case "error":
-					var p struct {
-						Code    string `json:"code"`
-						Message string `json:"message"`
-					}
-					_ = json.Unmarshal(f.Payload, &p)
 					globalMetrics.ServerErrors.Add(1)
 					if isHost {
 						globalMetrics.ServerCreateErrors.Add(1)
@@ -1178,76 +1384,71 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 						globalMetrics.ServerJoinErrors.Add(1)
 						globalMetrics.RoomJoinErrors.Add(1)
 					}
+					var p struct {
+						Code    string `json:"code"`
+						Message string `json:"message"`
+					}
+					_ = json.Unmarshal(f.Payload, &p)
+					fmt.Fprintf(os.Stderr, "[SERVER_ERROR] vu=%d host=%v code=%q message=%q\n", vuID, isHost, p.Code, p.Message)
 					recordError("protocol")
 					endSession("error")
 				}
 
-			case "lobby", "waiting_start":
-				if f.Type == "player_list" && currentState == "lobby" {
+			case "lobby":
+				// k6 parity: `error` and `game_ended_insufficient_players` are
+				// NOT acted on in the lobby (only after start_game was sent).
+				switch {
+				case f.Type == "player_list":
+					if !isHost {
+						return
+					}
 					var p struct {
-						Players []struct {
-							ID string `json:"id"`
-						} `json:"players"`
+						Players []json.RawMessage `json:"players"`
 					}
 					_ = json.Unmarshal(f.Payload, &p)
 					sessionMu.Lock()
-					armed := startArmed
-					if isHost && !armed && len(p.Players) >= cfg.MinPlayersToStart {
+					arm := !startArmed && len(p.Players) >= cfg.MinPlayersToStart
+					if arm {
 						startArmed = true
-						sessionMu.Unlock()
-
+					}
+					sessionMu.Unlock()
+					if arm {
 						_ = sendJSON("update_settings", map[string]any{
 							"num_rounds":    cfg.NumRounds,
 							"turn_duration": cfg.TurnDuration,
 							"max_players":   cfg.PlayersPerRoom,
 						})
 						sendReady()
-
-						time.AfterFunc(time.Duration(cfg.StartGraceMs)*time.Millisecond, func() {
+						afterFunc(time.Duration(cfg.StartGraceMs)*time.Millisecond, func() {
 							sessionMu.Lock()
-							st := state
-							ended := sessionEnded
-							if st == "lobby" && !ended {
-								state = "waiting_start"
+							if state != "lobby" || sessionEnded {
 								sessionMu.Unlock()
-								_ = sendJSON("start_game", map[string]any{})
-								globalMetrics.GameStartRequests.Add(1)
-							} else {
-								sessionMu.Unlock()
+								return
 							}
+							state = "waiting_start"
+							sessionMu.Unlock()
+							_ = sendJSON("start_game", map[string]any{})
+							globalMetrics.GameStartRequests.Add(1)
 						})
-					} else {
-						sessionMu.Unlock()
 					}
-				} else if isGameStartSignal(f.Type) {
-					sessionMu.Lock()
-					started := gameStartedCounted
-					if f.Type == "game_started" && isHost && !started {
-						gameStartedCounted = true
-						globalMetrics.GamesStarted.Add(1)
-					}
-					state = "playing"
-					sessionMu.Unlock()
-					handlePlaying(f.Type, f.Payload)
-				} else if f.Type == "game_over" {
-					sessionMu.Lock()
-					started := gameStartedCounted
-					sessionMu.Unlock()
-					if isHost && !started {
-						recordError("game")
-						endSession("aborted")
-					} else {
-						endSession("completed")
-					}
-					return
-				} else if f.Type == "game_ended_insufficient_players" {
+				case isGameStartSignal(f.Type):
+					onGameStart(f.Type, f.Payload)
+				case f.Type == "game_over":
+					onPreStartGameOver()
+				}
+
+			case "waiting_start":
+				switch {
+				case isGameStartSignal(f.Type):
+					onGameStart(f.Type, f.Payload)
+				case f.Type == "game_over":
+					onPreStartGameOver()
+				case f.Type == "game_ended_insufficient_players":
 					recordError("game")
 					endSession("aborted")
-					return
-				} else if f.Type == "error" {
+				case f.Type == "error":
 					recordError("protocol")
 					endSession("error")
-					return
 				}
 
 			case "playing":
@@ -1255,22 +1456,30 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			}
 		}
 
-		// Read loop for this connection
+		// Read loop for this connection.
 		readDone := make(chan struct{})
 		go func() {
 			defer close(readDone)
 			for {
 				msgType, data, err := conn.ReadMessage()
 				if err != nil {
+					sessionMu.Lock()
+					redirecting := reconnectForRedirect
+					sessionMu.Unlock()
+					if !redirecting && !endedFlag.Load() &&
+						!websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+						recordError("connect")
+					}
 					return
 				}
 				globalMetrics.DataReceived.Add(uint64(len(data)))
-				globalMetrics.MsgsReceived.Add(1)
 
 				if msgType == websocket.BinaryMessage {
+					globalMetrics.MsgsReceived.Add(uint64(countBinaryOps(data)))
 					continue
 				}
 
+				// Gateway may coalesce bursts: JSON array, or {type:"batch",payload:[...]}.
 				var rawSlice []json.RawMessage
 				if err := json.Unmarshal(data, &rawSlice); err == nil {
 					for _, r := range rawSlice {
@@ -1278,16 +1487,15 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 					}
 					continue
 				}
-
 				var single struct {
 					Type    string          `json:"type"`
 					Payload json.RawMessage `json:"payload"`
 				}
 				if err := json.Unmarshal(data, &single); err == nil {
 					if single.Type == "batch" {
-						var batchItems []json.RawMessage
-						if err := json.Unmarshal(single.Payload, &batchItems); err == nil {
-							for _, item := range batchItems {
+						var items []json.RawMessage
+						if err := json.Unmarshal(single.Payload, &items); err == nil {
+							for _, item := range items {
 								processFrame(item)
 							}
 							continue
@@ -1298,9 +1506,10 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			}
 		}()
 
+		hold := time.NewTimer(time.Duration(cfg.HoldSeconds) * time.Second)
 		select {
 		case <-readDone:
-			// Connection closed
+			hold.Stop()
 			conn.Close()
 			globalMetrics.WSConnectionsClosed.Add(1)
 			globalMetrics.WSConnectionDuration.Add(float64(time.Since(socketOpenedAt).Milliseconds()))
@@ -1310,15 +1519,14 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			ended := sessionEnded
 			sessionMu.Unlock()
 			if reconn {
-				continue // Reconnect with ?gw=<redirectGW>
+				continue // reconnect pinned to ?gw=<redirectGW>
 			}
 			if !ended {
 				endSession("closed")
 			}
 			return
 
-		case <-time.After(time.Duration(cfg.HoldSeconds) * time.Second):
-			// Client patience expired
+		case <-hold.C:
 			conn.Close()
 			globalMetrics.WSConnectionsClosed.Add(1)
 			globalMetrics.WSConnectionDuration.Add(float64(time.Since(socketOpenedAt).Milliseconds()))
@@ -1327,11 +1535,12 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			sessionMu.Unlock()
 			if !done {
 				recordError("timeout")
-				endSession("timeout")
+				endSession("aborted")
 			}
 			return
 
 		case <-sessionCtx.Done():
+			hold.Stop()
 			conn.Close()
 			globalMetrics.WSConnectionsClosed.Add(1)
 			globalMetrics.WSConnectionDuration.Add(float64(time.Since(socketOpenedAt).Milliseconds()))
@@ -1350,116 +1559,153 @@ type gwHealthSnapshot struct {
 	sendDrops     uint64
 }
 
+// healthPayload uses pointers for the fields acceptance depends on, so a
+// renamed/missing field is detected instead of silently reading as 0.
+type healthPayload struct {
+	ActiveClients     *int `json:"active_clients"`
+	GRPCStreamsActive *int `json:"grpc_streams_active"`
+	FanoutDropped     struct {
+		Control int `json:"control"`
+		Lossy   int `json:"lossy"`
+	} `json:"fanout_dropped"`
+	SendDropped struct {
+		Stroke int `json:"stroke"`
+		Fill   int `json:"fill"`
+		Guess  int `json:"guess"`
+	} `json:"send_dropped"`
+}
+
+func fetchHealth(ctx context.Context, u string) (gwHealthSnapshot, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return gwHealthSnapshot{}, err
+	}
+	resp, err := healthClient.Do(req)
+	if err != nil {
+		return gwHealthSnapshot{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return gwHealthSnapshot{}, err
+	}
+	if resp.StatusCode != 200 {
+		return gwHealthSnapshot{}, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	var h healthPayload
+	if err := json.Unmarshal(body, &h); err != nil {
+		return gwHealthSnapshot{}, fmt.Errorf("invalid_json: %v", err)
+	}
+	if h.ActiveClients == nil || h.GRPCStreamsActive == nil {
+		return gwHealthSnapshot{}, fmt.Errorf("missing active_clients/grpc_streams_active fields")
+	}
+	return gwHealthSnapshot{
+		activeClients: *h.ActiveClients,
+		streamsActive: *h.GRPCStreamsActive,
+		controlDrops:  uint64(h.FanoutDropped.Control),
+		lossyDrops:    uint64(h.FanoutDropped.Lossy),
+		sendDrops:     uint64(h.SendDropped.Stroke + h.SendDropped.Fill + h.SendDropped.Guess),
+	}, nil
+}
+
 func runHealthProbe(ctx context.Context, cfg *Config, autoStopCh chan struct{}) {
 	if len(cfg.HealthURLs) == 0 {
 		return
 	}
 
 	startTime := time.Now()
+	consecutiveZeroPolls := 0
+	var peakActive, peakStreamsTotal, peakStreamsPerGW uint64
+
+	// poll returns true when the probe should stop.
+	poll := func() bool {
+		snapshots := make(map[string]gwHealthSnapshot, len(cfg.HealthURLs))
+		for _, u := range cfg.HealthURLs {
+			s, err := fetchHealth(ctx, u)
+			if err != nil {
+				if ctx.Err() != nil {
+					return true
+				}
+				globalMetrics.GatewayHealthFailures.Add(1)
+				fmt.Fprintf(os.Stderr, "[GATEWAY_HEALTH_ERROR] url=%s err=%v\n", u, err)
+				continue
+			}
+			snapshots[u] = s
+			fmt.Printf("[GATEWAY_HEALTH] url=%s active_clients=%d streams=%d control_drops=%d lossy_drops=%d send_drops=%d\n",
+				u, s.activeClients, s.streamsActive, s.controlDrops, s.lossyDrops, s.sendDrops)
+		}
+
+		var sumActive, sumStreams, maxStreams, sumCtl, sumLossy, sumSend uint64
+		for _, s := range snapshots {
+			sumActive += uint64(s.activeClients)
+			sumStreams += uint64(s.streamsActive)
+			if uint64(s.streamsActive) > maxStreams {
+				maxStreams = uint64(s.streamsActive)
+			}
+			sumCtl += s.controlDrops
+			sumLossy += s.lossyDrops
+			sumSend += s.sendDrops
+		}
+
+		// "Latest" values reflect whatever answered; PEAKS are only updated on
+		// complete polls so a missing gateway can't under-report.
+		globalMetrics.GatewayActiveClients.Store(sumActive)
+		globalMetrics.GatewayStreamsActive.Store(sumStreams)
+		globalMetrics.GatewayControlDrops.Store(sumCtl)
+		globalMetrics.GatewayLossyDrops.Store(sumLossy)
+		globalMetrics.GatewaySendDrops.Store(sumSend)
+
+		complete := len(snapshots) == len(cfg.HealthURLs)
+		if complete {
+			globalMetrics.GatewayHealthPollsDone.Add(1)
+			if sumActive > peakActive {
+				peakActive = sumActive
+				globalMetrics.GatewayPeakActiveClients.Store(peakActive)
+			}
+			if sumStreams > peakStreamsTotal {
+				peakStreamsTotal = sumStreams
+				globalMetrics.GatewayPeakStreamsTotal.Store(peakStreamsTotal)
+			}
+			if maxStreams > peakStreamsPerGW {
+				peakStreamsPerGW = maxStreams
+				globalMetrics.GatewayPeakStreamsPerGW.Store(peakStreamsPerGW)
+			}
+		} else {
+			globalMetrics.GatewayHealthPartialPoll.Add(1)
+		}
+
+		elapsed := time.Since(startTime).Seconds()
+		if complete && sumActive == 0 && elapsed >= float64(cfg.AutoStopMinElapsedS) {
+			consecutiveZeroPolls++
+			fmt.Printf("[GATEWAY_HEALTH] all gateways at 0 active_clients (%d/%d consecutive), elapsed %.0fs\n",
+				consecutiveZeroPolls, cfg.AutoStopConsecutiveZeros, elapsed)
+			if consecutiveZeroPolls >= cfg.AutoStopConsecutiveZeros {
+				fmt.Println("[GATEWAY_HEALTH] all gateways drained — auto-stopping test to print results.")
+				select {
+				case autoStopCh <- struct{}{}:
+				default:
+				}
+				return true
+			}
+		} else {
+			consecutiveZeroPolls = 0
+		}
+		return false
+	}
+
+	// Immediate baseline poll (k6 parity), then on the ticker.
+	if poll() {
+		return
+	}
 	ticker := time.NewTicker(time.Duration(cfg.HealthPollSeconds) * time.Second)
 	defer ticker.Stop()
-
-	snapshots := make(map[string]gwHealthSnapshot)
-	consecutiveZeroPolls := 0
-	var peakStreamsTotal uint64
-	var peakStreamsPerGW uint64
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, u := range cfg.HealthURLs {
-				resp, err := httpClient.Get(u)
-				if err != nil {
-					delete(snapshots, u)
-					globalMetrics.GatewayHealthFailures.Add(1)
-					continue
-				}
-
-				var health struct {
-					ActiveClients     int `json:"active_clients"`
-					GRPCStreamsActive int `json:"grpc_streams_active"`
-					FanoutDropped     struct {
-						Control int `json:"control"`
-						Lossy   int `json:"lossy"`
-					} `json:"fanout_dropped"`
-					SendDropped struct {
-						Stroke int `json:"stroke"`
-						Fill   int `json:"fill"`
-						Guess  int `json:"guess"`
-					} `json:"send_dropped"`
-				}
-
-				body, readErr := io.ReadAll(resp.Body)
-				resp.Body.Close()
-
-				if readErr == nil && json.Unmarshal(body, &health) == nil {
-					snapshots[u] = gwHealthSnapshot{
-						activeClients: health.ActiveClients,
-						streamsActive: health.GRPCStreamsActive,
-						controlDrops:  uint64(health.FanoutDropped.Control),
-						lossyDrops:    uint64(health.FanoutDropped.Lossy),
-						sendDrops:     uint64(health.SendDropped.Stroke + health.SendDropped.Fill + health.SendDropped.Guess),
-					}
-				} else {
-					delete(snapshots, u)
-					globalMetrics.GatewayHealthFailures.Add(1)
-				}
-			}
-
-			// Aggregate across latest snapshots from all probed gateways
-			var sumActiveClients uint64
-			var sumStreamsActive uint64
-			var maxStreamsPerGW uint64
-			var sumControlDrops uint64
-			var sumLossyDrops uint64
-			var sumSendDrops uint64
-
-			for _, s := range snapshots {
-				sumActiveClients += uint64(s.activeClients)
-				sumStreamsActive += uint64(s.streamsActive)
-				if uint64(s.streamsActive) > maxStreamsPerGW {
-					maxStreamsPerGW = uint64(s.streamsActive)
-				}
-				sumControlDrops += s.controlDrops
-				sumLossyDrops += s.lossyDrops
-				sumSendDrops += s.sendDrops
-			}
-
-			globalMetrics.GatewayActiveClients.Store(sumActiveClients)
-			globalMetrics.GatewayStreamsActive.Store(sumStreamsActive)
-			globalMetrics.GatewayMaxStreamsPerGW.Store(maxStreamsPerGW)
-			globalMetrics.GatewayControlDrops.Store(sumControlDrops)
-			globalMetrics.GatewayLossyDrops.Store(sumLossyDrops)
-			globalMetrics.GatewaySendDrops.Store(sumSendDrops)
-
-			if len(snapshots) > 0 {
-				globalMetrics.GatewayHealthPollsDone.Add(1)
-				if sumStreamsActive > peakStreamsTotal {
-					peakStreamsTotal = sumStreamsActive
-				}
-				if maxStreamsPerGW > peakStreamsPerGW {
-					peakStreamsPerGW = maxStreamsPerGW
-				}
-				globalMetrics.GatewayPeakStreamsTotal.Store(peakStreamsTotal)
-				globalMetrics.GatewayPeakStreamsPerGW.Store(peakStreamsPerGW)
-			}
-
-			elapsed := time.Since(startTime).Seconds()
-			allZero := len(snapshots) == len(cfg.HealthURLs) && sumActiveClients == 0
-			if elapsed >= float64(cfg.AutoStopMinElapsedS) && allZero {
-				consecutiveZeroPolls++
-				if consecutiveZeroPolls >= cfg.AutoStopConsecutiveZeros {
-					fmt.Println("[GATEWAY_HEALTH] All gateways drained — auto-stopping test to print results.")
-					select {
-					case autoStopCh <- struct{}{}:
-					default:
-					}
-					return
-				}
-			} else {
-				consecutiveZeroPolls = 0
+			if poll() {
+				return
 			}
 		}
 	}
@@ -1469,13 +1715,26 @@ func runHealthProbe(ctx context.Context, cfg *Config, autoStopCh chan struct{}) 
 
 func main() {
 	cfg := loadConfig()
+	if errs := cfg.validate(); len(errs) > 0 {
+		fmt.Fprintln(os.Stderr, "Invalid configuration:")
+		for _, e := range errs {
+			fmt.Fprintln(os.Stderr, "  - "+e)
+		}
+		os.Exit(2)
+	}
+	initHTTPClients(cfg)
 
 	totalRooms := int(math.Ceil(float64(cfg.VUs) / float64(cfg.PlayersPerRoom)))
 	fmt.Println("==========================================================")
-	fmt.Printf(" Skribbl High-Performance Go Load Generator\n")
-	fmt.Printf(" Target LBs: %s (Port %s)\n", strings.Join(cfg.Hosts, ","), cfg.Port)
-	fmt.Printf(" VUs: %d (Offset: %d) | Players/Room: %d | Rooms: %d\n", cfg.VUs, cfg.VuOffset, cfg.PlayersPerRoom, totalRooms)
-	fmt.Printf(" Game: %d rounds, %ds turns, hold=%ds | Stroke: %dHz\n", cfg.NumRounds, cfg.TurnDuration, cfg.HoldSeconds, cfg.StrokeHz)
+	fmt.Printf(" Skribbl Go Load Generator (k6 parity build)\n")
+	fmt.Printf(" Target LBs: %s (port %s)\n", strings.Join(cfg.Hosts, ","), cfg.Port)
+	fmt.Printf(" VUs: %d (offset %d) | players/room: %d | rooms: %d | ramp: %ds\n", cfg.VUs, cfg.VuOffset, cfg.PlayersPerRoom, totalRooms, cfg.RampSeconds)
+	fmt.Printf(" Game: %d rounds, %ds turns, hold=%ds | strokes: %dHz x %d pts [%s]\n", cfg.NumRounds, cfg.TurnDuration, cfg.HoldSeconds, cfg.StrokeHz, cfg.StrokePoints, cfg.StrokeFormat)
+	if cfg.StrokeHz > 0 {
+		fanout := totalRooms * cfg.StrokeHz * (cfg.PlayersPerRoom - 1)
+		fmt.Printf(" Peak fan-out: ~%d broadcast writes/s at gateways (all rooms drawing)\n", fanout)
+	}
+	fmt.Printf(" Coord: %s | publish attempts: %d | HTTP timeout: %ds\n", map[bool]string{true: "via LB", false: "direct"}[cfg.CoordViaLB], cfg.PublishAttempts, cfg.HTTPTimeoutSeconds)
 	fmt.Println("==========================================================")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1492,19 +1751,18 @@ func main() {
 			cancel()
 		case <-autoStopCh:
 			cancel()
+		case <-ctx.Done():
 		}
 	}()
 
-	// Launch Gateway Health Observability scenario
 	go runHealthProbe(ctx, cfg, autoStopCh)
 
 	startTime := time.Now()
 	var wg sync.WaitGroup
 
-	// Status reporter
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
 	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -1513,20 +1771,18 @@ func main() {
 				elapsed := time.Since(startTime).Truncate(time.Second)
 				opened := globalMetrics.WSConnectionsOpened.Load()
 				closed := globalMetrics.WSConnectionsClosed.Load()
-				active := opened - closed
-				msgsRecv := globalMetrics.MsgsReceived.Load()
-				msgsSent := globalMetrics.MsgsSent.Load()
-				completed := globalMetrics.GamesCompleted.Load()
-				errors := globalMetrics.ErrorsConnect.Load() + globalMetrics.ErrorsRoom.Load() + globalMetrics.ErrorsTimeout.Load()
-
-				latSnapshot := globalMetrics.MessageLatency.Snapshot()
-				fmt.Printf("[%s] Active VUs: %d | Msgs R/S: %d/%d | Games Done: %d | Err: %d | p95 Lat: %.1fms\n",
-					elapsed, active, msgsRecv, msgsSent, completed, errors, latSnapshot.P95)
+				var active uint64
+				if opened > closed {
+					active = opened - closed
+				}
+				lat := globalMetrics.MessageLatency.Snapshot()
+				fmt.Printf("[%s] Active sockets: %d | Msgs R/S: %d/%d | Games done: %d | Err: %d | p95 lat: %.1fms\n",
+					elapsed, active, globalMetrics.MsgsReceived.Load(), globalMetrics.MsgsSent.Load(),
+					globalMetrics.GamesCompleted.Load(), totalErrors(), lat.P95)
 			}
 		}
 	}()
 
-	// Launch VUs
 	for i := 1; i <= cfg.VUs; i++ {
 		wg.Add(1)
 		go runVU(ctx, cfg, i, &wg)
@@ -1534,8 +1790,11 @@ func main() {
 
 	wg.Wait()
 	duration := time.Since(startTime)
+	cancel()
 
-	printSummaryReport(cfg, duration)
+	if ok := printSummaryReport(cfg, duration); !ok {
+		os.Exit(1)
+	}
 }
 
 // ─── Reporting & Acceptance ─────────────────────────────────────────────────
@@ -1549,12 +1808,39 @@ func passFailStr(b bool) string {
 
 func formatLatStr(t TrendStats) string {
 	if t.Count == 0 {
-		return "no data"
+		return "NOT MEASURED"
 	}
 	return fmt.Sprintf("%.1fms", t.P95)
 }
 
-func printSummaryReport(cfg *Config, duration time.Duration) {
+func printTrend(name string, t TrendStats, unit string) {
+	fmt.Printf("     %-34s: avg=%.2f%s min=%.1f%s med=%.1f%s max=%.1f%s p(90)=%.1f%s p(95)=%.1f%s (n=%.0f)\n",
+		name, t.Avg, unit, t.Min, unit, t.Med, unit, t.Max, unit, t.P90, unit, t.P95, unit, t.Count)
+}
+
+func formatBytes(b uint64) string {
+	switch {
+	case b < 1024:
+		return fmt.Sprintf("%d B", b)
+	case b < 1024*1024:
+		return fmt.Sprintf("%.1f KB", float64(b)/1024)
+	case b < 1024*1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024))
+	default:
+		return fmt.Sprintf("%.2f GB", float64(b)/(1024*1024*1024))
+	}
+}
+
+func sub0(a, b uint64) uint64 {
+	if a > b {
+		return a - b
+	}
+	return 0
+}
+
+// printSummaryReport prints the report and returns true when acceptance passes.
+func printSummaryReport(cfg *Config, duration time.Duration) bool {
+	m := globalMetrics
 	fmt.Println("\nLoad test complete.")
 	fmt.Println("==========================================================")
 
@@ -1562,199 +1848,178 @@ func printSummaryReport(cfg *Config, duration time.Duration) {
 	if durSec <= 0 {
 		durSec = 1
 	}
+	perSec := func(n uint64) float64 { return float64(n) / durSec }
 
-	dataRecv := globalMetrics.DataReceived.Load()
-	dataSent := globalMetrics.DataSent.Load()
-	msgsRecv := globalMetrics.MsgsReceived.Load()
-	msgsSent := globalMetrics.MsgsSent.Load()
+	dataRecv, dataSent := m.DataReceived.Load(), m.DataSent.Load()
+	msgsRecv, msgsSent := m.MsgsReceived.Load(), m.MsgsSent.Load()
+	opened, closed := m.WSConnectionsOpened.Load(), m.WSConnectionsClosed.Load()
 
-	opened := globalMetrics.WSConnectionsOpened.Load()
-	closed := globalMetrics.WSConnectionsClosed.Load()
-
-	// Definitive Per-Player Connection Success Rate
-	playersAttempted := globalMetrics.PlayersAttempted.Load()
-	playersConnected := globalMetrics.PlayersConnected.Load()
-	connFailures := playersAttempted - playersConnected
-	connSuccessRate := 100.0
-	if playersAttempted > 0 {
-		connSuccessRate = float64(playersConnected) / float64(playersAttempted) * 100.0
+	// Connection success — two views.
+	planned := m.PlayersPlanned.Load()
+	attempted := m.PlayersAttempted.Load()
+	connected := m.PlayersConnected.Load()
+	connRateK6 := 100.0 // k6 parity: attempts = VUs that reached the dial
+	if attempted > 0 {
+		connRateK6 = float64(connected) / float64(attempted) * 100.0
+	}
+	connRateE2E := 0.0 // end-to-end: every planned VU, incl. coordinator failures
+	if planned > 0 {
+		connRateE2E = float64(connected) / float64(planned) * 100.0
 	}
 
-	// Host-Tracked Game Completion Rates
-	// 1) Planned Rooms Rate: Divides by total planned rooms for true cluster capacity testing
-	totalPlannedRooms := uint64(math.Ceil(float64(cfg.VUs) / float64(cfg.PlayersPerRoom)))
-	gamesDone := globalMetrics.GamesCompleted.Load()
-	gamesAborted := globalMetrics.GamesAborted.Load()
-	gameCompletionRatePlanned := 0.0
-	if totalPlannedRooms > 0 {
-		gameCompletionRatePlanned = float64(gamesDone) / float64(totalPlannedRooms) * 100.0
+	// Game completion — two views.
+	plannedRooms := uint64(math.Ceil(float64(cfg.VUs) / float64(cfg.PlayersPerRoom)))
+	gamesDone, gamesAborted := m.GamesCompleted.Load(), m.GamesAborted.Load()
+	gameRatePlanned := 0.0
+	if plannedRooms > 0 {
+		gameRatePlanned = float64(gamesDone) / float64(plannedRooms) * 100.0
+	}
+	gameRateObserved := 0.0
+	if gamesDone+gamesAborted > 0 {
+		gameRateObserved = float64(gamesDone) / float64(gamesDone+gamesAborted) * 100.0
 	}
 
-	// 2) Observed Hosts Rate: Matches k6 Script 1 rate definition (gamesCompleted / (gamesCompleted + gamesAborted))
-	observedRooms := gamesDone + gamesAborted
-	gameCompletionRateObserved := 0.0
-	if observedRooms > 0 {
-		gameCompletionRateObserved = float64(gamesDone) / float64(observedRooms) * 100.0
+	plannedPlayers := uint64(cfg.VUs)
+	sessDone, sessAborted := m.SessionsCompleted.Load(), m.SessionsAborted.Load()
+	sessRate := 0.0
+	if plannedPlayers > 0 {
+		sessRate = float64(sessDone) / float64(plannedPlayers) * 100.0
 	}
 
-	totalPlannedPlayers := uint64(cfg.VUs)
-	sessDone := globalMetrics.SessionsCompleted.Load()
-	sessAborted := globalMetrics.SessionsAborted.Load()
-	sessRate := 100.0
-	if totalPlannedPlayers > 0 {
-		sessRate = float64(sessDone) / float64(totalPlannedPlayers) * 100.0
-	}
-
-	totalErrors := globalMetrics.ErrorsConnect.Load() + globalMetrics.ErrorsRoom.Load() + globalMetrics.ErrorsProtocol.Load() + globalMetrics.ErrorsTimeout.Load()
 	fmt.Printf("     data_received....................: %s   %s/s\n", formatBytes(dataRecv), formatBytes(uint64(float64(dataRecv)/durSec)))
 	fmt.Printf("     data_sent........................: %s   %s/s\n", formatBytes(dataSent), formatBytes(uint64(float64(dataSent)/durSec)))
-	fmt.Printf("     errors...........................: %d   %.6f/s\n", totalErrors, float64(totalErrors)/durSec)
-	if errTimeout := globalMetrics.ErrorsTimeout.Load(); errTimeout > 0 {
-		fmt.Printf("     errors_timeout...................: %d   %.6f/s\n", errTimeout, float64(errTimeout)/durSec)
+	fmt.Printf("     errors (total)...................: %d   %.6f/s\n", totalErrors(), float64(totalErrors())/durSec)
+	for _, e := range []struct {
+		name string
+		v    uint64
+	}{
+		{"errors_connect", m.ErrorsConnect.Load()},
+		{"errors_room", m.ErrorsRoom.Load()},
+		{"errors_protocol", m.ErrorsProtocol.Load()},
+		{"errors_game", m.ErrorsGame.Load()},
+		{"errors_timeout", m.ErrorsTimeout.Load()},
+	} {
+		if e.v > 0 {
+			fmt.Printf("     %-32s: %d   %.6f/s\n", e.name, e.v, perSec(e.v))
+		}
 	}
-	if errConn := globalMetrics.ErrorsConnect.Load(); errConn > 0 {
-		fmt.Printf("     errors_connect...................: %d   %.6f/s\n", errConn, float64(errConn)/durSec)
+	if v := m.RoomCodeDiscoveryFailures.Load(); v > 0 {
+		fmt.Printf("     room_code_discovery_failures.....: %d (joiners that never opened a socket)\n", v)
 	}
-	if errRoom := globalMetrics.ErrorsRoom.Load(); errRoom > 0 {
-		fmt.Printf("     errors_room......................: %d   %.6f/s\n", errRoom, float64(errRoom)/durSec)
+	if v := m.CoordPublishFailures.Load(); v > 0 {
+		fmt.Printf("     coord_publish_failures...........: %d (host could not publish its room code)\n", v)
 	}
-	if discFailures := globalMetrics.RoomCodeDiscoveryFailures.Load(); discFailures > 0 {
-		fmt.Printf("     room_code_discovery_failures.....: %d   %.6f/s (excluded from connection success per k6 parity)\n", discFailures, float64(discFailures)/durSec)
+	if v := m.ServerErrors.Load(); v > 0 {
+		fmt.Printf("     server_errors....................: %d (create=%d join=%d)\n", v, m.ServerCreateErrors.Load(), m.ServerJoinErrors.Load())
 	}
-	if errProto := globalMetrics.ErrorsProtocol.Load(); errProto > 0 {
-		fmt.Printf("     errors_protocol..................: %d   %.6f/s\n", errProto, float64(errProto)/durSec)
+	if v := m.RedirectsFollowed.Load(); v > 0 {
+		fmt.Printf("     redirects_followed...............: %d\n", v)
 	}
 
-	fmt.Printf("   ✓ game_completion_rate (planned)..: %.2f%%   ✓ %d   ✗ %d (total planned: %d)\n", gameCompletionRatePlanned, gamesDone, totalPlannedRooms-gamesDone, totalPlannedRooms)
-	fmt.Printf("     game_completion_rate (observed).: %.2f%%   ✓ %d   ✗ %d (k6 observed host rooms)\n", gameCompletionRateObserved, gamesDone, gamesAborted)
-	fmt.Printf("     game_start_requests..............: %d   %.6f/s\n", globalMetrics.GameStartRequests.Load(), float64(globalMetrics.GameStartRequests.Load())/durSec)
-	fmt.Printf("     games_started....................: %d   %.6f/s\n", globalMetrics.GamesStarted.Load(), float64(globalMetrics.GamesStarted.Load())/durSec)
-	fmt.Printf("     games_completed..................: %d   %.6f/s\n", gamesDone, float64(gamesDone)/durSec)
-	fmt.Printf("     games_aborted....................: %d   %.6f/s\n", gamesAborted, float64(gamesAborted)/durSec)
+	fmt.Printf("   ✓ game_completion_rate (planned)...: %.2f%%   ✓ %d   ✗ %d (planned rooms: %d)\n", gameRatePlanned, gamesDone, sub0(plannedRooms, gamesDone), plannedRooms)
+	fmt.Printf("     game_completion_rate (observed)..: %.2f%%   ✓ %d   ✗ %d (k6-comparable: completed / (completed+aborted))\n", gameRateObserved, gamesDone, gamesAborted)
+	fmt.Printf("     game_start_requests..............: %d   %.6f/s\n", m.GameStartRequests.Load(), perSec(m.GameStartRequests.Load()))
+	fmt.Printf("     games_started....................: %d   %.6f/s\n", m.GamesStarted.Load(), perSec(m.GamesStarted.Load()))
+	fmt.Printf("     games_completed / aborted........: %d / %d\n", gamesDone, gamesAborted)
 
-	// Gateway Observability metrics
-	fmt.Printf("     gateway_active_clients...........: %d\n", globalMetrics.GatewayActiveClients.Load())
-	fmt.Printf("     gateway_grpc_streams_total.......: %d\n", globalMetrics.GatewayStreamsActive.Load())
-	fmt.Printf("     gateway_fanout_control_drops.....: %d\n", globalMetrics.GatewayControlDrops.Load())
-	fmt.Printf("     gateway_fanout_lossy_drops.......: %d\n", globalMetrics.GatewayLossyDrops.Load())
-	fmt.Printf("     gateway_send_drops...............: %d\n", globalMetrics.GatewaySendDrops.Load())
+	fmt.Printf("     gateway_active_clients (latest)..: %d   peak: %d\n", m.GatewayActiveClients.Load(), m.GatewayPeakActiveClients.Load())
+	fmt.Printf("     gateway_grpc_streams (latest)....: %d   peak total: %d   peak per-gateway: %d\n", m.GatewayStreamsActive.Load(), m.GatewayPeakStreamsTotal.Load(), m.GatewayPeakStreamsPerGW.Load())
+	fmt.Printf("     gateway_fanout_control_drops.....: %d\n", m.GatewayControlDrops.Load())
+	fmt.Printf("     gateway_fanout_lossy_drops.......: %d\n", m.GatewayLossyDrops.Load())
+	fmt.Printf("     gateway_send_drops...............: %d\n", m.GatewaySendDrops.Load())
+	fmt.Printf("     gateway_health polls ok/partial/err: %d / %d / %d\n", m.GatewayHealthPollsDone.Load(), m.GatewayHealthPartialPoll.Load(), m.GatewayHealthFailures.Load())
 
-	latSnap := globalMetrics.MessageLatency.Snapshot()
-	printTrend("message_latency (toggle->list)", latSnap, "ms")
-	fmt.Printf("     messages_received................: %d   %.1f/s\n", msgsRecv, float64(msgsRecv)/durSec)
+	latSnap := m.MessageLatency.Snapshot()
+	printTrend("toggle_ready->player_list latency", latSnap, "ms")
+	fmt.Printf("     messages_received (inner msgs)...: %d   %.1f/s\n", msgsRecv, float64(msgsRecv)/durSec)
 	fmt.Printf("     messages_sent....................: %d   %.1f/s\n", msgsSent, float64(msgsSent)/durSec)
-	fmt.Printf("   ✓ player_session_completion_rate...: %.2f%%   ✓ %d   ✗ %d\n", sessRate, sessDone, totalPlannedPlayers-sessDone)
-	fmt.Printf("     sessions_completed...............: %d   %.6f/s\n", sessDone, float64(sessDone)/durSec)
-	fmt.Printf("     sessions_aborted.................: %d   %.6f/s\n", sessAborted, float64(sessAborted)/durSec)
+	fmt.Printf("   ✓ player_session_completion_rate...: %.2f%%   ✓ %d   ✗ %d\n", sessRate, sessDone, sub0(plannedPlayers, sessDone))
+	fmt.Printf("     sessions_aborted.................: %d\n", sessAborted)
 
-	createSnap := globalMetrics.RoomCreateRTT.Snapshot()
-	joinSnap := globalMetrics.RoomJoinRTT.Snapshot()
+	createSnap := m.RoomCreateRTT.Snapshot()
+	joinSnap := m.RoomJoinRTT.Snapshot()
 	printTrend("room_create_rtt", createSnap, "ms")
 	printTrend("room_join_rtt", joinSnap, "ms")
-	fmt.Printf("     rooms_created....................: %d   %.6f/s\n", globalMetrics.RoomsCreated.Load(), float64(globalMetrics.RoomsCreated.Load())/durSec)
-	fmt.Printf("     rooms_joined.....................: %d   %.6f/s\n", globalMetrics.RoomsJoined.Load(), float64(globalMetrics.RoomsJoined.Load())/durSec)
+	fmt.Printf("     rooms_created....................: %d\n", m.RoomsCreated.Load())
+	fmt.Printf("     rooms_joined.....................: %d\n", m.RoomsJoined.Load())
 
-	printTrend("ws_connection_duration (socket)", globalMetrics.WSConnectionDuration.Snapshot(), "ms")
-	printTrend("session_duration (lifetime)", globalMetrics.SessionDuration.Snapshot(), "ms")
-	fmt.Printf("   ✓ ws_connection_success............: %.2f%%   ✓ %d   ✗ %d\n", connSuccessRate, playersConnected, connFailures)
-	fmt.Printf("     ws_connections_closed............: %d   %.1f/s\n", closed, float64(closed)/durSec)
-	fmt.Printf("     ws_connections_opened............: %d   %.1f/s\n", opened, float64(opened)/durSec)
-	printTrend("ws_open_rtt", globalMetrics.WSOpenRTT.Snapshot(), "ms")
+	printTrend("ws_connection_duration (socket)", m.WSConnectionDuration.Snapshot(), "ms")
+	printTrend("session_duration (VU lifetime)", m.SessionDuration.Snapshot(), "ms")
+	fmt.Printf("   ✓ ws_connection_success (k6 view)..: %.2f%%   ✓ %d   ✗ %d (attempts exclude coordinator failures)\n", connRateK6, connected, sub0(attempted, connected))
+	fmt.Printf("   ✓ player_connect (end-to-end)......: %.2f%%   ✓ %d   ✗ %d (planned VUs: %d)\n", connRateE2E, connected, sub0(planned, connected), planned)
+	fmt.Printf("     ws_connections_opened/closed.....: %d / %d\n", opened, closed)
+	printTrend("ws_open_rtt", m.WSOpenRTT.Snapshot(), "ms")
 
+	// ── Guardrail thresholds ──
 	fmt.Println("\n════ THRESHOLDS (guardrails vs strict mode) ════")
 	var targetConn, targetGame, targetSess float64
 	if cfg.Strict {
-		targetConn = 99.0
-		targetGame = 80.0
-		targetSess = 80.0
-		fmt.Println("  [MODE: STRICT=1 (acceptance requirements enforced as hard thresholds)]")
+		targetConn, targetGame, targetSess = 99.0, 80.0, 80.0
+		fmt.Println("  [MODE: STRICT=1 — acceptance requirements enforced as hard thresholds]")
 	} else {
-		targetConn = 95.0
-		targetGame = 70.0
-		targetSess = 70.0
-		fmt.Println("  [MODE: STRICT=0 (looser engineering guardrails; run with STRICT=1 for hard requirements)]")
+		targetConn, targetGame, targetSess = 95.0, 70.0, 70.0
+		fmt.Println("  [MODE: STRICT=0 — looser engineering guardrails; run with STRICT=1 for hard requirements]")
 	}
-
-	threshConn := connSuccessRate >= targetConn
-	threshGame := gameCompletionRatePlanned >= targetGame
+	joinNeeded := cfg.PlayersPerRoom > 1
+	threshConn := connRateE2E >= targetConn
+	threshGame := gameRatePlanned >= targetGame
 	threshSess := sessRate >= targetSess
 	threshCreate := createSnap.Count > 0 && createSnap.P95 < 5000.0
-	threshJoin := joinSnap.Count > 0 && joinSnap.P95 < 5000.0
+	threshJoin := !joinNeeded || (joinSnap.Count > 0 && joinSnap.P95 < 5000.0)
 	threshLat := latSnap.Count > 0 && latSnap.P95 <= 50.0
 
-	fmt.Printf("  [%s] ws_connection_success: %.2f%% (threshold >=%.0f%%)\n", passFailStr(threshConn), connSuccessRate, targetConn)
-	fmt.Printf("  [%s] game_completion_rate: %.2f%% (threshold >=%.0f%%)\n", passFailStr(threshGame), gameCompletionRatePlanned, targetGame)
-	fmt.Printf("  [%s] player_session_completion_rate: %.2f%% (threshold >=%.0f%%)\n", passFailStr(threshSess), sessRate, targetSess)
-	fmt.Printf("  [%s] room_create_rtt p95: %s (threshold <5000ms)\n", passFailStr(threshCreate), formatLatStr(createSnap))
-	fmt.Printf("  [%s] room_join_rtt p95: %s (threshold <5000ms)\n", passFailStr(threshJoin), formatLatStr(joinSnap))
-	fmt.Printf("  [%s] message_latency p95: %s (threshold <=50ms)\n", passFailStr(threshLat), formatLatStr(latSnap))
+	fmt.Printf("  [%s] player_connect end-to-end: %.2f%% (>=%.0f%%)\n", passFailStr(threshConn), connRateE2E, targetConn)
+	fmt.Printf("  [%s] game_completion_rate (planned): %.2f%% (>=%.0f%%)\n", passFailStr(threshGame), gameRatePlanned, targetGame)
+	fmt.Printf("  [%s] player_session_completion_rate: %.2f%% (>=%.0f%%)\n", passFailStr(threshSess), sessRate, targetSess)
+	fmt.Printf("  [%s] room_create_rtt p95: %s (<5000ms)\n", passFailStr(threshCreate), formatLatStr(createSnap))
+	if joinNeeded {
+		fmt.Printf("  [%s] room_join_rtt p95: %s (<5000ms)\n", passFailStr(threshJoin), formatLatStr(joinSnap))
+	}
+	fmt.Printf("  [%s] toggle_ready->player_list p95: %s (<=50ms)\n", passFailStr(threshLat), formatLatStr(latSnap))
 
+	// ── Acceptance ──
 	fmt.Println("\n════ ACCEPTANCE (requirements, not guardrails) ════")
-	req91Pass := connSuccessRate >= 99.0
-	req92Pass := latSnap.Count > 0 && latSnap.P95 <= 50.0
-	req93Pass := gameCompletionRatePlanned >= 80.0
+	req91 := connRateE2E >= 99.0
+	req92 := latSnap.Count > 0 && latSnap.P95 <= 50.0
+	req93 := gameRatePlanned >= 80.0
+	fmt.Printf("  [%s] 9.1 connection success (end-to-end): %.2f%% (target >=99%%)\n", passFailStr(req91), connRateE2E)
+	fmt.Printf("  [%s] 9.2 toggle_ready->player_list p95: %s (target <=50ms; proxy for message latency)\n", passFailStr(req92), formatLatStr(latSnap))
+	fmt.Printf("  [%s] 9.3 game completion (planned rooms): %.2f%% (target >=80%%)\n", passFailStr(req93), gameRatePlanned)
 
-	fmt.Printf("  [%s] 9.1 connection success: %.2f%% (target >=99%%)\n", passFailStr(req91Pass), connSuccessRate)
-	fmt.Printf("  [%s] 9.2 message latency p95: %s (target <=50ms)\n", passFailStr(req92Pass), formatLatStr(latSnap))
-	fmt.Printf("  [%s] 9.3 game completion: %.2f%% (target >=80%%)\n", passFailStr(req93Pass), gameCompletionRatePlanned)
-
-	pollsDone := globalMetrics.GatewayHealthPollsDone.Load()
-	peakStreamsTotal := globalMetrics.GatewayPeakStreamsTotal.Load()
-	peakStreamsMaxGW := globalMetrics.GatewayPeakStreamsPerGW.Load()
-	var req94Pass, req95Pass bool
-	var streamsTotalStr, streamsMaxGWStr string
-
-	if len(cfg.HealthURLs) > 0 && pollsDone > 0 {
-		req94Pass = peakStreamsTotal < 1500
-		req95Pass = peakStreamsMaxGW < 200
-		streamsTotalStr = fmt.Sprintf("%d", peakStreamsTotal)
-		streamsMaxGWStr = fmt.Sprintf("%d", peakStreamsMaxGW)
-	} else {
-		req94Pass = false
-		req95Pass = false
-		streamsTotalStr = "NOT MEASURED"
-		streamsMaxGWStr = "NOT MEASURED"
+	pollsDone := m.GatewayHealthPollsDone.Load()
+	peakTotal := m.GatewayPeakStreamsTotal.Load()
+	peakPerGW := m.GatewayPeakStreamsPerGW.Load()
+	// Measured only if at least one complete, valid poll saw streams > 0 under load.
+	measured := len(cfg.HealthURLs) > 0 && pollsDone > 0 && peakTotal > 0
+	req94, req95 := false, false
+	s94, s95 := "NOT MEASURED", "NOT MEASURED"
+	if measured {
+		req94 = peakTotal < 1500
+		req95 = peakPerGW < 200
+		s94 = strconv.FormatUint(peakTotal, 10)
+		s95 = strconv.FormatUint(peakPerGW, 10)
 	}
-	fmt.Printf("  [%s] 9.4 total gRPC streams (peak): %s (target <1500)\n", passFailStr(req94Pass), streamsTotalStr)
-	fmt.Printf("  [%s] 9.5 per-worker/gateway streams (peak): %s (target <200)\n", passFailStr(req95Pass), streamsMaxGWStr)
+	fmt.Printf("  [%s] 9.4 total gRPC streams (peak): %s (target <1500)\n", passFailStr(req94), s94)
+	fmt.Printf("  [%s] 9.5 per-GATEWAY streams (peak): %s (target <200) — proxy for per-worker; confirm on worker /metrics\n", passFailStr(req95), s95)
+	if !measured {
+		fmt.Println("        (9.4/9.5 unmeasured: need >=1 complete health poll with streams > 0; check HEALTH_URLS and field names)")
+	}
 
-	allRequirementsPassed := req91Pass && req92Pass && req93Pass && req94Pass && req95Pass
-	allThresholdsPassed := threshConn && threshGame && threshSess && threshCreate && threshJoin && threshLat
-
-	overallPassed := allRequirementsPassed
+	allReq := req91 && req92 && req93 && req94 && req95
+	allThresh := threshConn && threshGame && threshSess && threshCreate && threshJoin && threshLat
+	overall := allReq
 	if cfg.Strict {
-		overallPassed = overallPassed && allThresholdsPassed
+		overall = overall && allThresh
 	}
 
-	if overallPassed {
+	if overall {
 		fmt.Println("  ── OVERALL ACCEPTANCE: PASS ──")
 	} else {
 		fmt.Println("  ── OVERALL ACCEPTANCE: FAIL ──")
 	}
 	if !cfg.Strict {
-		fmt.Println("  (thresholds above are looser guardrails; run with STRICT=1 to enforce these as hard thresholds)")
+		fmt.Println("  (guardrails above are looser; STRICT=1 also enforces them as hard thresholds)")
 	}
 	fmt.Println("==========================================================")
-
-	if !overallPassed {
-		os.Exit(1)
-	}
-}
-
-func printTrend(name string, t TrendStats, unit string) {
-	fmt.Printf("     %-32s: avg=%.2f%s min=%.1f%s med=%.1f%s max=%.1f%s p(90)=%.1f%s p(95)=%.1f%s\n",
-		name, t.Avg, unit, t.Min, unit, t.Med, unit, t.Max, unit, t.P90, unit, t.P95, unit)
-}
-
-func formatBytes(b uint64) string {
-	if b < 1024 {
-		return fmt.Sprintf("%d B", b)
-	}
-	if b < 1024*1024 {
-		return fmt.Sprintf("%.1f KB", float64(b)/1024)
-	}
-	if b < 1024*1024*1024 {
-		return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024))
-	}
-	return fmt.Sprintf("%.2f GB", float64(b)/(1024*1024*1024))
+	return overall
 }
