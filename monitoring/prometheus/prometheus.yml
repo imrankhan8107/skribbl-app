@@ -25,3 +25,11 @@ scrape_configs:
         labels:
           role: 'worker'
 
+  - job_name: 'cluster-nodes'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+          - 'host.docker.internal:9101'
+          - 'localhost:9101'
+
+

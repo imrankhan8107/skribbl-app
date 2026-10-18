@@ -4,7 +4,19 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Resource Utilization & Capacity",
+      "type": "link",
+      "url": "/d/skribbl-fleet-resources"
+    }
+  ],
   "liveNow": true,
   "panels": [
     {

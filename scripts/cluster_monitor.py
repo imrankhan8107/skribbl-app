@@ -605,6 +605,53 @@ def create_http_handler(accumulator: MetricAccumulator):
                 self.send_header("Content-Length", str(len(resp)))
                 self.end_headers()
                 self.wfile.write(resp)
+            elif path == "/metrics":
+                summary = accumulator.get_summary()
+                role = summary.get("role", "unknown")
+                hostname = summary.get("hostname", socket.gethostname())
+                cpu = summary.get("cpu_percent", {})
+                cpu_dist = summary.get("cpu_dist_1s", {})
+                mem = summary.get("memory_mb", {})
+                rx = summary.get("network_rx_mbps", {})
+                tx = summary.get("network_tx_mbps", {})
+                tcp = summary.get("tcp_connections", {})
+
+                labels = f'role="{role}",instance="{hostname}"'
+                lines = [
+                    "# HELP node_cpu_utilization_percent Current CPU utilization percentage (0-100)",
+                    "# TYPE node_cpu_utilization_percent gauge",
+                    f"node_cpu_utilization_percent{{{labels}}} {cpu.get('current', 0.0)}",
+                    "# HELP node_cpu_p95_percent Rolling p95 CPU utilization percentage (0-100)",
+                    "# TYPE node_cpu_p95_percent gauge",
+                    f"node_cpu_p95_percent{{{labels}}} {cpu_dist.get('p95', 0.0)}",
+                    "# HELP node_memory_used_mb Used host memory in MB",
+                    "# TYPE node_memory_used_mb gauge",
+                    f"node_memory_used_mb{{{labels}}} {mem.get('current', 0.0)}",
+                    "# HELP node_memory_total_mb Total host memory in MB",
+                    "# TYPE node_memory_total_mb gauge",
+                    f"node_memory_total_mb{{{labels}}} {mem.get('total_mb', 0.0)}",
+                    "# HELP node_network_rx_mbps Network receive rate in Mbps",
+                    "# TYPE node_network_rx_mbps gauge",
+                    f"node_network_rx_mbps{{{labels}}} {rx.get('current', 0.0)}",
+                    "# HELP node_network_tx_mbps Network transmit rate in Mbps",
+                    "# TYPE node_network_tx_mbps gauge",
+                    f"node_network_tx_mbps{{{labels}}} {tx.get('current', 0.0)}",
+                    "# HELP node_network_rx_gigabytes_total Total network gigabytes received",
+                    "# TYPE node_network_rx_gigabytes_total counter",
+                    f"node_network_rx_gigabytes_total{{{labels}}} {rx.get('total_gb', 0.0)}",
+                    "# HELP node_network_tx_gigabytes_total Total network gigabytes transmitted",
+                    "# TYPE node_network_tx_gigabytes_total counter",
+                    f"node_network_tx_gigabytes_total{{{labels}}} {tx.get('total_gb', 0.0)}",
+                    "# HELP node_tcp_connections_open Open TCP connections",
+                    "# TYPE node_tcp_connections_open gauge",
+                    f"node_tcp_connections_open{{{labels}}} {tcp.get('current', 0)}",
+                ]
+                body = ("\n".join(lines) + "\n").encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             elif path == "/health":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")

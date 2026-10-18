@@ -90,6 +90,18 @@ scrape_configs:
 %{ endfor ~}
         labels:
           role: 'worker'
+
+  - job_name: 'cluster-nodes'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+%{ for ip in gateway_ips ~}
+          - '${ip}:9101'
+%{ endfor ~}
+%{ for ip in worker_ips ~}
+          - '${ip}:9101'
+%{ endfor ~}
+          - '127.0.0.1:9101'
 EOF
 
 # Start Prometheus and Grafana monitoring stack via Docker Compose
