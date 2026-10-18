@@ -535,6 +535,8 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 		globalMetrics.SessionDuration.Add(float64(time.Since(sessionStart).Milliseconds()))
 	}()
 
+	var writeMu sync.Mutex
+
 	sendJSON := func(msgType string, payload any) error {
 		b, err := json.Marshal(map[string]any{
 			"type":    msgType,
@@ -545,13 +547,23 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 		}
 		globalMetrics.DataSent.Add(uint64(len(b)))
 		globalMetrics.MsgsSent.Add(1)
+		writeMu.Lock()
+		defer writeMu.Unlock()
 		return conn.WriteMessage(websocket.TextMessage, b)
 	}
 
 	sendBinary := func(data []byte) error {
 		globalMetrics.DataSent.Add(uint64(len(data)))
 		globalMetrics.MsgsSent.Add(1)
+		writeMu.Lock()
+		defer writeMu.Unlock()
 		return conn.WriteMessage(websocket.BinaryMessage, data)
+	}
+
+	sendClose := func(code int, text string) {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(code, text))
 	}
 
 	// Identify: send create_room or join_room
@@ -835,7 +847,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 				globalMetrics.GamesCompleted.Add(1)
 			}
 			globalMetrics.SessionsCompleted.Add(1)
-			_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done"))
+			sendClose(websocket.CloseNormalClosure, "done")
 			conn.Close()
 
 		case "game_ended_insufficient_players":
@@ -846,7 +858,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			}
 			globalMetrics.SessionsAborted.Add(1)
 			globalMetrics.ErrorsGame.Add(1)
-			_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "aborted"))
+			sendClose(websocket.CloseNormalClosure, "aborted")
 			conn.Close()
 		}
 	}
