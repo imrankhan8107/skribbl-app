@@ -347,7 +347,10 @@ class GameServiceServicer(game_pb2_grpc.GameServiceServicer):
             name = payload.get("name", "")
             avatar = payload.get("avatar")
             password = payload.get("password") if isinstance(payload, dict) else None
-            result = await room_manager.create_room(name, transport, avatar=avatar, password=password)
+            max_players = payload.get("max_players") if isinstance(payload, dict) else None
+            result = await room_manager.create_room(
+                name, transport, avatar=avatar, password=password, max_players=max_players
+            )
             # Send the result back to the player via transport. This response is
             # still targeted at the CURRENT transport.player_id (the pending id),
             # which matches the gateway's session registry at this instant.

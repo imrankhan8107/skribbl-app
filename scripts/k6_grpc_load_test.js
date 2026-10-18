@@ -583,7 +583,7 @@ export default function () {
         wsOpenRtt.add(Date.now() - connectStart);
       }
       if (isHost) {
-        sendMsg({ type: 'create_room', payload: { name: playerName } });
+        sendMsg({ type: 'create_room', payload: { name: playerName, max_players: PLAYERS_PER_ROOM } });
         safeSetTimeout(function () { if (state === 'connecting') { roomCreateFailures.add(1); recordError('timeout'); endSession('error'); } }, CONNECT_TIMEOUT_MS);
       } else {
         sendMsg({ type: 'join_room', payload: { name: playerName, room_code: roomCode } });

@@ -248,7 +248,7 @@ class RoomManager:
         config = GameConfig(
             num_rounds=cfg_data.get("num_rounds", 3),
             turn_duration=cfg_data.get("turn_duration", 80),
-            max_players=cfg_data.get("max_players", 8),
+            max_players=cfg_data.get("max_players", 12),
             custom_words=cfg_data.get("custom_words", []),
             password=cfg_data.get("_password"),
         )
@@ -335,6 +335,7 @@ class RoomManager:
         websocket,
         avatar: Optional[str] = None,
         password: Optional[str] = None,
+        max_players: Optional[int] = None,
     ) -> dict:
         """Create a new room with the given player as host.
 
@@ -343,6 +344,7 @@ class RoomManager:
             websocket: WebSocket connection for the host.
             avatar: Optional avatar identifier for the host player.
             password: Optional room password for private rooms.
+            max_players: Optional maximum active players (2–12). Defaults to 12.
 
         Returns:
             A dict payload for the `room_created` message, or an error payload.
@@ -371,9 +373,12 @@ class RoomManager:
         # Create the host player
         host = Player(id=player_id, name=name, websocket=websocket, avatar=avatar)
 
-        # Create the room with optional password
+        # Create the room with optional password and max_players
         pwd = password.strip()[:64] if isinstance(password, str) and password.strip() else None
-        config = GameConfig(password=pwd)
+        cfg_kwargs: dict[str, Any] = {"password": pwd}
+        if max_players is not None and isinstance(max_players, int) and 2 <= max_players <= 12:
+            cfg_kwargs["max_players"] = max_players
+        config = GameConfig(**cfg_kwargs)
         room = Room(code=room_code, host_id=player_id, config=config)
         room.add_player(host)
         self.rooms[room_code] = room

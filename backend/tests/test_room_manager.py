@@ -79,7 +79,7 @@ class TestCreateRoom:
         config = result["payload"]["config"]
         assert config["num_rounds"] == 3
         assert config["turn_duration"] == 80
-        assert config["max_players"] == 8
+        assert config["max_players"] == 12
 
     async def test_create_room_invalid_name_empty(self, manager, mock_ws):
         result = await manager.create_room("", mock_ws)

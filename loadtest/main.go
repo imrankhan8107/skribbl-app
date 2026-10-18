@@ -1178,7 +1178,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 
 		// k6 parity: hosts ALWAYS create_room, joiners ALWAYS join_room.
 		if isHost {
-			_ = sendJSON("create_room", map[string]string{"name": playerName})
+			_ = sendJSON("create_room", map[string]any{"name": playerName, "max_players": cfg.PlayersPerRoom})
 			connectTimeout(func() { globalMetrics.RoomCreateErrors.Add(1) })
 		} else {
 			_ = sendJSON("join_room", map[string]string{"name": playerName, "room_code": curRoomCode})

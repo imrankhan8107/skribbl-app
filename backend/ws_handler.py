@@ -74,7 +74,10 @@ async def websocket_handler(websocket: WebSocket) -> None:
                     name = payload.get("name", "")
                     avatar = payload.get("avatar")
                     password = payload.get("password")
-                    result = await room_manager.create_room(name, websocket, avatar=avatar, password=password)
+                    max_players = payload.get("max_players")
+                    result = await room_manager.create_room(
+                        name, websocket, avatar=avatar, password=password, max_players=max_players
+                    )
                     if result.get("type") == "room_created":
                         player_id = result["payload"]["player_id"]
                         room_code = result["payload"]["room_code"]
