@@ -370,11 +370,12 @@ type Metrics struct {
 
 	// Gateway Observability
 	GatewayHealthFailures AtomicUint64
-	GatewayControlDrops   AtomicUint64
-	GatewayLossyDrops     AtomicUint64
-	GatewaySendDrops      AtomicUint64
-	GatewayActiveClients  AtomicUint64
-	GatewayStreamsActive  AtomicUint64
+	GatewayControlDrops    AtomicUint64
+	GatewayLossyDrops      AtomicUint64
+	GatewaySendDrops       AtomicUint64
+	GatewayActiveClients   AtomicUint64
+	GatewayStreamsActive   AtomicUint64
+	GatewayMaxStreamsPerGW AtomicUint64
 
 	// Trend Latencies
 	WSOpenRTT       TrendMetric
@@ -597,9 +598,9 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 	}
 
 	sessionStart := time.Now()
-	var redirectGW string
-	var redirectAttempts int
-	const maxRedirects = 3
+	defer func() {
+		globalMetrics.SessionDuration.Add(float64(time.Since(sessionStart).Milliseconds()))
+	}()
 
 	var initialConnectOutcomeRecorded bool
 	var initialConnectSucceeded bool
@@ -612,8 +613,12 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 
 	globalMetrics.PlayersAttempted.Add(1)
 
-	// Session State across redirects
+	// Session State across redirects (protected by sessionMu)
+	var sessionMu sync.Mutex
 	var roomCode = coordRoomCode
+	var redirectGW string
+	var redirectAttempts int
+	const maxRedirects = 3
 	var playerID string
 	var state = "connecting" // connecting -> lobby -> waiting_start -> playing
 	var isDrawer AtomicBool
@@ -622,6 +627,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 	var gameStartedCounted bool
 	var sessionEnded bool
 	var gameCompleted bool
+	var reconnectForRedirect bool
 
 	var pendingReadyAt time.Time
 	var pendingReadyMu sync.Mutex
@@ -660,22 +666,28 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 	}
 
 	endSession := func(reason string) {
+		sessionMu.Lock()
 		if sessionEnded {
+			sessionMu.Unlock()
 			return
 		}
 		sessionEnded = true
-		stopTurnLoops()
-
 		completed := reason == "completed"
 		if completed {
 			gameCompleted = true
+		}
+		sessionMu.Unlock()
+
+		stopTurnLoops()
+
+		if completed {
 			globalMetrics.SessionsCompleted.Add(1)
 			if isHost {
 				globalMetrics.GamesCompleted.Add(1)
 			}
 		} else {
 			globalMetrics.SessionsAborted.Add(1)
-			if isHost && !gameCompleted {
+			if isHost {
 				globalMetrics.GamesAborted.Add(1)
 			}
 		}
@@ -684,11 +696,17 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 
 	// ─── Connection Loop (Handles Initial Dial & Application-level Redirects) ───
 	for {
-		if sessionEnded || sessionCtx.Err() != nil {
+		sessionMu.Lock()
+		ended := sessionEnded
+		curRoomCode := roomCode
+		curRedirectGW := redirectGW
+		sessionMu.Unlock()
+
+		if ended || sessionCtx.Err() != nil {
 			break
 		}
 
-		wsURL := buildWSURL(cfg, vuID, isHost, roomCode, redirectGW)
+		wsURL := buildWSURL(cfg, vuID, isHost, curRoomCode, curRedirectGW)
 		openStart := time.Now()
 		conn, _, err := dialer.Dial(wsURL, nil)
 		if err != nil {
@@ -815,27 +833,53 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 		}
 
 		createJoinStart := time.Now()
-		if isHost && redirectGW == "" {
+		sessionMu.Lock()
+		curRoomCode = roomCode
+		sessionMu.Unlock()
+
+		if isHost && curRoomCode == "" {
 			_ = sendJSON("create_room", map[string]string{
 				"name":   playerName,
 				"avatar": "bear",
 			})
+			time.AfterFunc(time.Duration(cfg.ConnectTimeoutMs)*time.Millisecond, func() {
+				sessionMu.Lock()
+				st := state
+				ended := sessionEnded
+				sessionMu.Unlock()
+				if st == "connecting" && !ended {
+					globalMetrics.RoomCreateErrors.Add(1)
+					recordError("timeout")
+					endSession("error")
+				}
+			})
 		} else {
 			_ = sendJSON("join_room", map[string]string{
 				"name":      playerName,
-				"room_code": roomCode,
+				"room_code": curRoomCode,
 				"avatar":    "bear",
+			})
+			time.AfterFunc(time.Duration(cfg.ConnectTimeoutMs)*time.Millisecond, func() {
+				sessionMu.Lock()
+				st := state
+				ended := sessionEnded
+				sessionMu.Unlock()
+				if st == "connecting" && !ended {
+					globalMetrics.RoomJoinErrors.Add(1)
+					recordError("timeout")
+					endSession("error")
+				}
 			})
 		}
 
-		reconnectForRedirect := false
-		var redirectTargetGW string
-
 		// Pre-defined frame handler to avoid initialization data race
 		processFrame := func(frameData []byte) {
+			sessionMu.Lock()
 			if sessionEnded {
+				sessionMu.Unlock()
 				return
 			}
+			sessionMu.Unlock()
 
 			var f struct {
 				Type    string          `json:"type"`
@@ -869,13 +913,16 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 				}
 				_ = json.Unmarshal(f.Payload, &p)
 				if p.GatewayID != "" && redirectAttempts < maxRedirects {
-					redirectTargetGW = p.GatewayID
+					sessionMu.Lock()
+					redirectGW = p.GatewayID
 					if p.RoomCode != "" {
 						roomCode = p.RoomCode
 					}
 					redirectAttempts++
-					globalMetrics.RedirectsFollowed.Add(1)
 					reconnectForRedirect = true
+					sessionMu.Unlock()
+
+					globalMetrics.RedirectsFollowed.Add(1)
 					_ = conn.Close()
 					return
 				}
@@ -883,7 +930,11 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 				return
 			}
 
-			switch state {
+			sessionMu.Lock()
+			currentState := state
+			sessionMu.Unlock()
+
+			switch currentState {
 			case "connecting":
 				switch f.Type {
 				case "room_created":
@@ -894,10 +945,23 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 						PlayerID string `json:"player_id"`
 					}
 					_ = json.Unmarshal(f.Payload, &p)
+					sessionMu.Lock()
 					roomCode = p.RoomCode
 					playerID = p.PlayerID
 					state = "lobby"
-					_ = publishRoomCode(cfg, roomIndex, roomCode)
+					sessionMu.Unlock()
+					_ = publishRoomCode(cfg, roomIndex, p.RoomCode)
+
+					time.AfterFunc(time.Duration(cfg.LobbyTimeoutMs)*time.Millisecond, func() {
+						sessionMu.Lock()
+						st := state
+						ended := sessionEnded
+						sessionMu.Unlock()
+						if (st == "lobby" || st == "waiting_start") && !ended {
+							recordError("timeout")
+							endSession("aborted")
+						}
+					})
 
 				case "room_joined":
 					globalMetrics.RoomJoinRTT.Add(float64(time.Since(createJoinStart).Milliseconds()))
@@ -907,14 +971,32 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 						PlayerID string `json:"player_id"`
 					}
 					_ = json.Unmarshal(f.Payload, &p)
+					sessionMu.Lock()
 					if p.RoomCode != "" {
 						roomCode = p.RoomCode
 					}
 					playerID = p.PlayerID
 					state = "lobby"
+					sessionMu.Unlock()
+
 					time.AfterFunc(time.Duration(1000+rand.Intn(1000))*time.Millisecond, func() {
-						if state == "lobby" && !sessionEnded {
+						sessionMu.Lock()
+						st := state
+						ended := sessionEnded
+						sessionMu.Unlock()
+						if st == "lobby" && !ended {
 							sendReady()
+						}
+					})
+
+					time.AfterFunc(time.Duration(cfg.LobbyTimeoutMs)*time.Millisecond, func() {
+						sessionMu.Lock()
+						st := state
+						ended := sessionEnded
+						sessionMu.Unlock()
+						if (st == "lobby" || st == "waiting_start") && !ended {
+							recordError("timeout")
+							endSession("aborted")
 						}
 					})
 
@@ -937,16 +1019,19 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 				}
 
 			case "lobby", "waiting_start":
-				if f.Type == "player_list" && state == "lobby" {
+				if f.Type == "player_list" && currentState == "lobby" {
 					var p struct {
 						Players []struct {
 							ID string `json:"id"`
 						} `json:"players"`
 					}
 					_ = json.Unmarshal(f.Payload, &p)
-					// P0: Host protocol equivalence: update_settings, toggle_ready, START_GRACE_MS
-					if isHost && !startArmed && len(p.Players) >= cfg.MinPlayersToStart {
+					sessionMu.Lock()
+					armed := startArmed
+					if isHost && !armed && len(p.Players) >= cfg.MinPlayersToStart {
 						startArmed = true
+						sessionMu.Unlock()
+
 						_ = sendJSON("update_settings", map[string]any{
 							"num_rounds":    cfg.NumRounds,
 							"turn_duration": cfg.TurnDuration,
@@ -955,22 +1040,35 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 						sendReady()
 
 						time.AfterFunc(time.Duration(cfg.StartGraceMs)*time.Millisecond, func() {
-							if state == "lobby" && !sessionEnded {
+							sessionMu.Lock()
+							st := state
+							ended := sessionEnded
+							if st == "lobby" && !ended {
+								state = "waiting_start"
+								sessionMu.Unlock()
 								_ = sendJSON("start_game", map[string]any{})
 								globalMetrics.GameStartRequests.Add(1)
-								state = "waiting_start"
+							} else {
+								sessionMu.Unlock()
 							}
 						})
+					} else {
+						sessionMu.Unlock()
 					}
 				} else if isGameStartSignal(f.Type) {
-					if f.Type == "game_started" && isHost && !gameStartedCounted {
+					sessionMu.Lock()
+					started := gameStartedCounted
+					if f.Type == "game_started" && isHost && !started {
 						gameStartedCounted = true
 						globalMetrics.GamesStarted.Add(1)
 					}
 					state = "playing"
-					// Fall through to handle playing events
+					sessionMu.Unlock()
 				} else if f.Type == "game_over" {
-					if isHost && !gameStartedCounted {
+					sessionMu.Lock()
+					started := gameStartedCounted
+					sessionMu.Unlock()
+					if isHost && !started {
 						recordError("game")
 						endSession("aborted")
 					} else {
@@ -995,7 +1093,10 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 						DrawerID string `json:"drawer_id"`
 					}
 					_ = json.Unmarshal(f.Payload, &p)
-					isDrawer.Store(p.DrawerID == playerID)
+					sessionMu.Lock()
+					myID := playerID
+					sessionMu.Unlock()
+					isDrawer.Store(p.DrawerID == myID)
 
 				case "word_choices":
 					isDrawer.Store(true)
@@ -1006,7 +1107,10 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 					if len(p.Choices) > 0 {
 						choice := p.Choices[rand.Intn(len(p.Choices))]
 						time.AfterFunc(time.Duration(1000+rand.Intn(2000))*time.Millisecond, func() {
-							if !sessionEnded {
+							sessionMu.Lock()
+							ended := sessionEnded
+							sessionMu.Unlock()
+							if !ended {
 								_ = sendJSON("select_word", map[string]string{"word": choice})
 							}
 						})
@@ -1022,9 +1126,13 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 						} `json:"theme"`
 					}
 					_ = json.Unmarshal(f.Payload, &p)
+					sessionMu.Lock()
+					myID := playerID
+					sessionMu.Unlock()
+
 					turnMu.Lock()
 					turnActive.Store(true)
-					isDrawer.Store(p.DrawerID == playerID)
+					isDrawer.Store(p.DrawerID == myID)
 					var tCtx context.Context
 					tCtx, turnCancel = context.WithCancel(sessionCtx)
 					turnMu.Unlock()
@@ -1100,11 +1208,15 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			// Connection closed
 			conn.Close()
 			globalMetrics.WSConnectionsClosed.Add(1)
-			if reconnectForRedirect {
-				redirectGW = redirectTargetGW
+			sessionMu.Lock()
+			reconn := reconnectForRedirect
+			reconnectForRedirect = false
+			ended := sessionEnded
+			sessionMu.Unlock()
+			if reconn {
 				continue // Reconnect with ?gw=<redirectGW>
 			}
-			if !sessionEnded {
+			if !ended {
 				endSession("closed")
 			}
 			return
@@ -1113,8 +1225,13 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			// Client patience expired
 			conn.Close()
 			globalMetrics.WSConnectionsClosed.Add(1)
-			recordError("timeout")
-			endSession("timeout")
+			sessionMu.Lock()
+			done := gameCompleted
+			sessionMu.Unlock()
+			if !done {
+				recordError("timeout")
+				endSession("timeout")
+			}
 			return
 
 		case <-sessionCtx.Done():
@@ -1123,11 +1240,17 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			return
 		}
 	}
-
-	globalMetrics.SessionDuration.Add(float64(time.Since(sessionStart).Milliseconds()))
 }
 
 // ─── Gateway Observability & Health Polling ─────────────────────────────────
+
+type gwHealthSnapshot struct {
+	activeClients int
+	streamsActive int
+	controlDrops  uint64
+	lossyDrops    uint64
+	sendDrops     uint64
+}
 
 func runHealthProbe(ctx context.Context, cfg *Config, autoStopCh chan struct{}) {
 	if len(cfg.HealthURLs) == 0 {
@@ -1138,6 +1261,7 @@ func runHealthProbe(ctx context.Context, cfg *Config, autoStopCh chan struct{}) 
 	ticker := time.NewTicker(time.Duration(cfg.HealthPollSeconds) * time.Second)
 	defer ticker.Stop()
 
+	snapshots := make(map[string]gwHealthSnapshot)
 	consecutiveZeroPolls := 0
 
 	for {
@@ -1145,12 +1269,10 @@ func runHealthProbe(ctx context.Context, cfg *Config, autoStopCh chan struct{}) 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			allZero := true
 			for _, u := range cfg.HealthURLs {
 				resp, err := httpClient.Get(u)
 				if err != nil {
 					globalMetrics.GatewayHealthFailures.Add(1)
-					allZero = false
 					continue
 				}
 
@@ -1172,22 +1294,46 @@ func runHealthProbe(ctx context.Context, cfg *Config, autoStopCh chan struct{}) 
 				resp.Body.Close()
 
 				if readErr == nil && json.Unmarshal(body, &health) == nil {
-					globalMetrics.GatewayControlDrops.Add(uint64(health.FanoutDropped.Control))
-					globalMetrics.GatewayLossyDrops.Add(uint64(health.FanoutDropped.Lossy))
-					globalMetrics.GatewaySendDrops.Add(uint64(health.SendDropped.Stroke + health.SendDropped.Fill + health.SendDropped.Guess))
-					globalMetrics.GatewayActiveClients.Store(uint64(health.ActiveClients))
-					globalMetrics.GatewayStreamsActive.Store(uint64(health.GRPCStreamsActive))
-
-					if health.ActiveClients > 0 {
-						allZero = false
+					snapshots[u] = gwHealthSnapshot{
+						activeClients: health.ActiveClients,
+						streamsActive: health.GRPCStreamsActive,
+						controlDrops:  uint64(health.FanoutDropped.Control),
+						lossyDrops:    uint64(health.FanoutDropped.Lossy),
+						sendDrops:     uint64(health.SendDropped.Stroke + health.SendDropped.Fill + health.SendDropped.Guess),
 					}
 				} else {
 					globalMetrics.GatewayHealthFailures.Add(1)
-					allZero = false
 				}
 			}
 
+			// Aggregate across latest snapshots from all probed gateways
+			var sumActiveClients uint64
+			var sumStreamsActive uint64
+			var maxStreamsPerGW uint64
+			var sumControlDrops uint64
+			var sumLossyDrops uint64
+			var sumSendDrops uint64
+
+			for _, s := range snapshots {
+				sumActiveClients += uint64(s.activeClients)
+				sumStreamsActive += uint64(s.streamsActive)
+				if uint64(s.streamsActive) > maxStreamsPerGW {
+					maxStreamsPerGW = uint64(s.streamsActive)
+				}
+				sumControlDrops += s.controlDrops
+				sumLossyDrops += s.lossyDrops
+				sumSendDrops += s.sendDrops
+			}
+
+			globalMetrics.GatewayActiveClients.Store(sumActiveClients)
+			globalMetrics.GatewayStreamsActive.Store(sumStreamsActive)
+			globalMetrics.GatewayMaxStreamsPerGW.Store(maxStreamsPerGW)
+			globalMetrics.GatewayControlDrops.Store(sumControlDrops)
+			globalMetrics.GatewayLossyDrops.Store(sumLossyDrops)
+			globalMetrics.GatewaySendDrops.Store(sumSendDrops)
+
 			elapsed := time.Since(startTime).Seconds()
+			allZero := len(snapshots) > 0 && sumActiveClients == 0
 			if elapsed >= float64(cfg.AutoStopMinElapsedS) && allZero {
 				consecutiveZeroPolls++
 				if consecutiveZeroPolls >= cfg.AutoStopConsecutiveZeros {
@@ -1280,6 +1426,20 @@ func main() {
 
 // ─── Reporting & Acceptance ─────────────────────────────────────────────────
 
+func passFailStr(b bool) string {
+	if b {
+		return "PASS"
+	}
+	return "FAIL"
+}
+
+func formatLatStr(t TrendStats) string {
+	if t.Count == 0 {
+		return "no data"
+	}
+	return fmt.Sprintf("%.1fms", t.P95)
+}
+
 func printSummaryReport(cfg *Config, duration time.Duration) {
 	fmt.Println("\nLoad test complete.")
 	fmt.Println("==========================================================")
@@ -1306,24 +1466,29 @@ func printSummaryReport(cfg *Config, duration time.Duration) {
 		connSuccessRate = float64(playersConnected) / float64(playersAttempted) * 100.0
 	}
 
-	// True Host-Tracked Game Completion Rate
-	totalRooms := uint64(math.Ceil(float64(cfg.VUs) / float64(cfg.PlayersPerRoom)))
+	// True Host-Tracked Game Completion Rate (Evaluated against all planned rooms)
+	totalPlannedRooms := uint64(math.Ceil(float64(cfg.VUs) / float64(cfg.PlayersPerRoom)))
 	gamesDone := globalMetrics.GamesCompleted.Load()
 	gamesAborted := globalMetrics.GamesAborted.Load()
-	trackedRooms := gamesDone + gamesAborted
+	unobservedRooms := uint64(0)
+	if totalPlannedRooms > (gamesDone + gamesAborted) {
+		unobservedRooms = totalPlannedRooms - (gamesDone + gamesAborted)
+	}
 	gameCompletionRate := 0.0
-	if trackedRooms > 0 {
-		gameCompletionRate = float64(gamesDone) / float64(trackedRooms) * 100.0
-	} else if totalRooms > 0 {
-		gameCompletionRate = float64(gamesDone) / float64(totalRooms) * 100.0
+	if totalPlannedRooms > 0 {
+		gameCompletionRate = float64(gamesDone) / float64(totalPlannedRooms) * 100.0
 	}
 
+	totalPlannedPlayers := uint64(cfg.VUs)
 	sessDone := globalMetrics.SessionsCompleted.Load()
 	sessAborted := globalMetrics.SessionsAborted.Load()
-	sessTotal := sessDone + sessAborted
+	unobservedSess := uint64(0)
+	if totalPlannedPlayers > (sessDone + sessAborted) {
+		unobservedSess = totalPlannedPlayers - (sessDone + sessAborted)
+	}
 	sessRate := 100.0
-	if sessTotal > 0 {
-		sessRate = float64(sessDone) / float64(sessTotal) * 100.0
+	if totalPlannedPlayers > 0 {
+		sessRate = float64(sessDone) / float64(totalPlannedPlayers) * 100.0
 	}
 
 	totalErrors := globalMetrics.ErrorsConnect.Load() + globalMetrics.ErrorsRoom.Load() + globalMetrics.ErrorsProtocol.Load() + globalMetrics.ErrorsTimeout.Load()
@@ -1343,13 +1508,20 @@ func printSummaryReport(cfg *Config, duration time.Duration) {
 		fmt.Printf("     errors_protocol..................: %d   %.6f/s\n", errProto, float64(errProto)/durSec)
 	}
 
-	fmt.Printf("   ✓ game_completion_rate.............: %.2f%%   ✓ %d   ✗ %d\n", gameCompletionRate, gamesDone, gamesAborted)
+	fmt.Printf("   ✓ game_completion_rate.............: %.2f%%   ✓ %d   ✗ %d", gameCompletionRate, gamesDone, gamesAborted+unobservedRooms)
+	if unobservedRooms > 0 {
+		fmt.Printf(" (unobserved: %d / planned: %d)\n", unobservedRooms, totalPlannedRooms)
+	} else {
+		fmt.Printf("\n")
+	}
 	fmt.Printf("     game_start_requests..............: %d   %.6f/s\n", globalMetrics.GameStartRequests.Load(), float64(globalMetrics.GameStartRequests.Load())/durSec)
 	fmt.Printf("     games_started....................: %d   %.6f/s\n", globalMetrics.GamesStarted.Load(), float64(globalMetrics.GamesStarted.Load())/durSec)
 	fmt.Printf("     games_completed..................: %d   %.6f/s\n", gamesDone, float64(gamesDone)/durSec)
 	fmt.Printf("     games_aborted....................: %d   %.6f/s\n", gamesAborted, float64(gamesAborted)/durSec)
 
 	// Gateway Observability metrics
+	fmt.Printf("     gateway_active_clients...........: %d\n", globalMetrics.GatewayActiveClients.Load())
+	fmt.Printf("     gateway_grpc_streams_total.......: %d\n", globalMetrics.GatewayStreamsActive.Load())
 	fmt.Printf("     gateway_fanout_control_drops.....: %d\n", globalMetrics.GatewayControlDrops.Load())
 	fmt.Printf("     gateway_fanout_lossy_drops.......: %d\n", globalMetrics.GatewayLossyDrops.Load())
 	fmt.Printf("     gateway_send_drops...............: %d\n", globalMetrics.GatewaySendDrops.Load())
@@ -1358,10 +1530,17 @@ func printSummaryReport(cfg *Config, duration time.Duration) {
 	printTrend("message_latency", latSnap, "ms")
 	fmt.Printf("     messages_received................: %d   %.1f/s\n", msgsRecv, float64(msgsRecv)/durSec)
 	fmt.Printf("     messages_sent....................: %d   %.1f/s\n", msgsSent, float64(msgsSent)/durSec)
-	fmt.Printf("   ✓ player_session_completion_rate...: %.2f%%   ✓ %d   ✗ %d\n", sessRate, sessDone, sessAborted)
+	fmt.Printf("   ✓ player_session_completion_rate...: %.2f%%   ✓ %d   ✗ %d", sessRate, sessDone, sessAborted+unobservedSess)
+	if unobservedSess > 0 {
+		fmt.Printf(" (unobserved: %d / planned: %d)\n", unobservedSess, totalPlannedPlayers)
+	} else {
+		fmt.Printf("\n")
+	}
 
-	printTrend("room_create_rtt", globalMetrics.RoomCreateRTT.Snapshot(), "ms")
-	printTrend("room_join_rtt", globalMetrics.RoomJoinRTT.Snapshot(), "ms")
+	createSnap := globalMetrics.RoomCreateRTT.Snapshot()
+	joinSnap := globalMetrics.RoomJoinRTT.Snapshot()
+	printTrend("room_create_rtt", createSnap, "ms")
+	printTrend("room_join_rtt", joinSnap, "ms")
 	fmt.Printf("     rooms_created....................: %d   %.6f/s\n", globalMetrics.RoomsCreated.Load(), float64(globalMetrics.RoomsCreated.Load())/durSec)
 	fmt.Printf("     rooms_joined.....................: %d   %.6f/s\n", globalMetrics.RoomsJoined.Load(), float64(globalMetrics.RoomsJoined.Load())/durSec)
 
@@ -1371,45 +1550,70 @@ func printSummaryReport(cfg *Config, duration time.Duration) {
 	fmt.Printf("     ws_connections_opened............: %d   %.1f/s\n", opened, float64(opened)/durSec)
 	printTrend("ws_open_rtt", globalMetrics.WSOpenRTT.Snapshot(), "ms")
 
+	fmt.Println("\n════ THRESHOLDS (guardrails vs strict mode) ════")
+	var targetConn, targetGame, targetSess float64
+	if cfg.Strict {
+		targetConn = 99.0
+		targetGame = 80.0
+		targetSess = 80.0
+		fmt.Println("  [MODE: STRICT=1 (acceptance requirements enforced as hard thresholds)]")
+	} else {
+		targetConn = 95.0
+		targetGame = 70.0
+		targetSess = 70.0
+		fmt.Println("  [MODE: STRICT=0 (looser engineering guardrails; run with STRICT=1 for hard requirements)]")
+	}
+
+	threshConn := connSuccessRate >= targetConn
+	threshGame := gameCompletionRate >= targetGame
+	threshSess := sessRate >= targetSess
+	threshCreate := createSnap.Count == 0 || createSnap.P95 < 5000.0
+	threshJoin := joinSnap.Count == 0 || joinSnap.P95 < 5000.0
+	threshLat := latSnap.Count > 0 && latSnap.P95 <= 50.0
+
+	fmt.Printf("  [%s] ws_connection_success: %.2f%% (threshold >=%.0f%%)\n", passFailStr(threshConn), connSuccessRate, targetConn)
+	fmt.Printf("  [%s] game_completion_rate: %.2f%% (threshold >=%.0f%%)\n", passFailStr(threshGame), gameCompletionRate, targetGame)
+	fmt.Printf("  [%s] player_session_completion_rate: %.2f%% (threshold >=%.0f%%)\n", passFailStr(threshSess), sessRate, targetSess)
+	fmt.Printf("  [%s] room_create_rtt p95: %.1fms (threshold <5000ms)\n", passFailStr(threshCreate), createSnap.P95)
+	fmt.Printf("  [%s] room_join_rtt p95: %.1fms (threshold <5000ms)\n", passFailStr(threshJoin), joinSnap.P95)
+	fmt.Printf("  [%s] message_latency p95: %s (threshold <=50ms)\n", passFailStr(threshLat), formatLatStr(latSnap))
+
 	fmt.Println("\n════ ACCEPTANCE (requirements, not guardrails) ════")
+	req91Pass := connSuccessRate >= 99.0
+	req92Pass := latSnap.Count > 0 && latSnap.P95 <= 50.0
+	req93Pass := gameCompletionRate >= 80.0
 
-	targetConn := 99.0
-	targetLat := 50.0
-	targetGame := 80.0
+	fmt.Printf("  [%s] 9.1 connection success: %.2f%% (target >=99%%)\n", passFailStr(req91Pass), connSuccessRate)
+	fmt.Printf("  [%s] 9.2 message latency p95: %s (target <=50ms)\n", passFailStr(req92Pass), formatLatStr(latSnap))
+	fmt.Printf("  [%s] 9.3 game completion: %.2f%% (target >=80%%)\n", passFailStr(req93Pass), gameCompletionRate)
 
-	passConn := connSuccessRate >= targetConn
-	statusConn := "[FAIL]"
-	if passConn {
-		statusConn = "[PASS]"
+	streamsTotal := globalMetrics.GatewayStreamsActive.Load()
+	streamsMaxGW := globalMetrics.GatewayMaxStreamsPerGW.Load()
+	req94Pass := true
+	req95Pass := true
+	if len(cfg.HealthURLs) > 0 && streamsTotal > 0 {
+		req94Pass = streamsTotal < 1500
+		req95Pass = streamsMaxGW < 200
+		fmt.Printf("  [%s] 9.4 total gRPC streams: %d (target <1500)\n", passFailStr(req94Pass), streamsTotal)
+		fmt.Printf("  [%s] 9.5 per-worker/gateway streams: %d (target <200)\n", passFailStr(req95Pass), streamsMaxGW)
 	}
-	fmt.Printf("  %s 9.1 connection success: %.2f%% (target >=%.0f%%)\n", statusConn, connSuccessRate, targetConn)
 
-	// P0 Fix: Zero samples MUST fail acceptance
-	passLat := latSnap.Count > 0 && latSnap.P95 <= targetLat
-	statusLat := "[FAIL]"
-	latStr := "no data"
-	if latSnap.Count > 0 {
-		latStr = fmt.Sprintf("%.1fms", latSnap.P95)
-	}
-	if passLat {
-		statusLat = "[PASS]"
-	}
-	fmt.Printf("  %s 9.2 message latency p95: %s (target <=%.0fms)\n", statusLat, latStr, targetLat)
+	allRequirementsPassed := req91Pass && req92Pass && req93Pass && req94Pass && req95Pass
+	allThresholdsPassed := threshConn && threshGame && threshSess && threshCreate && threshJoin && threshLat
 
-	passGame := gameCompletionRate >= targetGame
-	statusGame := "[FAIL]"
-	if passGame {
-		statusGame = "[PASS]"
+	overallPassed := allRequirementsPassed
+	if cfg.Strict {
+		overallPassed = overallPassed && allThresholdsPassed
 	}
-	fmt.Printf("  %s 9.3 game completion: %.2f%% (target >=%.0f%%)\n", statusGame, gameCompletionRate, targetGame)
 
-	allPassed := passConn && passLat && passGame
-	if allPassed {
+	if overallPassed {
 		fmt.Println("  ── OVERALL ACCEPTANCE: PASS ──")
 	} else {
 		fmt.Println("  ── OVERALL ACCEPTANCE: FAIL ──")
 	}
-	fmt.Println("  (thresholds above are looser guardrails; run with STRICT=1 to enforce these as hard thresholds)")
+	if !cfg.Strict {
+		fmt.Println("  (thresholds above are looser guardrails; run with STRICT=1 to enforce these as hard thresholds)")
+	}
 	fmt.Println("==========================================================")
 }
 
