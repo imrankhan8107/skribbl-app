@@ -404,11 +404,15 @@ resource "aws_lb" "nlb" {
 
 resource "aws_lb_target_group" "nginx_80" {
   count       = var.single_instance_mode ? 0 : 1
-  name        = "${var.app_name}-tg-80"
+  name_prefix = "skr80-"
   port        = 80
   protocol    = "TCP"
   vpc_id      = aws_vpc.main.id
   target_type = "instance"
+
+  lifecycle {
+    create_before_destroy = true
+  }
 
   health_check {
     protocol            = "HTTP"
