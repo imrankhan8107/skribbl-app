@@ -124,10 +124,8 @@ chmod +x /home/ubuntu/run-test.sh
 chown ubuntu:ubuntu /home/ubuntu/run-test.sh
 
 # ------------------------------------------------------------------------------
-# Pre-compile the Go Load Tester and generate /home/ubuntu/run-test-2.sh
+# Generate /home/ubuntu/run-test-2.sh (Go Load Tester)
 # ------------------------------------------------------------------------------
-(cd /home/ubuntu/skribbl-app/loadtest && go build -o /home/ubuntu/skribbl-app/loadtest-bin .)
-
 cat << 'EOF' > /home/ubuntu/run-test-2.sh
 #!/bin/bash
 VUS=$${1:-100}
@@ -177,5 +175,8 @@ EOF
 
 chmod +x /home/ubuntu/run-test-2.sh
 chown ubuntu:ubuntu /home/ubuntu/run-test-2.sh
+
+# Pre-compile the Go load tester binary (safe fallback if already built)
+(cd /home/ubuntu/skribbl-app/loadtest && go build -o /home/ubuntu/skribbl-app/loadtest-bin .) || true
 
 echo "=== Load Generator initialization finished at $(date) ==="

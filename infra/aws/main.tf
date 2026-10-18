@@ -464,7 +464,8 @@ resource "aws_instance" "load_generator" {
   instance_type          = var.load_generator_instance_type
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.cluster.id]
-  key_name               = aws_key_pair.deployer.key_name
+  key_name                    = aws_key_pair.deployer.key_name
+  user_data_replace_on_change = true
 
   user_data = templatefile("${path.module}/templates/cloud-init-k6.tftpl", {
     git_repo_url   = var.git_repo_url
