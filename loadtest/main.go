@@ -77,18 +77,31 @@ func loadConfig() *Config {
 	cfg.AutoStopConsecutiveZeros = getEnvInt("AUTO_STOP_ZEROS", 2)
 	cfg.AutoStopMinElapsedS = getEnvInt("AUTO_STOP_MIN_S", 300)
 
-	defaultHold := cfg.NumRounds * playersEnv * (cfg.TurnDuration + cfg.PerTurnSlack) + cfg.HoldFixedBuffer
-	holdEnv := getEnvInt("HOLD_SECONDS", defaultHold)
+	holdExplicit := false
+	holdEnv := 0
+	if hStr := os.Getenv("HOLD_SECONDS"); hStr != "" {
+		if hVal, err := strconv.Atoi(hStr); err == nil {
+			holdEnv = hVal
+			holdExplicit = true
+		}
+	}
 
 	flagVUs := flag.Int("vus", vusEnv, "Total virtual users")
 	flagPlayers := flag.Int("players", playersEnv, "Players per room")
 	flagHz := flag.Int("hz", strokeHzEnv, "Stroke frequency (Hz)")
 	flagRamp := flag.Int("ramp", rampEnv, "Arrival ramp duration (seconds)")
-	flagHold := flag.Int("hold", holdEnv, "Hold/game duration (seconds)")
+	flagHold := flag.Int("hold", 0, "Hold/game duration (seconds)")
 	flagOffset := flag.Int("offset", offsetEnv, "VU index offset for multi-runner tests")
 	flagStrict := flag.Bool("strict", os.Getenv("STRICT") == "1", "Enforce strict acceptance thresholds")
 
 	flag.Parse()
+
+	holdArgPassed := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "hold" {
+			holdArgPassed = true
+		}
+	})
 
 	args := flag.Args()
 	if len(args) > 0 {
@@ -114,6 +127,7 @@ func loadConfig() *Config {
 	if len(args) > 4 {
 		if v, err := strconv.Atoi(args[4]); err == nil {
 			*flagHold = v
+			holdArgPassed = true
 		}
 	}
 	if len(args) > 5 {
@@ -126,9 +140,28 @@ func loadConfig() *Config {
 	cfg.PlayersPerRoom = *flagPlayers
 	cfg.StrokeHz = *flagHz
 	cfg.RampSeconds = *flagRamp
-	cfg.HoldSeconds = *flagHold
 	cfg.VuOffset = *flagOffset
 	cfg.Strict = *flagStrict
+
+	// Validation guards
+	if cfg.PlayersPerRoom <= 0 {
+		cfg.PlayersPerRoom = 2
+	}
+	if cfg.VUs <= 0 {
+		cfg.VUs = 1
+	}
+	if cfg.StrokeHz < 0 {
+		cfg.StrokeHz = 0
+	}
+
+	if holdArgPassed && *flagHold > 0 {
+		cfg.HoldSeconds = *flagHold
+	} else if holdExplicit && holdEnv > 0 {
+		cfg.HoldSeconds = holdEnv
+	} else {
+		// Calculate default hold using RESOLVED players per room
+		cfg.HoldSeconds = cfg.NumRounds*cfg.PlayersPerRoom*(cfg.TurnDuration+cfg.PerTurnSlack) + cfg.HoldFixedBuffer
+	}
 
 	defaultLobbyTimeout := 240000
 	if (cfg.RampSeconds+60)*1000 > defaultLobbyTimeout {
@@ -369,20 +402,24 @@ type Metrics struct {
 	ErrorsTimeout  AtomicUint64
 
 	// Gateway Observability
-	GatewayHealthFailures AtomicUint64
-	GatewayControlDrops    AtomicUint64
-	GatewayLossyDrops      AtomicUint64
-	GatewaySendDrops       AtomicUint64
-	GatewayActiveClients   AtomicUint64
-	GatewayStreamsActive   AtomicUint64
-	GatewayMaxStreamsPerGW AtomicUint64
+	GatewayHealthFailures   AtomicUint64
+	GatewayHealthPollsDone  AtomicUint64
+	GatewayControlDrops     AtomicUint64
+	GatewayLossyDrops       AtomicUint64
+	GatewaySendDrops        AtomicUint64
+	GatewayActiveClients    AtomicUint64
+	GatewayStreamsActive    AtomicUint64
+	GatewayMaxStreamsPerGW  AtomicUint64
+	GatewayPeakStreamsTotal AtomicUint64
+	GatewayPeakStreamsPerGW AtomicUint64
 
 	// Trend Latencies
-	WSOpenRTT       TrendMetric
-	MessageLatency  TrendMetric
-	RoomCreateRTT   TrendMetric
-	RoomJoinRTT     TrendMetric
-	SessionDuration TrendMetric
+	WSOpenRTT            TrendMetric
+	MessageLatency       TrendMetric
+	RoomCreateRTT        TrendMetric
+	RoomJoinRTT          TrendMetric
+	WSConnectionDuration TrendMetric
+	SessionDuration      TrendMetric
 }
 
 var globalMetrics = &Metrics{}
@@ -405,7 +442,7 @@ func recordError(category string) {
 // ─── Network Helpers ────────────────────────────────────────────────────────
 
 var httpClient = &http.Client{
-	Timeout: 5 * time.Second,
+	Timeout: 10 * time.Second,
 	Transport: &http.Transport{
 		MaxIdleConns:        20000,
 		MaxIdleConnsPerHost: 5000,
@@ -426,18 +463,28 @@ func getCoordURL(cfg *Config, roomIndex int) string {
 func publishRoomCode(cfg *Config, roomIndex int, roomCode string) error {
 	u := fmt.Sprintf("%s/%d", getCoordURL(cfg, roomIndex), roomIndex)
 	b, _ := json.Marshal(map[string]string{"room_code": roomCode})
-	req, err := http.NewRequest("POST", u, bytes.NewReader(b))
-	if err != nil {
-		return err
+
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		req, err := http.NewRequest("POST", u, bytes.NewReader(b))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return nil
+			}
+			lastErr = fmt.Errorf("status: %d", resp.StatusCode)
+		} else {
+			lastErr = err
+		}
+		time.Sleep(time.Duration(100*(1<<attempt)) * time.Millisecond)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-	return nil
+	return lastErr
 }
 
 func pollRoomCode(cfg *Config, roomIndex int, timeout time.Duration) string {
@@ -514,30 +561,67 @@ func encodeBinaryStroke(points []Point, r, g, b, size uint8) []byte {
 // ─── Word Dictionary ────────────────────────────────────────────────────────
 
 var wordPacks = map[string][]string{
-	"general": {
-		"cat", "sun", "cup", "hat", "tree", "fish", "star", "bird", "book", "cake",
-		"frog", "door", "kite", "ship", "bell", "sock", "bear", "duck", "leaf", "ring",
-		"apple", "bread", "chair", "clock", "cloud", "glass", "grape", "heart", "house", "lemon",
-		"mouse", "plane", "plant", "shirt", "spoon", "table", "train", "truck", "watch", "whale",
-		"banana", "bridge", "camera", "candle", "castle", "cheese", "cookie", "flower", "guitar", "hammer",
-		"island", "monkey", "orange", "pencil", "pocket", "rabbit", "rocket", "spider", "window", "wizard",
-	},
 	"animals": {
-		"ant", "bat", "bee", "cow", "dog", "fox", "owl", "pig", "rat", "deer",
-		"bear", "duck", "frog", "goat", "hare", "lion", "seal", "swan", "wolf", "crab",
-		"camel", "eagle", "horse", "koala", "otter", "panda", "shark", "sheep", "snake", "tiger",
-		"whale", "zebra", "skunk", "sloth", "bison", "badger", "beaver", "baboon", "donkey", "walrus",
-		"falcon", "lizard", "monkey", "parrot", "pigeon", "rabbit", "spider", "turtle", "dolphin", "giraffe",
-		"gorilla", "hamster", "leopard", "lobster", "octopus", "ostrich", "panther", "pelican", "penguin", "raccoon",
+		"dog", "elephant", "whale", "zebra", "eagle", "kangaroo", "octopus", "penguin", "giraffe", "jellyfish",
+		"owl", "dinosaur", "wolf", "butterfly", "lion", "parrot", "rabbit", "snake", "tiger", "dolphin",
+		"frog", "horse", "koala", "spider", "turtle", "gorilla", "insect", "lobster", "ostrich", "peacock",
+		"caterpillar", "flamingo", "grasshopper", "goldfish", "iguana", "dragonfly", "starfish", "bear", "camel", "cat",
+		"cheetah", "chameleon", "chimpanzee", "crab", "crocodile", "deer", "duck", "fox", "hedgehog", "hippo",
+		"mouse", "panda", "rhino", "seagull", "seal", "shark", "sheep", "sloth", "snail", "squirrel",
+		"swan", "walrus", "badger", "hamster", "raccoon", "otter", "beaver", "skunk",
 	},
 	"food": {
-		"pie", "tea", "egg", "jam", "nut", "fig", "ham", "ice", "pea", "bun",
-		"beef", "cake", "corn", "fish", "lime", "meat", "milk", "pear", "plum", "rice",
-		"soup", "taco", "toast", "chip", "pork", "salt", "bean", "kiwi", "beet", "curry",
-		"apple", "bread", "candy", "grape", "lemon", "mango", "onion", "peach", "pizza", "salad",
-		"steak", "sugar", "sushi", "melon", "bacon", "toast", "flour", "guava", "pasta", "berry",
-		"banana", "burger", "butter", "carrot", "cereal", "cheese", "coffee", "cookie", "garlic", "muffin",
-		"orange", "potato", "tomato", "waffle", "yogurt", "cherry", "peanut", "pepper", "radish", "walnut",
+		"apple", "banana", "lemon", "mushroom", "orange", "grapes", "onion", "bread", "cherry", "olive",
+		"pumpkin", "tomato", "waffle", "pretzel", "donut", "jellybean", "lollipop", "sandwich", "hamburger", "icecream",
+		"avocado", "bacon", "bagel", "cake", "cheese", "chocolate", "cookie", "corn", "croissant", "cupcake",
+		"egg", "hotdog", "noodles", "pancake", "peach", "peanut", "pear", "pie", "pineapple", "pizza",
+		"popcorn", "potato", "salad", "sausage", "soup", "spaghetti", "steak", "strawberry", "sushi", "taco",
+		"toast", "watermelon", "muffin", "honey", "butter", "carrot", "mango", "coconut", "dumpling", "broccoli",
+	},
+	"objects": {
+		"jacket", "kite", "lamp", "notebook", "piano", "umbrella", "violin", "xylophone", "diamond", "globe",
+		"hammer", "quilt", "window", "anchor", "balloon", "candle", "envelope", "feather", "key", "ladder",
+		"magnet", "necklace", "scissors", "telescope", "vase", "camera", "helmet", "compass", "jewel", "knot",
+		"ring", "skull", "arrow", "clock", "drum", "flag", "heart", "ink", "jar", "mirror",
+		"wheel", "needle", "suitcase", "zipper", "harp", "jigsaw", "kettle", "napkin", "trophy", "battery",
+		"dominoes", "jukebox", "lantern", "microscope", "newspaper", "origami", "ukulele", "blanket", "crayon", "keyboard",
+		"mailbox", "nutcracker", "paintbrush", "toothbrush", "wrench", "backpack", "chandelier", "earring", "glasses", "iron",
+		"horseshoe", "uniform", "lanyard", "book", "bottle", "bucket", "chair", "couch", "cup", "dice",
+		"fork", "headphones", "knife", "lock", "mug", "pencil", "pillow", "plate", "radio", "rope",
+		"soap", "spoon", "table", "towel", "watch",
+	},
+	"nature": {
+		"flower", "mountain", "ocean", "rainbow", "sun", "tree", "forest", "moon", "nest", "snowflake",
+		"tornado", "volcano", "waterfall", "iceberg", "leaf", "rose", "cactus", "acorn", "icicle", "quicksand",
+		"earth", "garden", "blizzard", "cave", "cliff", "cloud", "comet", "desert", "eclipse", "fire",
+		"galaxy", "island", "jungle", "lightning", "meteor", "puddle", "rain", "river", "rock", "smoke",
+		"star", "storm", "sunrise", "sunset", "thunder", "valley", "wave", "wind",
+	},
+	"places": {
+		"house", "bridge", "castle", "igloo", "lighthouse", "village", "throne", "beach", "fountain", "maze",
+		"windmill", "elevator", "escalator", "fireplace", "airport", "aquarium", "bakery", "bank", "barn", "cabin",
+		"church", "circus", "cottage", "factory", "farm", "fort", "gym", "hospital", "hotel", "library",
+		"mall", "market", "museum", "palace", "park", "playground", "prison", "pyramid", "school", "skyscraper",
+		"stadium", "station", "supermarket", "temple", "theater", "tower", "zoo",
+	},
+	"vehicles": {
+		"car", "yacht", "airplane", "rocket", "helicopter", "parachute", "surfboard", "engine", "kayak", "hammock",
+		"trampoline", "football", "volleyball", "ambulance", "bicycle", "blimp", "boat", "bulldozer", "bus", "canoe",
+		"carriage", "ferry", "firetruck", "forklift", "hoverboard", "jetski", "limousine", "motorcycle", "raft", "scooter",
+		"skateboard", "sled", "snowboard", "spaceship", "submarine", "tank", "taxi", "tractor", "train", "truck", "van",
+	},
+	"fantasy": {
+		"queen", "unicorn", "dragon", "robot", "wizard", "firework", "ghost", "treasure", "vampire", "king",
+		"angel", "mermaid", "witch", "emerald", "radar", "satellite", "alien", "cauldron", "crystal", "cyborg",
+		"demon", "dungeon", "elf", "fairy", "flying carpet", "genie", "giant", "goblin", "laser", "magic wand",
+		"monster", "mummy", "pegasus", "phoenix", "portal", "potion", "shield", "spellbook", "sword", "time machine", "zombie",
+	},
+	"characters": {
+		"ninja", "pirate", "nurse", "judge", "astronaut", "dentist", "scarecrow", "actor", "artist", "athlete",
+		"baby", "baker", "barber", "builder", "captain", "carpenter", "chef", "clown", "detective", "diver",
+		"doctor", "farmer", "firefighter", "guard", "hunter", "knight", "lifeguard", "magician", "mailman", "mechanic",
+		"musician", "painter", "pilot", "police", "prince", "princess", "sailor", "scientist", "singer", "soldier",
+		"spy", "superhero",
 	},
 }
 
@@ -573,7 +657,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 	totalRooms := int(math.Ceil(float64(cfg.VUs) / float64(cfg.PlayersPerRoom)))
 	if cfg.RampSeconds > 0 && totalRooms > 0 {
 		localRoomIndex := (localVUID - 1) / cfg.PlayersPerRoom
-		rampOffset := time.Duration(float64(localRoomIndex)/float64(totalRooms)*float64(cfg.RampSeconds)) * time.Second
+		rampOffset := time.Duration(float64(localRoomIndex) / float64(totalRooms) * float64(cfg.RampSeconds) * float64(time.Second))
 		select {
 		case <-ctx.Done():
 			return
@@ -598,6 +682,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 	}
 
 	sessionStart := time.Now()
+	connectStart := sessionStart
 	defer func() {
 		globalMetrics.SessionDuration.Add(float64(time.Since(sessionStart).Milliseconds()))
 	}()
@@ -707,7 +792,6 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 		}
 
 		wsURL := buildWSURL(cfg, vuID, isHost, curRoomCode, curRedirectGW)
-		openStart := time.Now()
 		conn, _, err := dialer.Dial(wsURL, nil)
 		if err != nil {
 			if !initialConnectSucceeded {
@@ -717,8 +801,11 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			return
 		}
 
+		socketOpenedAt := time.Now()
 		globalMetrics.WSConnectionsOpened.Add(1)
-		globalMetrics.WSOpenRTT.Add(float64(time.Since(openStart).Milliseconds()))
+		if !initialConnectSucceeded {
+			globalMetrics.WSOpenRTT.Add(float64(time.Since(connectStart).Milliseconds()))
+		}
 		recordConnectSuccess()
 
 		var writeMu sync.Mutex
@@ -762,7 +849,10 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			if cfg.StrokeHz <= 0 {
 				return
 			}
-			interval := time.Duration(1000/cfg.StrokeHz) * time.Millisecond
+			interval := time.Duration(float64(time.Second) / float64(cfg.StrokeHz))
+			if interval < 500*time.Microsecond {
+				interval = 500 * time.Microsecond
+			}
 			ticker := time.NewTicker(interval)
 			go func() {
 				defer ticker.Stop()
@@ -810,7 +900,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 				}
 			}
 
-			ticker := time.NewTicker(time.Duration(1500+rand.Intn(1500)) * time.Millisecond)
+			ticker := time.NewTicker(time.Duration(2000+rand.Intn(2000)) * time.Millisecond)
 			go func() {
 				defer ticker.Stop()
 				idx := rand.Intn(len(candidatePool))
@@ -832,15 +922,13 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			}()
 		}
 
-		createJoinStart := time.Now()
 		sessionMu.Lock()
 		curRoomCode = roomCode
 		sessionMu.Unlock()
 
 		if isHost && curRoomCode == "" {
 			_ = sendJSON("create_room", map[string]string{
-				"name":   playerName,
-				"avatar": "bear",
+				"name": playerName,
 			})
 			time.AfterFunc(time.Duration(cfg.ConnectTimeoutMs)*time.Millisecond, func() {
 				sessionMu.Lock()
@@ -857,7 +945,6 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			_ = sendJSON("join_room", map[string]string{
 				"name":      playerName,
 				"room_code": curRoomCode,
-				"avatar":    "bear",
 			})
 			time.AfterFunc(time.Duration(cfg.ConnectTimeoutMs)*time.Millisecond, func() {
 				sessionMu.Lock()
@@ -870,6 +957,81 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 					endSession("error")
 				}
 			})
+		}
+
+		// Playing frame handler
+		handlePlaying := func(fType string, fPayload json.RawMessage) {
+			switch fType {
+			case "drawer_selecting":
+				stopTurnLoops()
+				var p struct {
+					DrawerID string `json:"drawer_id"`
+				}
+				_ = json.Unmarshal(fPayload, &p)
+				sessionMu.Lock()
+				myID := playerID
+				sessionMu.Unlock()
+				isDrawer.Store(p.DrawerID == myID)
+
+			case "word_choices":
+				isDrawer.Store(true)
+				var p struct {
+					Choices []string `json:"choices"`
+				}
+				_ = json.Unmarshal(fPayload, &p)
+				if len(p.Choices) > 0 {
+					choice := p.Choices[rand.Intn(len(p.Choices))]
+					time.AfterFunc(time.Duration(1000+rand.Intn(2000))*time.Millisecond, func() {
+						sessionMu.Lock()
+						ended := sessionEnded
+						sessionMu.Unlock()
+						if !ended {
+							_ = sendJSON("select_word", map[string]string{"word": choice})
+						}
+					})
+				}
+
+			case "turn_started":
+				stopTurnLoops()
+				var p struct {
+					DrawerID string   `json:"drawer_id"`
+					Hint     []string `json:"hint"`
+					Theme    struct {
+						ID string `json:"id"`
+					} `json:"theme"`
+				}
+				_ = json.Unmarshal(fPayload, &p)
+				sessionMu.Lock()
+				myID := playerID
+				sessionMu.Unlock()
+
+				turnMu.Lock()
+				turnActive.Store(true)
+				isDrawer.Store(p.DrawerID == myID)
+				var tCtx context.Context
+				tCtx, turnCancel = context.WithCancel(sessionCtx)
+				turnMu.Unlock()
+
+				if isDrawer.Load() {
+					startDrawing(tCtx)
+				} else {
+					startGuessing(tCtx, p.Theme.ID, len(p.Hint))
+				}
+
+			case "turn_ended":
+				stopTurnLoops()
+
+			case "game_over":
+				stopTurnLoops()
+				sendClose(websocket.CloseNormalClosure, "done")
+				endSession("completed")
+
+			case "game_ended_insufficient_players":
+				stopTurnLoops()
+				recordError("game")
+				sendClose(websocket.CloseNormalClosure, "aborted")
+				endSession("aborted")
+			}
 		}
 
 		// Pre-defined frame handler to avoid initialization data race
@@ -912,8 +1074,9 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 					RoomCode  string `json:"room_code"`
 				}
 				_ = json.Unmarshal(f.Payload, &p)
-				if p.GatewayID != "" && redirectAttempts < maxRedirects {
-					sessionMu.Lock()
+				sessionMu.Lock()
+				canRedirect := p.GatewayID != "" && redirectAttempts < maxRedirects
+				if canRedirect {
 					redirectGW = p.GatewayID
 					if p.RoomCode != "" {
 						roomCode = p.RoomCode
@@ -926,6 +1089,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 					_ = conn.Close()
 					return
 				}
+				sessionMu.Unlock()
 				endSession("error")
 				return
 			}
@@ -938,7 +1102,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			case "connecting":
 				switch f.Type {
 				case "room_created":
-					globalMetrics.RoomCreateRTT.Add(float64(time.Since(createJoinStart).Milliseconds()))
+					globalMetrics.RoomCreateRTT.Add(float64(time.Since(connectStart).Milliseconds()))
 					globalMetrics.RoomsCreated.Add(1)
 					var p struct {
 						RoomCode string `json:"room_code"`
@@ -964,7 +1128,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 					})
 
 				case "room_joined":
-					globalMetrics.RoomJoinRTT.Add(float64(time.Since(createJoinStart).Milliseconds()))
+					globalMetrics.RoomJoinRTT.Add(float64(time.Since(connectStart).Milliseconds()))
 					globalMetrics.RoomsJoined.Add(1)
 					var p struct {
 						RoomCode string `json:"room_code"`
@@ -1064,6 +1228,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 					}
 					state = "playing"
 					sessionMu.Unlock()
+					handlePlaying(f.Type, f.Payload)
 				} else if f.Type == "game_over" {
 					sessionMu.Lock()
 					started := gameStartedCounted
@@ -1086,77 +1251,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 				}
 
 			case "playing":
-				switch f.Type {
-				case "drawer_selecting":
-					stopTurnLoops()
-					var p struct {
-						DrawerID string `json:"drawer_id"`
-					}
-					_ = json.Unmarshal(f.Payload, &p)
-					sessionMu.Lock()
-					myID := playerID
-					sessionMu.Unlock()
-					isDrawer.Store(p.DrawerID == myID)
-
-				case "word_choices":
-					isDrawer.Store(true)
-					var p struct {
-						Choices []string `json:"choices"`
-					}
-					_ = json.Unmarshal(f.Payload, &p)
-					if len(p.Choices) > 0 {
-						choice := p.Choices[rand.Intn(len(p.Choices))]
-						time.AfterFunc(time.Duration(1000+rand.Intn(2000))*time.Millisecond, func() {
-							sessionMu.Lock()
-							ended := sessionEnded
-							sessionMu.Unlock()
-							if !ended {
-								_ = sendJSON("select_word", map[string]string{"word": choice})
-							}
-						})
-					}
-
-				case "turn_started":
-					stopTurnLoops()
-					var p struct {
-						DrawerID string   `json:"drawer_id"`
-						Hint     []string `json:"hint"`
-						Theme    struct {
-							ID string `json:"id"`
-						} `json:"theme"`
-					}
-					_ = json.Unmarshal(f.Payload, &p)
-					sessionMu.Lock()
-					myID := playerID
-					sessionMu.Unlock()
-
-					turnMu.Lock()
-					turnActive.Store(true)
-					isDrawer.Store(p.DrawerID == myID)
-					var tCtx context.Context
-					tCtx, turnCancel = context.WithCancel(sessionCtx)
-					turnMu.Unlock()
-
-					if isDrawer.Load() {
-						startDrawing(tCtx)
-					} else {
-						startGuessing(tCtx, p.Theme.ID, len(p.Hint))
-					}
-
-				case "turn_ended":
-					stopTurnLoops()
-
-				case "game_over":
-					stopTurnLoops()
-					sendClose(websocket.CloseNormalClosure, "done")
-					endSession("completed")
-
-				case "game_ended_insufficient_players":
-					stopTurnLoops()
-					recordError("game")
-					sendClose(websocket.CloseNormalClosure, "aborted")
-					endSession("aborted")
-				}
+				handlePlaying(f.Type, f.Payload)
 			}
 		}
 
@@ -1208,6 +1303,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			// Connection closed
 			conn.Close()
 			globalMetrics.WSConnectionsClosed.Add(1)
+			globalMetrics.WSConnectionDuration.Add(float64(time.Since(socketOpenedAt).Milliseconds()))
 			sessionMu.Lock()
 			reconn := reconnectForRedirect
 			reconnectForRedirect = false
@@ -1225,6 +1321,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 			// Client patience expired
 			conn.Close()
 			globalMetrics.WSConnectionsClosed.Add(1)
+			globalMetrics.WSConnectionDuration.Add(float64(time.Since(socketOpenedAt).Milliseconds()))
 			sessionMu.Lock()
 			done := gameCompleted
 			sessionMu.Unlock()
@@ -1237,6 +1334,7 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 		case <-sessionCtx.Done():
 			conn.Close()
 			globalMetrics.WSConnectionsClosed.Add(1)
+			globalMetrics.WSConnectionDuration.Add(float64(time.Since(socketOpenedAt).Milliseconds()))
 			return
 		}
 	}
@@ -1263,6 +1361,8 @@ func runHealthProbe(ctx context.Context, cfg *Config, autoStopCh chan struct{}) 
 
 	snapshots := make(map[string]gwHealthSnapshot)
 	consecutiveZeroPolls := 0
+	var peakStreamsTotal uint64
+	var peakStreamsPerGW uint64
 
 	for {
 		select {
@@ -1272,6 +1372,7 @@ func runHealthProbe(ctx context.Context, cfg *Config, autoStopCh chan struct{}) 
 			for _, u := range cfg.HealthURLs {
 				resp, err := httpClient.Get(u)
 				if err != nil {
+					delete(snapshots, u)
 					globalMetrics.GatewayHealthFailures.Add(1)
 					continue
 				}
@@ -1302,6 +1403,7 @@ func runHealthProbe(ctx context.Context, cfg *Config, autoStopCh chan struct{}) 
 						sendDrops:     uint64(health.SendDropped.Stroke + health.SendDropped.Fill + health.SendDropped.Guess),
 					}
 				} else {
+					delete(snapshots, u)
 					globalMetrics.GatewayHealthFailures.Add(1)
 				}
 			}
@@ -1332,8 +1434,20 @@ func runHealthProbe(ctx context.Context, cfg *Config, autoStopCh chan struct{}) 
 			globalMetrics.GatewayLossyDrops.Store(sumLossyDrops)
 			globalMetrics.GatewaySendDrops.Store(sumSendDrops)
 
+			if len(snapshots) > 0 {
+				globalMetrics.GatewayHealthPollsDone.Add(1)
+				if sumStreamsActive > peakStreamsTotal {
+					peakStreamsTotal = sumStreamsActive
+				}
+				if maxStreamsPerGW > peakStreamsPerGW {
+					peakStreamsPerGW = maxStreamsPerGW
+				}
+				globalMetrics.GatewayPeakStreamsTotal.Store(peakStreamsTotal)
+				globalMetrics.GatewayPeakStreamsPerGW.Store(peakStreamsPerGW)
+			}
+
 			elapsed := time.Since(startTime).Seconds()
-			allZero := len(snapshots) > 0 && sumActiveClients == 0
+			allZero := len(snapshots) == len(cfg.HealthURLs) && sumActiveClients == 0
 			if elapsed >= float64(cfg.AutoStopMinElapsedS) && allZero {
 				consecutiveZeroPolls++
 				if consecutiveZeroPolls >= cfg.AutoStopConsecutiveZeros {
@@ -1466,26 +1580,26 @@ func printSummaryReport(cfg *Config, duration time.Duration) {
 		connSuccessRate = float64(playersConnected) / float64(playersAttempted) * 100.0
 	}
 
-	// True Host-Tracked Game Completion Rate (Evaluated against all planned rooms)
+	// Host-Tracked Game Completion Rates
+	// 1) Planned Rooms Rate: Divides by total planned rooms for true cluster capacity testing
 	totalPlannedRooms := uint64(math.Ceil(float64(cfg.VUs) / float64(cfg.PlayersPerRoom)))
 	gamesDone := globalMetrics.GamesCompleted.Load()
 	gamesAborted := globalMetrics.GamesAborted.Load()
-	unobservedRooms := uint64(0)
-	if totalPlannedRooms > (gamesDone + gamesAborted) {
-		unobservedRooms = totalPlannedRooms - (gamesDone + gamesAborted)
-	}
-	gameCompletionRate := 0.0
+	gameCompletionRatePlanned := 0.0
 	if totalPlannedRooms > 0 {
-		gameCompletionRate = float64(gamesDone) / float64(totalPlannedRooms) * 100.0
+		gameCompletionRatePlanned = float64(gamesDone) / float64(totalPlannedRooms) * 100.0
+	}
+
+	// 2) Observed Hosts Rate: Matches k6 Script 1 rate definition (gamesCompleted / (gamesCompleted + gamesAborted))
+	observedRooms := gamesDone + gamesAborted
+	gameCompletionRateObserved := 0.0
+	if observedRooms > 0 {
+		gameCompletionRateObserved = float64(gamesDone) / float64(observedRooms) * 100.0
 	}
 
 	totalPlannedPlayers := uint64(cfg.VUs)
 	sessDone := globalMetrics.SessionsCompleted.Load()
 	sessAborted := globalMetrics.SessionsAborted.Load()
-	unobservedSess := uint64(0)
-	if totalPlannedPlayers > (sessDone + sessAborted) {
-		unobservedSess = totalPlannedPlayers - (sessDone + sessAborted)
-	}
 	sessRate := 100.0
 	if totalPlannedPlayers > 0 {
 		sessRate = float64(sessDone) / float64(totalPlannedPlayers) * 100.0
@@ -1504,16 +1618,15 @@ func printSummaryReport(cfg *Config, duration time.Duration) {
 	if errRoom := globalMetrics.ErrorsRoom.Load(); errRoom > 0 {
 		fmt.Printf("     errors_room......................: %d   %.6f/s\n", errRoom, float64(errRoom)/durSec)
 	}
+	if discFailures := globalMetrics.RoomCodeDiscoveryFailures.Load(); discFailures > 0 {
+		fmt.Printf("     room_code_discovery_failures.....: %d   %.6f/s (excluded from connection success per k6 parity)\n", discFailures, float64(discFailures)/durSec)
+	}
 	if errProto := globalMetrics.ErrorsProtocol.Load(); errProto > 0 {
 		fmt.Printf("     errors_protocol..................: %d   %.6f/s\n", errProto, float64(errProto)/durSec)
 	}
 
-	fmt.Printf("   ✓ game_completion_rate.............: %.2f%%   ✓ %d   ✗ %d", gameCompletionRate, gamesDone, gamesAborted+unobservedRooms)
-	if unobservedRooms > 0 {
-		fmt.Printf(" (unobserved: %d / planned: %d)\n", unobservedRooms, totalPlannedRooms)
-	} else {
-		fmt.Printf("\n")
-	}
+	fmt.Printf("   ✓ game_completion_rate (planned)..: %.2f%%   ✓ %d   ✗ %d (total planned: %d)\n", gameCompletionRatePlanned, gamesDone, totalPlannedRooms-gamesDone, totalPlannedRooms)
+	fmt.Printf("     game_completion_rate (observed).: %.2f%%   ✓ %d   ✗ %d (k6 observed host rooms)\n", gameCompletionRateObserved, gamesDone, gamesAborted)
 	fmt.Printf("     game_start_requests..............: %d   %.6f/s\n", globalMetrics.GameStartRequests.Load(), float64(globalMetrics.GameStartRequests.Load())/durSec)
 	fmt.Printf("     games_started....................: %d   %.6f/s\n", globalMetrics.GamesStarted.Load(), float64(globalMetrics.GamesStarted.Load())/durSec)
 	fmt.Printf("     games_completed..................: %d   %.6f/s\n", gamesDone, float64(gamesDone)/durSec)
@@ -1527,15 +1640,12 @@ func printSummaryReport(cfg *Config, duration time.Duration) {
 	fmt.Printf("     gateway_send_drops...............: %d\n", globalMetrics.GatewaySendDrops.Load())
 
 	latSnap := globalMetrics.MessageLatency.Snapshot()
-	printTrend("message_latency", latSnap, "ms")
+	printTrend("message_latency (toggle->list)", latSnap, "ms")
 	fmt.Printf("     messages_received................: %d   %.1f/s\n", msgsRecv, float64(msgsRecv)/durSec)
 	fmt.Printf("     messages_sent....................: %d   %.1f/s\n", msgsSent, float64(msgsSent)/durSec)
-	fmt.Printf("   ✓ player_session_completion_rate...: %.2f%%   ✓ %d   ✗ %d", sessRate, sessDone, sessAborted+unobservedSess)
-	if unobservedSess > 0 {
-		fmt.Printf(" (unobserved: %d / planned: %d)\n", unobservedSess, totalPlannedPlayers)
-	} else {
-		fmt.Printf("\n")
-	}
+	fmt.Printf("   ✓ player_session_completion_rate...: %.2f%%   ✓ %d   ✗ %d\n", sessRate, sessDone, totalPlannedPlayers-sessDone)
+	fmt.Printf("     sessions_completed...............: %d   %.6f/s\n", sessDone, float64(sessDone)/durSec)
+	fmt.Printf("     sessions_aborted.................: %d   %.6f/s\n", sessAborted, float64(sessAborted)/durSec)
 
 	createSnap := globalMetrics.RoomCreateRTT.Snapshot()
 	joinSnap := globalMetrics.RoomJoinRTT.Snapshot()
@@ -1544,7 +1654,8 @@ func printSummaryReport(cfg *Config, duration time.Duration) {
 	fmt.Printf("     rooms_created....................: %d   %.6f/s\n", globalMetrics.RoomsCreated.Load(), float64(globalMetrics.RoomsCreated.Load())/durSec)
 	fmt.Printf("     rooms_joined.....................: %d   %.6f/s\n", globalMetrics.RoomsJoined.Load(), float64(globalMetrics.RoomsJoined.Load())/durSec)
 
-	printTrend("ws_connection_duration", globalMetrics.SessionDuration.Snapshot(), "ms")
+	printTrend("ws_connection_duration (socket)", globalMetrics.WSConnectionDuration.Snapshot(), "ms")
+	printTrend("session_duration (lifetime)", globalMetrics.SessionDuration.Snapshot(), "ms")
 	fmt.Printf("   ✓ ws_connection_success............: %.2f%%   ✓ %d   ✗ %d\n", connSuccessRate, playersConnected, connFailures)
 	fmt.Printf("     ws_connections_closed............: %d   %.1f/s\n", closed, float64(closed)/durSec)
 	fmt.Printf("     ws_connections_opened............: %d   %.1f/s\n", opened, float64(opened)/durSec)
@@ -1565,38 +1676,47 @@ func printSummaryReport(cfg *Config, duration time.Duration) {
 	}
 
 	threshConn := connSuccessRate >= targetConn
-	threshGame := gameCompletionRate >= targetGame
+	threshGame := gameCompletionRatePlanned >= targetGame
 	threshSess := sessRate >= targetSess
-	threshCreate := createSnap.Count == 0 || createSnap.P95 < 5000.0
-	threshJoin := joinSnap.Count == 0 || joinSnap.P95 < 5000.0
+	threshCreate := createSnap.Count > 0 && createSnap.P95 < 5000.0
+	threshJoin := joinSnap.Count > 0 && joinSnap.P95 < 5000.0
 	threshLat := latSnap.Count > 0 && latSnap.P95 <= 50.0
 
 	fmt.Printf("  [%s] ws_connection_success: %.2f%% (threshold >=%.0f%%)\n", passFailStr(threshConn), connSuccessRate, targetConn)
-	fmt.Printf("  [%s] game_completion_rate: %.2f%% (threshold >=%.0f%%)\n", passFailStr(threshGame), gameCompletionRate, targetGame)
+	fmt.Printf("  [%s] game_completion_rate: %.2f%% (threshold >=%.0f%%)\n", passFailStr(threshGame), gameCompletionRatePlanned, targetGame)
 	fmt.Printf("  [%s] player_session_completion_rate: %.2f%% (threshold >=%.0f%%)\n", passFailStr(threshSess), sessRate, targetSess)
-	fmt.Printf("  [%s] room_create_rtt p95: %.1fms (threshold <5000ms)\n", passFailStr(threshCreate), createSnap.P95)
-	fmt.Printf("  [%s] room_join_rtt p95: %.1fms (threshold <5000ms)\n", passFailStr(threshJoin), joinSnap.P95)
+	fmt.Printf("  [%s] room_create_rtt p95: %s (threshold <5000ms)\n", passFailStr(threshCreate), formatLatStr(createSnap))
+	fmt.Printf("  [%s] room_join_rtt p95: %s (threshold <5000ms)\n", passFailStr(threshJoin), formatLatStr(joinSnap))
 	fmt.Printf("  [%s] message_latency p95: %s (threshold <=50ms)\n", passFailStr(threshLat), formatLatStr(latSnap))
 
 	fmt.Println("\n════ ACCEPTANCE (requirements, not guardrails) ════")
 	req91Pass := connSuccessRate >= 99.0
 	req92Pass := latSnap.Count > 0 && latSnap.P95 <= 50.0
-	req93Pass := gameCompletionRate >= 80.0
+	req93Pass := gameCompletionRatePlanned >= 80.0
 
 	fmt.Printf("  [%s] 9.1 connection success: %.2f%% (target >=99%%)\n", passFailStr(req91Pass), connSuccessRate)
 	fmt.Printf("  [%s] 9.2 message latency p95: %s (target <=50ms)\n", passFailStr(req92Pass), formatLatStr(latSnap))
-	fmt.Printf("  [%s] 9.3 game completion: %.2f%% (target >=80%%)\n", passFailStr(req93Pass), gameCompletionRate)
+	fmt.Printf("  [%s] 9.3 game completion: %.2f%% (target >=80%%)\n", passFailStr(req93Pass), gameCompletionRatePlanned)
 
-	streamsTotal := globalMetrics.GatewayStreamsActive.Load()
-	streamsMaxGW := globalMetrics.GatewayMaxStreamsPerGW.Load()
-	req94Pass := true
-	req95Pass := true
-	if len(cfg.HealthURLs) > 0 && streamsTotal > 0 {
-		req94Pass = streamsTotal < 1500
-		req95Pass = streamsMaxGW < 200
-		fmt.Printf("  [%s] 9.4 total gRPC streams: %d (target <1500)\n", passFailStr(req94Pass), streamsTotal)
-		fmt.Printf("  [%s] 9.5 per-worker/gateway streams: %d (target <200)\n", passFailStr(req95Pass), streamsMaxGW)
+	pollsDone := globalMetrics.GatewayHealthPollsDone.Load()
+	peakStreamsTotal := globalMetrics.GatewayPeakStreamsTotal.Load()
+	peakStreamsMaxGW := globalMetrics.GatewayPeakStreamsPerGW.Load()
+	var req94Pass, req95Pass bool
+	var streamsTotalStr, streamsMaxGWStr string
+
+	if len(cfg.HealthURLs) > 0 && pollsDone > 0 {
+		req94Pass = peakStreamsTotal < 1500
+		req95Pass = peakStreamsMaxGW < 200
+		streamsTotalStr = fmt.Sprintf("%d", peakStreamsTotal)
+		streamsMaxGWStr = fmt.Sprintf("%d", peakStreamsMaxGW)
+	} else {
+		req94Pass = false
+		req95Pass = false
+		streamsTotalStr = "NOT MEASURED"
+		streamsMaxGWStr = "NOT MEASURED"
 	}
+	fmt.Printf("  [%s] 9.4 total gRPC streams (peak): %s (target <1500)\n", passFailStr(req94Pass), streamsTotalStr)
+	fmt.Printf("  [%s] 9.5 per-worker/gateway streams (peak): %s (target <200)\n", passFailStr(req95Pass), streamsMaxGWStr)
 
 	allRequirementsPassed := req91Pass && req92Pass && req93Pass && req94Pass && req95Pass
 	allThresholdsPassed := threshConn && threshGame && threshSess && threshCreate && threshJoin && threshLat
@@ -1615,6 +1735,10 @@ func printSummaryReport(cfg *Config, duration time.Duration) {
 		fmt.Println("  (thresholds above are looser guardrails; run with STRICT=1 to enforce these as hard thresholds)")
 	}
 	fmt.Println("==========================================================")
+
+	if !overallPassed {
+		os.Exit(1)
+	}
 }
 
 func printTrend(name string, t TrendStats, unit string) {
