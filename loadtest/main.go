@@ -1356,6 +1356,13 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 					playerID = p.PlayerID
 					state = "lobby"
 					sessionMu.Unlock()
+					// Immediately configure room settings (max_players, num_rounds, turn_duration)
+					// BEFORE any joiner discovers or connects to the room, eliminating ROOM_FULL race condition.
+					_ = sendJSON("update_settings", map[string]any{
+						"num_rounds":    cfg.NumRounds,
+						"turn_duration": cfg.TurnDuration,
+						"max_players":   cfg.PlayersPerRoom,
+					})
 					// Don't block the read loop on coordinator HTTP.
 					go func(code string) {
 						if err := publishRoomCode(sessionCtx, cfg, roomIndex, code); err != nil && sessionCtx.Err() == nil {

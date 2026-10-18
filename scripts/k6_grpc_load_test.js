@@ -705,6 +705,7 @@ export default function () {
         roomCreateRtt.add(Date.now() - connectStart); roomsCreated.add(1);
         roomCode = msg.payload.room_code; playerId = msg.payload.player_id;
         state = 'lobby';
+        sendMsg({ type: 'update_settings', payload: { num_rounds: NUM_ROUNDS, turn_duration: TURN_DURATION, max_players: PLAYERS_PER_ROOM } });
         publishRoomCode(roomIndex, roomCode);
         safeSetTimeout(function () { if (state === 'lobby' || state === 'waiting_start') { recordError('timeout'); endSession('aborted'); } }, LOBBY_TIMEOUT_MS);
       } else if (msg.type === 'room_joined') {
