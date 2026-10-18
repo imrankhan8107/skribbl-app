@@ -253,37 +253,71 @@ func (t *TrendMetric) Snapshot() TrendStats {
 	}
 }
 
+// AtomicUint64 provides atomic uint64 operations compatible across Go 1.18+.
+type AtomicUint64 struct {
+	val uint64
+}
+
+func (a *AtomicUint64) Add(delta uint64) uint64 {
+	return atomic.AddUint64(&a.val, delta)
+}
+
+func (a *AtomicUint64) Load() uint64 {
+	return atomic.LoadUint64(&a.val)
+}
+
+func (a *AtomicUint64) Store(val uint64) {
+	atomic.StoreUint64(&a.val, val)
+}
+
+// AtomicBool provides atomic boolean operations compatible across Go 1.18+.
+type AtomicBool struct {
+	val uint32
+}
+
+func (a *AtomicBool) Load() bool {
+	return atomic.LoadUint32(&a.val) != 0
+}
+
+func (a *AtomicBool) Store(val bool) {
+	var v uint32
+	if val {
+		v = 1
+	}
+	atomic.StoreUint32(&a.val, v)
+}
+
 type Metrics struct {
-	DataReceived atomic.Uint64
-	DataSent     atomic.Uint64
+	DataReceived AtomicUint64
+	DataSent     AtomicUint64
 
-	MsgsReceived atomic.Uint64
-	MsgsSent     atomic.Uint64
+	MsgsReceived AtomicUint64
+	MsgsSent     AtomicUint64
 
-	WSConnectionsOpened  atomic.Uint64
-	WSConnectionsClosed  atomic.Uint64
-	WSConnectionFailures atomic.Uint64
-	RedirectsFollowed    atomic.Uint64
+	WSConnectionsOpened  AtomicUint64
+	WSConnectionsClosed  AtomicUint64
+	WSConnectionFailures AtomicUint64
+	RedirectsFollowed    AtomicUint64
 
-	RoomsCreated     atomic.Uint64
-	RoomsJoined      atomic.Uint64
-	RoomCreateErrors atomic.Uint64
-	RoomJoinErrors   atomic.Uint64
-	CoordFailures    atomic.Uint64
+	RoomsCreated     AtomicUint64
+	RoomsJoined      AtomicUint64
+	RoomCreateErrors AtomicUint64
+	RoomJoinErrors   AtomicUint64
+	CoordFailures    AtomicUint64
 
-	GameStartRequests atomic.Uint64
-	GamesStarted      atomic.Uint64
-	GamesCompleted    atomic.Uint64
-	GamesAborted      atomic.Uint64
+	GameStartRequests AtomicUint64
+	GamesStarted      AtomicUint64
+	GamesCompleted    AtomicUint64
+	GamesAborted      AtomicUint64
 
-	SessionsCompleted atomic.Uint64
-	SessionsAborted   atomic.Uint64
+	SessionsCompleted AtomicUint64
+	SessionsAborted   AtomicUint64
 
-	ErrorsConnect  atomic.Uint64
-	ErrorsRoom     atomic.Uint64
-	ErrorsProtocol atomic.Uint64
-	ErrorsGame     atomic.Uint64
-	ErrorsTimeout  atomic.Uint64
+	ErrorsConnect  AtomicUint64
+	ErrorsRoom     AtomicUint64
+	ErrorsProtocol AtomicUint64
+	ErrorsGame     AtomicUint64
+	ErrorsTimeout  AtomicUint64
 
 	WSOpenRTT        TrendMetric
 	MessageLatency   TrendMetric
@@ -535,10 +569,10 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 		})
 	}
 
-	var isDrawer atomic.Bool
-	var turnActive atomic.Bool
-	var gameStarted atomic.Bool
-	var gameCompleted atomic.Bool
+	var isDrawer AtomicBool
+	var turnActive AtomicBool
+	var gameStarted AtomicBool
+	var gameCompleted AtomicBool
 	var pendingReadyAt time.Time
 	var pendingReadyMu sync.Mutex
 
