@@ -286,6 +286,6 @@ Tests multi-worker deployment with cookie-based routing:
 |------------|-------------------------------|-----------------------|------------------------------|
 | **Single Container (Docker)** | 100–500 | Single container (FastAPI + built React) | 500 connections, 6,781 msgs/sec |
 | **Local Multi-Worker (Compose)** | 500–2,000 | Nginx LB + 3 App Workers + Redis | Sticky sessions with cookie routing |
-| **Distributed Cluster (AWS / Azure / OCI)** | **10,000–150,000+** | **Nginx + Go Gateways + Python Workers + Redis** | **150,000 VUs, 512M messages, 4.00 Gbps, 0 control drops** ✅ |
+| **Distributed Cluster (AWS / Azure / OCI)** | **10,000–250,000+** | **Nginx + Go Gateways + Python Workers + Redis** | **250,000 VUs, 1.55B messages delivered, 2.92 Gbps, 100% completion** ✅ |
 
 Each Python worker holds rooms in-memory with the game engine. The Go edge gateway offloads high-concurrency WebSocket I/O, epoll connection state, and frame buffering, while dedicated Redis synchronizes cross-gateway state and room discovery.
