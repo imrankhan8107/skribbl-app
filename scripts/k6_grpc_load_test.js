@@ -333,6 +333,20 @@ export const options = {
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
+// Complete dictionary of word packs matching backend/words.py
+const WORD_PACKS = {
+  animals: ["dog", "elephant", "whale", "zebra", "eagle", "kangaroo", "octopus", "penguin", "giraffe", "jellyfish", "owl", "dinosaur", "wolf", "butterfly", "lion", "parrot", "rabbit", "snake", "tiger", "dolphin", "frog", "horse", "koala", "spider", "turtle", "gorilla", "insect", "lobster", "ostrich", "peacock", "caterpillar", "flamingo", "grasshopper", "goldfish", "iguana", "dragonfly", "starfish", "bear", "camel", "cat", "cheetah", "chameleon", "chimpanzee", "crab", "crocodile", "deer", "duck", "fox", "hedgehog", "hippo", "mouse", "panda", "rhino", "seagull", "seal", "shark", "sheep", "sloth", "snail", "squirrel", "swan", "walrus", "badger", "hamster", "raccoon", "otter", "beaver", "skunk"],
+  food: ["apple", "banana", "lemon", "mushroom", "orange", "grapes", "onion", "bread", "cherry", "olive", "pumpkin", "tomato", "waffle", "pretzel", "donut", "jellybean", "lollipop", "sandwich", "hamburger", "icecream", "avocado", "bacon", "bagel", "cake", "cheese", "chocolate", "cookie", "corn", "croissant", "cupcake", "egg", "hotdog", "noodles", "pancake", "peach", "peanut", "pear", "pie", "pineapple", "pizza", "popcorn", "potato", "salad", "sausage", "soup", "spaghetti", "steak", "strawberry", "sushi", "taco", "toast", "watermelon", "muffin", "honey", "butter", "carrot", "mango", "coconut", "dumpling", "broccoli"],
+  objects: ["jacket", "kite", "lamp", "notebook", "piano", "umbrella", "violin", "xylophone", "diamond", "globe", "hammer", "quilt", "window", "anchor", "balloon", "candle", "envelope", "feather", "key", "ladder", "magnet", "necklace", "scissors", "telescope", "vase", "camera", "helmet", "compass", "jewel", "knot", "ring", "skull", "arrow", "clock", "drum", "flag", "heart", "ink", "jar", "mirror", "wheel", "needle", "suitcase", "zipper", "harp", "jigsaw", "kettle", "napkin", "trophy", "battery", "dominoes", "jukebox", "lantern", "microscope", "newspaper", "origami", "ukulele", "blanket", "crayon", "keyboard", "mailbox", "nutcracker", "paintbrush", "toothbrush", "wrench", "backpack", "chandelier", "earring", "glasses", "iron", "horseshoe", "uniform", "lanyard", "book", "bottle", "bucket", "chair", "couch", "cup", "dice", "fork", "headphones", "knife", "lock", "mug", "pencil", "pillow", "plate", "radio", "rope", "soap", "spoon", "table", "towel", "watch"],
+  nature: ["flower", "mountain", "ocean", "rainbow", "sun", "tree", "forest", "moon", "nest", "snowflake", "tornado", "volcano", "waterfall", "iceberg", "leaf", "rose", "cactus", "acorn", "icicle", "quicksand", "earth", "garden", "blizzard", "cave", "cliff", "cloud", "comet", "desert", "eclipse", "fire", "galaxy", "island", "jungle", "lightning", "meteor", "puddle", "rain", "river", "rock", "smoke", "star", "storm", "sunrise", "sunset", "thunder", "valley", "wave", "wind"],
+  places: ["house", "bridge", "castle", "igloo", "lighthouse", "village", "throne", "beach", "fountain", "maze", "windmill", "elevator", "escalator", "fireplace", "airport", "aquarium", "bakery", "bank", "barn", "cabin", "church", "circus", "cottage", "factory", "farm", "fort", "gym", "hospital", "hotel", "library", "mall", "market", "museum", "palace", "park", "playground", "prison", "pyramid", "school", "skyscraper", "stadium", "station", "supermarket", "temple", "theater", "tower", "zoo"],
+  vehicles: ["car", "yacht", "airplane", "rocket", "helicopter", "parachute", "surfboard", "engine", "kayak", "hammock", "trampoline", "football", "volleyball", "ambulance", "bicycle", "blimp", "boat", "bulldozer", "bus", "canoe", "carriage", "ferry", "firetruck", "forklift", "hoverboard", "jetski", "limousine", "motorcycle", "raft", "scooter", "skateboard", "sled", "snowboard", "spaceship", "submarine", "tank", "taxi", "tractor", "train", "truck", "van"],
+  fantasy: ["queen", "unicorn", "dragon", "robot", "wizard", "firework", "ghost", "treasure", "vampire", "king", "angel", "mermaid", "witch", "emerald", "radar", "satellite", "alien", "cauldron", "crystal", "cyborg", "demon", "dungeon", "elf", "fairy", "flying carpet", "genie", "giant", "goblin", "laser", "magic wand", "monster", "mummy", "pegasus", "phoenix", "portal", "potion", "shield", "spellbook", "sword", "time machine", "zombie"],
+  characters: ["ninja", "pirate", "nurse", "judge", "astronaut", "dentist", "scarecrow", "actor", "artist", "athlete", "baby", "baker", "barber", "builder", "captain", "carpenter", "chef", "clown", "detective", "diver", "doctor", "farmer", "firefighter", "guard", "hunter", "knight", "lifeguard", "magician", "mailman", "mechanic", "musician", "painter", "pilot", "police", "prince", "princess", "sailor", "scientist", "singer", "soldier", "spy", "superhero"]
+};
+
+const ALL_WORDS = [].concat(...Object.values(WORD_PACKS));
+
 // Label a STROKE_HZ value so results are self-describing and defensible: don't
 // call an aggressive 30Hz storm "production-like" unless you've measured that
 // real drawers actually emit 30 strokes/sec.
@@ -790,7 +804,7 @@ export default function () {
           } break;
         case 'turn_started':
           turnActive = true; isDrawer = msg.payload && msg.payload.drawer_id === playerId;
-          if (isDrawer) { startDrawing(); } else { startGuessing(); } break;
+          if (isDrawer) { startDrawing(); } else { startGuessing(msg.payload); } break;
         case 'turn_ended':
           turnActive = false; stopLoops(); break;
         case 'game_over': endSession('completed'); break;
@@ -850,15 +864,37 @@ export default function () {
       }, intervalMs);
     }
 
-    function startGuessing() {
+    function startGuessing(turnInfo) {
       if (sessionEnded) return;
       stopLoops();
       guessingActive = true;
-      const words = ['cat','dog','house','tree','car','sun','moon','fish','bird','star','flower','mountain','river','boat'];
+
+      const wordLen = (turnInfo && Array.isArray(turnInfo.hint)) ? turnInfo.hint.length : 0;
+      const themeId = (turnInfo && turnInfo.theme && turnInfo.theme.id) ? turnInfo.theme.id : '';
+
+      let candidatePool = [];
+      if (themeId && WORD_PACKS[themeId]) {
+        candidatePool = WORD_PACKS[themeId];
+      } else {
+        candidatePool = ALL_WORDS;
+      }
+
+      if (wordLen > 0) {
+        const lenMatched = candidatePool.filter(w => w.length === wordLen);
+        if (lenMatched.length > 0) {
+          candidatePool = lenMatched;
+        }
+      }
+
+      const guessPool = candidatePool.length > 0 ? candidatePool : ALL_WORDS;
+      let guessIndex = Math.floor(Math.random() * guessPool.length);
+
       guessTimer = safeSetInterval(function () {
         if (!guessingActive || !turnActive || sessionEnded) return;
-        sendMsg({ type: 'guess', payload: { text: words[Math.floor(Math.random() * words.length)] } });
-      }, Math.floor(randomBetween(3000, 8000)));
+        const guessWord = guessPool[guessIndex % guessPool.length];
+        guessIndex++;
+        sendMsg({ type: 'guess', payload: { text: guessWord } });
+      }, Math.floor(randomBetween(2000, 4000)));
     }
   }
 

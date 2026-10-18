@@ -1413,8 +1413,8 @@ class RoomManager:
         if room.host_id == player_id:
             connected_players = [p for p in room.players if p.is_connected]
             if not connected_players:
-                # No connected players remain — delete room if in lobby
-                if room.state == RoomState.LOBBY:
+                # No connected players remain — delete room if in lobby or game over
+                if room.state in (RoomState.LOBBY, RoomState.GAME_OVER):
                     await self._delete_room(room.code)
                     return
             else:
@@ -1488,7 +1488,7 @@ class RoomManager:
         if not eligible:
             eligible = [p for p in room.players if p.is_connected]
         if not eligible:
-            if room.state == RoomState.LOBBY:
+            if room.state in (RoomState.LOBBY, RoomState.GAME_OVER):
                 await self._delete_room(room.code)
             return
 
@@ -1720,8 +1720,8 @@ class RoomManager:
         room.remove_player(player_id)
         self._player_to_room.pop(player_id, None)
 
-        # If no players remain, delete the room
-        if not room.players:
+        # If no players or no connected players remain, delete the room
+        if not room.players or not any(p.is_connected for p in room.players):
             await self._delete_room(room.code)
             return
 

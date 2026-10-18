@@ -401,6 +401,25 @@ func encodeBinaryStroke(points []Point, r, g, b, brushSize uint8) []byte {
 	return buf
 }
 
+var wordPacks = map[string][]string{
+	"animals":    {"dog", "elephant", "whale", "zebra", "eagle", "kangaroo", "octopus", "penguin", "giraffe", "jellyfish", "owl", "dinosaur", "wolf", "butterfly", "lion", "parrot", "rabbit", "snake", "tiger", "dolphin", "frog", "horse", "koala", "spider", "turtle", "gorilla", "insect", "lobster", "ostrich", "peacock", "caterpillar", "flamingo", "grasshopper", "goldfish", "iguana", "dragonfly", "starfish", "bear", "camel", "cat", "cheetah", "chameleon", "chimpanzee", "crab", "crocodile", "deer", "duck", "fox", "hedgehog", "hippo", "mouse", "panda", "rhino", "seagull", "seal", "shark", "sheep", "sloth", "snail", "squirrel", "swan", "walrus", "badger", "hamster", "raccoon", "otter", "beaver", "skunk"},
+	"food":       {"apple", "banana", "lemon", "mushroom", "orange", "grapes", "onion", "bread", "cherry", "olive", "pumpkin", "tomato", "waffle", "pretzel", "donut", "jellybean", "lollipop", "sandwich", "hamburger", "icecream", "avocado", "bacon", "bagel", "cake", "cheese", "chocolate", "cookie", "corn", "croissant", "cupcake", "egg", "hotdog", "noodles", "pancake", "peach", "peanut", "pear", "pie", "pineapple", "pizza", "popcorn", "potato", "salad", "sausage", "soup", "spaghetti", "steak", "strawberry", "sushi", "taco", "toast", "watermelon", "muffin", "honey", "butter", "carrot", "mango", "coconut", "dumpling", "broccoli"},
+	"objects":    {"jacket", "kite", "lamp", "notebook", "piano", "umbrella", "violin", "xylophone", "diamond", "globe", "hammer", "quilt", "window", "anchor", "balloon", "candle", "envelope", "feather", "key", "ladder", "magnet", "necklace", "scissors", "telescope", "vase", "camera", "helmet", "compass", "jewel", "knot", "ring", "skull", "arrow", "clock", "drum", "flag", "heart", "ink", "jar", "mirror", "wheel", "needle", "suitcase", "zipper", "harp", "jigsaw", "kettle", "napkin", "trophy", "battery", "dominoes", "jukebox", "lantern", "microscope", "newspaper", "origami", "ukulele", "blanket", "crayon", "keyboard", "mailbox", "nutcracker", "paintbrush", "toothbrush", "wrench", "backpack", "chandelier", "earring", "glasses", "iron", "horseshoe", "uniform", "lanyard", "book", "bottle", "bucket", "chair", "couch", "cup", "dice", "fork", "headphones", "knife", "lock", "mug", "pencil", "pillow", "plate", "radio", "rope", "soap", "spoon", "table", "towel", "watch"},
+	"nature":     {"flower", "mountain", "ocean", "rainbow", "sun", "tree", "forest", "moon", "nest", "snowflake", "tornado", "volcano", "waterfall", "iceberg", "leaf", "rose", "cactus", "acorn", "icicle", "quicksand", "earth", "garden", "blizzard", "cave", "cliff", "cloud", "comet", "desert", "eclipse", "fire", "galaxy", "island", "jungle", "lightning", "meteor", "puddle", "rain", "river", "rock", "smoke", "star", "storm", "sunrise", "sunset", "thunder", "valley", "wave", "wind"},
+	"places":     {"house", "bridge", "castle", "igloo", "lighthouse", "village", "throne", "beach", "fountain", "maze", "windmill", "elevator", "escalator", "fireplace", "airport", "aquarium", "bakery", "bank", "barn", "cabin", "church", "circus", "cottage", "factory", "farm", "fort", "gym", "hospital", "hotel", "library", "mall", "market", "museum", "palace", "park", "playground", "prison", "pyramid", "school", "skyscraper", "stadium", "station", "supermarket", "temple", "theater", "tower", "zoo"},
+	"vehicles":   {"car", "yacht", "airplane", "rocket", "helicopter", "parachute", "surfboard", "engine", "kayak", "hammock", "trampoline", "football", "volleyball", "ambulance", "bicycle", "blimp", "boat", "bulldozer", "bus", "canoe", "carriage", "ferry", "firetruck", "forklift", "hoverboard", "jetski", "limousine", "motorcycle", "raft", "scooter", "skateboard", "sled", "snowboard", "spaceship", "submarine", "tank", "taxi", "tractor", "train", "truck", "van"},
+	"fantasy":    {"queen", "unicorn", "dragon", "robot", "wizard", "firework", "ghost", "treasure", "vampire", "king", "angel", "mermaid", "witch", "emerald", "radar", "satellite", "alien", "cauldron", "crystal", "cyborg", "demon", "dungeon", "elf", "fairy", "flying carpet", "genie", "giant", "goblin", "laser", "magic wand", "monster", "mummy", "pegasus", "phoenix", "portal", "potion", "shield", "spellbook", "sword", "time machine", "zombie"},
+	"characters": {"ninja", "pirate", "nurse", "judge", "astronaut", "dentist", "scarecrow", "actor", "artist", "athlete", "baby", "baker", "barber", "builder", "captain", "carpenter", "chef", "clown", "detective", "diver", "doctor", "farmer", "firefighter", "guard", "hunter", "knight", "lifeguard", "magician", "mailman", "mechanic", "musician", "painter", "pilot", "police", "prince", "princess", "sailor", "scientist", "singer", "soldier", "spy", "superhero"},
+}
+
+var allWordsList = func() []string {
+	var res []string
+	for _, ws := range wordPacks {
+		res = append(res, ws...)
+	}
+	return res
+}()
+
 // ─── Virtual User (VU) Execution ────────────────────────────────────────────
 
 func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) {
@@ -560,11 +579,29 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 		}()
 	}
 
-	startGuessing := func() {
-		words := []string{"cat", "dog", "house", "tree", "car", "sun", "moon", "fish", "bird", "star", "flower", "mountain", "river", "boat"}
-		ticker := time.NewTicker(time.Duration(2500+rand.Intn(2000)) * time.Millisecond)
+	startGuessing := func(themeID string, wordLen int) {
+		candidatePool := allWordsList
+		if themeID != "" {
+			if ws, ok := wordPacks[themeID]; ok {
+				candidatePool = ws
+			}
+		}
+		if wordLen > 0 {
+			var lenMatched []string
+			for _, w := range candidatePool {
+				if len(w) == wordLen {
+					lenMatched = append(lenMatched, w)
+				}
+			}
+			if len(lenMatched) > 0 {
+				candidatePool = lenMatched
+			}
+		}
+
+		ticker := time.NewTicker(time.Duration(2000+rand.Intn(2000)) * time.Millisecond)
 		go func() {
 			defer ticker.Stop()
+			idx := rand.Intn(len(candidatePool))
 			for {
 				select {
 				case <-guessStopCh:
@@ -575,7 +612,8 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 					if !turnActive.Load() || isDrawer.Load() {
 						return
 					}
-					w := words[rand.Intn(len(words))]
+					w := candidatePool[idx%len(candidatePool)]
+					idx++
 					_ = sendJSON("guess", map[string]string{"text": w})
 				}
 			}
@@ -705,23 +743,42 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 		case "game_started":
 			globalMetrics.GamesStarted.Add(1)
 
+		case "drawer_selecting":
+			turnActive.Store(false)
+			var p struct {
+				DrawerID string `json:"drawer_id"`
+			}
+			_ = json.Unmarshal(f.Payload, &p)
+			isDrawer.Store(p.DrawerID == playerID)
+
+		case "word_choices":
+			isDrawer.Store(true)
+			turnActive.Store(false)
+			var p struct {
+				Choices []string `json:"choices"`
+			}
+			_ = json.Unmarshal(f.Payload, &p)
+			if len(p.Choices) > 0 {
+				chosen := p.Choices[rand.Intn(len(p.Choices))]
+				time.AfterFunc(time.Duration(1000+rand.Intn(1500))*time.Millisecond, func() {
+					_ = sendJSON("select_word", map[string]string{"word": chosen})
+				})
+			}
+
 		case "word_selection":
 			var p struct {
 				DrawerID string `json:"drawer_id"`
 			}
 			_ = json.Unmarshal(f.Payload, &p)
-			if p.DrawerID == playerID {
-				isDrawer.Store(true)
-				time.AfterFunc(1*time.Second, func() {
-					_ = sendJSON("select_word", map[string]int{"word_index": 0})
-				})
-			} else {
-				isDrawer.Store(false)
-			}
+			isDrawer.Store(p.DrawerID == playerID)
 
 		case "turn_started":
 			var p struct {
-				DrawerID string `json:"drawer_id"`
+				DrawerID string   `json:"drawer_id"`
+				Hint     []string `json:"hint"`
+				Theme    struct {
+					ID string `json:"id"`
+				} `json:"theme"`
 			}
 			_ = json.Unmarshal(f.Payload, &p)
 			turnActive.Store(true)
@@ -730,19 +787,33 @@ func runVU(ctx context.Context, cfg *Config, localVUID int, wg *sync.WaitGroup) 
 				startDrawing()
 			} else {
 				isDrawer.Store(false)
-				startGuessing()
+				startGuessing(p.Theme.ID, len(p.Hint))
 			}
 
 		case "turn_ended":
 			turnActive.Store(false)
 
 		case "game_over":
+			turnActive.Store(false)
+			isDrawer.Store(false)
 			gameCompleted.Store(true)
 			if isHost {
 				globalMetrics.GamesCompleted.Add(1)
 			}
 			globalMetrics.SessionsCompleted.Add(1)
 			_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done"))
+			conn.Close()
+
+		case "game_ended_insufficient_players":
+			turnActive.Store(false)
+			isDrawer.Store(false)
+			if isHost && !gameCompleted.Load() {
+				globalMetrics.GamesAborted.Add(1)
+			}
+			globalMetrics.SessionsAborted.Add(1)
+			globalMetrics.ErrorsGame.Add(1)
+			_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "aborted"))
+			conn.Close()
 		}
 	}
 
