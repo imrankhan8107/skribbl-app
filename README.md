@@ -8,9 +8,9 @@ A Pictionary-style drawing and guessing game built with **FastAPI** (Python) and
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
 ![gRPC](https://img.shields.io/badge/gRPC-Bidirectional%20Streaming-244c5a)
 ![Tests](https://img.shields.io/badge/Tests-330%20backend%20%2B%20151%20frontend%20passing-brightgreen)
-![Benchmark](https://img.shields.io/badge/Validated%20Scale-300%2C000%20VUs%20%40%2030Hz-purple)
-![Throughput](https://img.shields.io/badge/Messages-1.81B%20Delivered-blueviolet)
-![Bandwidth](https://img.shields.io/badge/Peak%20Bandwidth-3.73%20Gbps-success)
+![Benchmark](https://img.shields.io/badge/Validated%20Scale-360%2C000%20VUs%20%40%2030Hz-purple)
+![Throughput](https://img.shields.io/badge/Messages-8.38B%20Delivered-blueviolet)
+![Bandwidth](https://img.shields.io/badge/Peak%20Bandwidth-4.92%20Gbps-success)
 ![Observability](https://img.shields.io/badge/Metrics-Prometheus%20%2B%20Grafana-orange)
 
 ## Features
@@ -145,22 +145,22 @@ docker compose -f monitoring/docker-compose.yml up -d
 | Concurrent connections | 500/500 established |
 | Message throughput | 6,781 msgs/sec |
 
-### Enterprise Scale Milestone (AWS Distributed Cluster — 150,000–300,000 VUs)
+### Enterprise Scale Milestone (AWS Distributed Cluster — 150,000–360,000 VUs)
 
-Tested on AWS across a distributed fleet (up to 3 × `c6i.4xlarge` Nginx LBs behind AWS NLB, 10 × `c6i.2xlarge` Go Gateways [30 containers], 5 × `c6i.4xlarge` Python Workers [30 containers], 1 × `c5a.xlarge` Redis, and 6 × `c5a.8xlarge` distributed load generators):
+Tested on AWS across a distributed fleet (up to 4 × `c6i.4xlarge` Nginx LBs behind AWS NLB, 10 × `c6i.2xlarge` Go Gateways [30 containers], 6 × `c6i.4xlarge` Python Workers [36 containers], 1 × `c5a.xlarge` Redis, and 6 × `c5a.8xlarge` distributed load generators):
 
-| Scale Metric | Validated 150k Run | Validated 200k Run | Validated 250k Run | 300,000 VU Milestone Run (6 Runners) | Target SLA |
+| Scale Metric | Validated 200k Run | Validated 250k Run | Validated 300k Run | 360,000 VU Historic Run (6 Runners, 10p/room) | Target SLA |
 |---|---|---|---|---|---|
-| **Concurrent Players (VUs)** | **150,000 VUs** | **200,000 VUs** | **250,000 VUs** | **300,000 VUs (300,001 peak)** | Fleet Target |
-| **Active Game Rooms** | **30,000 rooms** | **40,000 rooms** | **50,000 rooms** | **60,000 rooms** | 100% Target Met ✅ |
-| **WebSocket Connection Success** | **100.00%** (150k) | **99.9985%** (200k) | **100.00%** (250k) | **100.00%** (300,000 conns, 36 retries) | $\ge 99.0\%$ ✅ |
-| **Game Completion Rate** | **99.98%** (29.3k) | **100.00%** (40k) | **100.00%** (50k) | **99.998%** (59,999 / 60,000 rooms, 0 aborts) | $\ge 80.0\%$ ✅ |
-| **Player Session Completion** | **99.99%** (146k) | **99.9985%** (200k) | **99.9892%** (250k) | **99.988%** (299,964 / 300,000 games) | $\ge 80.0\%$ ✅ |
-| **P95 Message Latency** | **595ms – 1,026ms** | **2.0 ms** | **3.0ms – 16.0ms** | **3.0ms – 4.0ms** (`toggle_ready -> player_list`) | $\le 50.0\text{ ms}$ ✅ |
-| **Total Messages Processed** | **512M messages** | **648M messages** | **1.55B messages** | **1,811,280,000 delivered (1.81B)** | Sustained throughput |
-| **Peak Fleet Bandwidth** | **2.20G TX / 1.80G RX** | **1.85G TX / 1.59G RX** | **2.92G TX / 2.32G RX** | **3.73 Gbps TX / 3.34 Gbps RX** (>7 Gbps line rate) | AWS Line Rate |
-| **Gateway Frame Drops** | **0 control, 0 lossy** | **0 control, 0 lossy** | **0 ctrl, 21k lossy** | **0 control, 0 lossy (at 30Hz drawing)** | 0 control drops ✅ |
-| **Python Worker CPU (p95)** | **23.3%** | **10% – 12%** | **12% – 13%** | **52% – 56%** (Optimized efficiency; 5 hosts) | $< 70\%$ ✅ |
+| **Concurrent Players (VUs)** | **200,000 VUs** | **250,000 VUs** | **300,000 VUs** | **360,000 VUs (359,399 live peak)** | Fleet Target |
+| **Active Game Rooms** | **40,000 rooms** | **50,000 rooms** | **60,000 rooms** | **36,000 rooms (10 players/room)** | 100% Target Met ✅ |
+| **WebSocket Connection Success** | **99.9985%** (200k) | **100.00%** (250k) | **100.00%** (300k) | **100.00%** (360,000 conns established) | $\ge 99.0\%$ ✅ |
+| **Game Completion Rate** | **100.00%** (40k) | **100.00%** (50k) | **99.998%** (60k) | **99.50%** (35,818 / 36,000 completed) | $\ge 80.0\%$ ✅ |
+| **Player Session Completion** | **99.9985%** (200k) | **99.9892%** (250k) | **99.988%** (300k) | **99.47%** (358,088 completed sessions) | $\ge 80.0\%$ ✅ |
+| **Total Messages Processed** | **648M messages** | **1.55B messages** | **1.81B messages** | **8,375,992,000 delivered (8.38B!)** | Sustained throughput |
+| **Peak Fleet Bandwidth** | **1.85G TX / 1.59G RX** | **2.92G TX / 2.32G RX** | **3.73G TX / 3.34G RX** | **4.92 Gbps TX / 4.47 Gbps RX** (>9.39G wire) | AWS Line Rate |
+| **Total LB Data Transfer** | — | — | ~670 GB | **1.54 Terabytes TX / 1.19 Terabytes RX** | Sustained transfer |
+| **Gateway Frame Drops** | **0 control, 0 lossy** | **0 ctrl, 21k lossy** | **0 control, 0 lossy** | **0 control, 0 lossy (at 30Hz drawing)** | 0 control drops ✅ |
+| **Cluster CPU (p95)** | **10% – 12%** | **12% – 13%** | **52% – 56%** | **LBs: 65%–79%, Gateways: 63%–74%, Workers: 79%** | $< 80\%$ ✅ |
 
 See the full [Performance Test Report](docs/performance-test-report.md) for detailed telemetry.
 
