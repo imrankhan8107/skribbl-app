@@ -41,6 +41,7 @@ single_instance_type = "t3.small"
 # 200k load:      gateway_count=8, gateways_per_host=3 (24 gw, c6i.2xlarge), worker_count=14, workers_per_host=6 (84 workers, c6i.4xlarge), lb_count=2 (c6i.4xlarge), redis=c5a.xlarge, load_generator_count=5 (c5a.8xlarge)
 # 250k-300k load: gateway_count=10, gateways_per_host=3 (30 gw, c6i.2xlarge), worker_count=5, workers_per_host=6 (30 workers, c6i.4xlarge), lb_count=3 (c6i.4xlarge), redis=c5a.xlarge, load_generator_count=6 (c5a.8xlarge)
 # 360k load:      gateway_count=10, gateways_per_host=3 (30 gw, c6i.2xlarge), worker_count=6, workers_per_host=6 (36 workers, c6i.4xlarge), lb_count=4 (c6i.4xlarge), redis=c5a.xlarge, load_generator_count=6 (c5a.8xlarge)
+# 500k load:      gateway_count=14, gateways_per_host=3 (42 gw, c6i.2xlarge), worker_count=8, workers_per_host=6 (48 workers, c6i.4xlarge), lb_count=5 (c6i.4xlarge), redis=c5a.xlarge, load_generator_count=8 (c5a.8xlarge)
 gateway_count     = 3
 gateways_per_host = 3
 worker_count      = 5
@@ -54,7 +55,8 @@ workers_per_host  = 6
 # For 150k:    c5a.4xlarge for LB, gateways, and workers
 # For 200k:    c6i.4xlarge for LB (12.5 Gbps) and Workers, c6i.2xlarge for Gateways, c5a.8xlarge for Load Generators
 # For 250k-300k: c6i.4xlarge for LB (3 instances behind NLB) and Workers (5 instances), c6i.2xlarge for Gateways (10 instances), c5a.8xlarge for Load Generators (6 instances)
-# For 360k+:     c6i.4xlarge for LB (4 instances behind NLB) and Workers (6 instances), c6i.2xlarge for Gateways (10 instances), c5a.8xlarge for Load Generators (6 instances)
+# For 360k:      c6i.4xlarge for LB (4 instances behind NLB) and Workers (6 instances), c6i.2xlarge for Gateways (10 instances), c5a.8xlarge for Load Generators (6 instances)
+# For 500k+:     c6i.4xlarge for LB (5 instances behind NLB) and Workers (8 instances), c6i.2xlarge for Gateways (14 instances), c5a.8xlarge for Load Generators (8 instances)
 # LB Tier:
 # Behind AWS L4 Network Load Balancer (NLB), distributes incoming TCP traffic across horizontal Nginx instances
 # Dev / baseline: lb_count=1 (t3.medium)
@@ -63,6 +65,7 @@ workers_per_host  = 6
 # 200k load:      lb_count=2 (c6i.4xlarge)
 # 250k-300k load: lb_count=3 (c6i.4xlarge)
 # 360k load:      lb_count=4 (c6i.4xlarge)
+# 500k load:      lb_count=5 (c6i.4xlarge)
 lb_count              = 2
 lb_instance_type      = "c5a.xlarge"
 gateway_instance_type = "c5a.2xlarge"
