@@ -178,3 +178,9 @@ variable "write_coalesce" {
   type        = bool
   default     = true
 }
+
+variable "assign_public_ips_to_backends" {
+  description = "If true, allocates individual public IPs for every worker, gateway, and redis VM (requires high Azure public IP quota). If false (default), keeps backends private within VNet, allocating public IPs only to L4 LB, LB-1, and k6 (max 3 public IPs total, compliant with standard Azure quotas)."
+  type        = bool
+  default     = false
+}

@@ -266,7 +266,7 @@ resource "azurerm_linux_virtual_machine" "single" {
 # --- Redis Instance ---
 
 resource "azurerm_public_ip" "redis" {
-  count               = var.single_instance_mode ? 0 : 1
+  count               = (var.single_instance_mode || !var.assign_public_ips_to_backends) ? 0 : 1
   name                = "${var.app_name}-redis-pip"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -330,7 +330,7 @@ resource "azurerm_linux_virtual_machine" "redis" {
 # --- Python Worker Instances ---
 
 resource "azurerm_public_ip" "workers" {
-  count               = var.single_instance_mode ? 0 : var.worker_count
+  count               = (var.single_instance_mode || !var.assign_public_ips_to_backends) ? 0 : var.worker_count
   name                = "${var.app_name}-worker-${count.index + 1}-pip"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -348,7 +348,7 @@ resource "azurerm_network_interface" "workers" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.subnet.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.workers[count.index].id
+    public_ip_address_id          = length(azurerm_public_ip.workers) > count.index ? azurerm_public_ip.workers[count.index].id : null
   }
 }
 
@@ -400,7 +400,7 @@ resource "azurerm_linux_virtual_machine" "workers" {
 # --- Go Gateway Instances ---
 
 resource "azurerm_public_ip" "gateways" {
-  count               = var.single_instance_mode ? 0 : var.gateway_count
+  count               = (var.single_instance_mode || !var.assign_public_ips_to_backends) ? 0 : var.gateway_count
   name                = "${var.app_name}-gateway-${count.index + 1}-pip"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -418,7 +418,7 @@ resource "azurerm_network_interface" "gateways" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.subnet.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.gateways[count.index].id
+    public_ip_address_id          = length(azurerm_public_ip.gateways) > count.index ? azurerm_public_ip.gateways[count.index].id : null
   }
 }
 
@@ -472,7 +472,7 @@ resource "azurerm_linux_virtual_machine" "gateways" {
 # --- Nginx Load Balancer Instances ---
 
 resource "azurerm_public_ip" "lb" {
-  count               = var.single_instance_mode ? 0 : var.lb_count
+  count               = var.single_instance_mode ? 0 : (var.assign_public_ips_to_backends ? var.lb_count : 1)
   name                = var.lb_count > 1 ? "${var.app_name}-lb-${count.index + 1}-pip" : "${var.app_name}-lb-pip"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -495,7 +495,7 @@ resource "azurerm_network_interface" "lb" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.subnet.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.lb[count.index].id
+    public_ip_address_id          = length(azurerm_public_ip.lb) > count.index ? azurerm_public_ip.lb[count.index].id : null
   }
 
   tags = {
@@ -640,7 +640,7 @@ resource "azurerm_lb_rule" "ws" {
 # --- In-VNet k6 Load Generator Instance ---
 
 resource "azurerm_public_ip" "load_generator" {
-  count               = (!var.single_instance_mode && var.enable_load_generator) ? var.load_generator_count : 0
+  count               = (!var.single_instance_mode && var.enable_load_generator) ? (var.assign_public_ips_to_backends ? var.load_generator_count : 1) : 0
   name                = "${var.app_name}-k6-${count.index + 1}-pip"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -658,7 +658,7 @@ resource "azurerm_network_interface" "load_generator" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.subnet.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.load_generator[count.index].id
+    public_ip_address_id          = length(azurerm_public_ip.load_generator) > count.index ? azurerm_public_ip.load_generator[count.index].id : null
   }
 }
 
