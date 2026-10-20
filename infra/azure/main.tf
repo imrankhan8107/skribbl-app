@@ -98,7 +98,8 @@ resource "azurerm_network_security_group" "nsg" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "80"
-    source_address_prefixes    = local.web_allowed_cidrs
+    source_address_prefix      = var.is_private ? null : "*"
+    source_address_prefixes    = var.is_private ? local.safe_allowed_cidrs : null
     destination_address_prefix = "*"
   }
 
@@ -111,7 +112,8 @@ resource "azurerm_network_security_group" "nsg" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "443"
-    source_address_prefixes    = local.web_allowed_cidrs
+    source_address_prefix      = var.is_private ? null : "*"
+    source_address_prefixes    = var.is_private ? local.safe_allowed_cidrs : null
     destination_address_prefix = "*"
   }
 
@@ -124,7 +126,8 @@ resource "azurerm_network_security_group" "nsg" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "9000-9020"
-    source_address_prefixes    = local.web_allowed_cidrs
+    source_address_prefix      = var.is_private ? null : "*"
+    source_address_prefixes    = var.is_private ? local.safe_allowed_cidrs : null
     destination_address_prefix = "*"
   }
 
