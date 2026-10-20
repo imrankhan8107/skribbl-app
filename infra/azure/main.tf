@@ -631,7 +631,7 @@ resource "azurerm_lb_rule" "ws" {
   name                           = "LBRule-WS"
   protocol                       = "Tcp"
   frontend_port                  = 9000
-  backend_port                   = 80
+  backend_port                   = 9000
   frontend_ip_configuration_name = "PublicIPAddress"
   backend_address_pool_ids       = [azurerm_lb_backend_address_pool.lb_pool[0].id]
   probe_id                       = azurerm_lb_probe.nginx_health[0].id
