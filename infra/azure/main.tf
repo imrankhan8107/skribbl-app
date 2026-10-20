@@ -454,6 +454,7 @@ resource "azurerm_linux_virtual_machine" "gateways" {
     gateways_per_host       = var.gateways_per_host
     trace_enabled           = var.trace_enabled
     grpc_stream_buffer_size = var.grpc_stream_buffer_size
+    write_coalesce          = var.write_coalesce
   }))
 
   depends_on = [azurerm_linux_virtual_machine.redis]
@@ -464,20 +465,25 @@ resource "azurerm_linux_virtual_machine" "gateways" {
   }
 }
 
-# --- Nginx Load Balancer Instance ---
+# --- Nginx Load Balancer Instances ---
 
 resource "azurerm_public_ip" "lb" {
-  count               = var.single_instance_mode ? 0 : 1
-  name                = "${var.app_name}-lb-pip"
+  count               = var.single_instance_mode ? 0 : var.lb_count
+  name                = var.lb_count > 1 ? "${var.app_name}-lb-${count.index + 1}-pip" : "${var.app_name}-lb-pip"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
   allocation_method   = "Static"
   sku                 = "Standard"
+
+  tags = {
+    Application = var.app_name
+    Tier        = "load-balancer"
+  }
 }
 
 resource "azurerm_network_interface" "lb" {
-  count               = var.single_instance_mode ? 0 : 1
-  name                = "${var.app_name}-lb-nic"
+  count               = var.single_instance_mode ? 0 : var.lb_count
+  name                = var.lb_count > 1 ? "${var.app_name}-lb-${count.index + 1}-nic" : "${var.app_name}-lb-nic"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
 
@@ -485,19 +491,24 @@ resource "azurerm_network_interface" "lb" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.subnet.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = length(azurerm_public_ip.lb) > 0 ? azurerm_public_ip.lb[0].id : null
+    public_ip_address_id          = azurerm_public_ip.lb[count.index].id
+  }
+
+  tags = {
+    Application = var.app_name
+    Tier        = "load-balancer"
   }
 }
 
 resource "azurerm_linux_virtual_machine" "lb" {
-  count               = var.single_instance_mode ? 0 : 1
-  name                = "${var.app_name}-lb"
+  count               = var.single_instance_mode ? 0 : var.lb_count
+  name                = var.lb_count > 1 ? "${var.app_name}-lb-${count.index + 1}" : "${var.app_name}-lb"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
   size                = var.lb_vm_size
   admin_username      = "ubuntu"
 
-  network_interface_ids = [azurerm_network_interface.lb[0].id]
+  network_interface_ids = [azurerm_network_interface.lb[count.index].id]
 
   admin_ssh_key {
     username   = "ubuntu"
@@ -524,6 +535,8 @@ resource "azurerm_linux_virtual_machine" "lb" {
     gateway_ports = [for i in range(var.gateways_per_host) : 9000 + i * 2]
     worker_ips    = azurerm_network_interface.workers[*].private_ip_address
     worker_ports  = [for i in range(var.workers_per_host) : 8000 + i]
+    is_primary    = count.index == 0
+    lb_id         = count.index + 1
     nginx_config = templatefile("${path.module}/templates/nginx.conf.tftpl", {
       gateway_ips   = azurerm_network_interface.gateways[*].private_ip_address
       gateway_ports = [for i in range(var.gateways_per_host) : 9000 + i * 2]
@@ -537,6 +550,87 @@ resource "azurerm_linux_virtual_machine" "lb" {
     Application = var.app_name
     Tier        = "load-balancer"
   }
+}
+
+# --- L4 Azure Load Balancer ---
+# Fronts the horizontal Nginx LB instances with a single high-throughput VIP
+
+resource "azurerm_public_ip" "app_lb" {
+  count               = var.single_instance_mode ? 0 : 1
+  name                = "${var.app_name}-l4-lb-pip"
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.rg.location
+  allocation_method   = "Static"
+  sku                 = "Standard"
+
+  tags = {
+    Application = var.app_name
+    Tier        = "l4-lb"
+  }
+}
+
+resource "azurerm_lb" "app_lb" {
+  count               = var.single_instance_mode ? 0 : 1
+  name                = "${var.app_name}-l4-lb"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  sku                 = "Standard"
+
+  frontend_ip_configuration {
+    name                 = "PublicIPAddress"
+    public_ip_address_id = azurerm_public_ip.app_lb[0].id
+  }
+
+  tags = {
+    Application = var.app_name
+    Tier        = "l4-lb"
+  }
+}
+
+resource "azurerm_lb_backend_address_pool" "lb_pool" {
+  count           = var.single_instance_mode ? 0 : 1
+  loadbalancer_id = azurerm_lb.app_lb[0].id
+  name            = "NginxPool"
+}
+
+resource "azurerm_network_interface_backend_address_pool_association" "lb_assoc" {
+  count                   = var.single_instance_mode ? 0 : var.lb_count
+  network_interface_id    = azurerm_network_interface.lb[count.index].id
+  ip_configuration_name   = "internal"
+  backend_address_pool_id = azurerm_lb_backend_address_pool.lb_pool[0].id
+}
+
+resource "azurerm_lb_probe" "nginx_health" {
+  count           = var.single_instance_mode ? 0 : 1
+  loadbalancer_id = azurerm_lb.app_lb[0].id
+  name            = "nginx-health-probe"
+  port            = 80
+  protocol        = "Http"
+  request_path    = "/nginx-health"
+}
+
+resource "azurerm_lb_rule" "http" {
+  count                          = var.single_instance_mode ? 0 : 1
+  loadbalancer_id                = azurerm_lb.app_lb[0].id
+  name                           = "LBRule-HTTP"
+  protocol                       = "Tcp"
+  frontend_port                  = 80
+  backend_port                   = 80
+  frontend_ip_configuration_name = "PublicIPAddress"
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.lb_pool[0].id]
+  probe_id                       = azurerm_lb_probe.nginx_health[0].id
+}
+
+resource "azurerm_lb_rule" "ws" {
+  count                          = var.single_instance_mode ? 0 : 1
+  loadbalancer_id                = azurerm_lb.app_lb[0].id
+  name                           = "LBRule-WS"
+  protocol                       = "Tcp"
+  frontend_port                  = 9000
+  backend_port                   = 80
+  frontend_ip_configuration_name = "PublicIPAddress"
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.lb_pool[0].id]
+  probe_id                       = azurerm_lb_probe.nginx_health[0].id
 }
 
 # --- In-VNet k6 Load Generator Instance ---
@@ -593,13 +687,14 @@ resource "azurerm_linux_virtual_machine" "load_generator" {
   }
 
   custom_data = base64encode(templatefile("${path.module}/templates/cloud-init-k6.tftpl", {
-    git_repo_url  = var.git_repo_url
-    git_branch    = var.git_branch
-    runner_id     = count.index + 1
-    runner_count  = var.load_generator_count
-    lb_private_ip = length(azurerm_network_interface.lb) > 0 ? azurerm_network_interface.lb[0].private_ip_address : ""
-    coord_host    = length(azurerm_network_interface.gateways) > 0 ? azurerm_network_interface.gateways[0].private_ip_address : ""
-    coord_hosts   = join(",", azurerm_network_interface.gateways[*].private_ip_address)
+    git_repo_url    = var.git_repo_url
+    git_branch      = var.git_branch
+    runner_id       = count.index + 1
+    runner_count    = var.load_generator_count
+    lb_target_host  = length(azurerm_network_interface.lb) > 0 ? azurerm_network_interface.lb[0].private_ip_address : ""
+    lb_target_hosts = join(",", azurerm_network_interface.lb[*].private_ip_address)
+    coord_host      = length(azurerm_network_interface.gateways) > 0 ? azurerm_network_interface.gateways[0].private_ip_address : ""
+    coord_hosts     = join(",", azurerm_network_interface.gateways[*].private_ip_address)
     coord_urls = join(",", flatten([
       for ip in azurerm_network_interface.gateways[*].private_ip_address : [
         for i in range(var.gateways_per_host) : "${ip}:${9100 + i * 2}"
@@ -611,7 +706,7 @@ resource "azurerm_linux_virtual_machine" "load_generator" {
       ]
     ]))
     cluster_nodes = join(",", flatten([
-      length(azurerm_network_interface.lb) > 0 ? ["lb:${azurerm_network_interface.lb[0].private_ip_address}:9101"] : [],
+      [for idx, inst in azurerm_network_interface.lb : "lb-${idx + 1}:${inst.private_ip_address}:9101"],
       length(azurerm_network_interface.redis) > 0 ? ["redis:${azurerm_network_interface.redis[0].private_ip_address}:9101"] : [],
       [for idx, ip in azurerm_network_interface.gateways[*].private_ip_address : "gateway-${idx + 1}:${ip}:9101"],
       [for idx, ip in azurerm_network_interface.workers[*].private_ip_address : "worker-${idx + 1}:${ip}:9101"],
@@ -619,6 +714,7 @@ resource "azurerm_linux_virtual_machine" "load_generator" {
   }))
 
   depends_on = [
+    azurerm_lb.app_lb,
     azurerm_linux_virtual_machine.lb,
     azurerm_linux_virtual_machine.workers,
     azurerm_linux_virtual_machine.gateways,

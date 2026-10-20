@@ -32,24 +32,30 @@ single_instance_mode    = false
 single_instance_vm_size = "Standard_B2s"
 
 # --- Multi-Host Cluster Sizing (Used when single_instance_mode = false) ---
-# Cluster sizing
-gateway_count     = 2
-gateways_per_host = 1
-worker_count      = 2
-workers_per_host  = 2
+# Scale presets:
+# Dev / baseline: gateway_count=2, gateways_per_host=1, worker_count=2, workers_per_host=2, lb_count=1 (Standard_B2s)
+# 25k-50k load:   gateway_count=3, gateways_per_host=3, worker_count=5, workers_per_host=6, lb_count=2 (Standard_D4as_v5)
+# 100k-150k load: gateway_count=6, gateways_per_host=3, worker_count=8, workers_per_host=6, lb_count=2-3 (Standard_D8as_v5), load_generator_count=3-4
+# 200k-300k load: gateway_count=10, gateways_per_host=3, worker_count=6, workers_per_host=6, lb_count=3-4 (Standard_D16as_v5), load_generator_count=6
+# 360k-500k load: gateway_count=14, gateways_per_host=3, worker_count=8, workers_per_host=6, lb_count=5 (Standard_D16as_v5), load_generator_count=8
+gateway_count     = 3
+gateways_per_host = 3
+worker_count      = 5
+workers_per_host  = 6
+lb_count          = 2
 
 # Azure VM sizing
 # Development / low-cost: Standard_B2s (2 vCPU, 4GB)
-# Benchmarks / production: Standard_D4as_v5 (4 vCPU, 16GB)
+# Benchmarks / production: Standard_D4as_v5 (4 vCPU, 16GB) / Standard_D8as_v5 (8 vCPU, 32GB) / Standard_D16as_v5 (16 vCPU, 64GB)
 lb_vm_size             = "Standard_D4as_v5"
 gateway_vm_size        = "Standard_D4as_v5"
 worker_vm_size         = "Standard_D4as_v5"
 redis_vm_size          = "Standard_D2as_v5"
-load_generator_vm_size = "Standard_D4as_v5"
+load_generator_vm_size = "Standard_D8as_v5"
 
 # Git repository configuration
 git_repo_url = "https://github.com/imrankhan8107/skribbl-app.git"
-git_branch   = "feature/go-gateway"
+git_branch   = "master"
 
 # In-VNet k6 Load Generator
 enable_load_generator = true
@@ -57,5 +63,6 @@ load_generator_count  = 1
 
 # Performance tuning
 trace_enabled           = false
-grpc_stream_buffer_size = 1024
+grpc_stream_buffer_size = 4096
 grpc_send_queue_maxsize = 1024
+write_coalesce          = true

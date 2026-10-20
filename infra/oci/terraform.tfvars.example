@@ -35,7 +35,7 @@ ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5..."
 # ==============================================================================
 # Set true for single-machine deployment (OCI Always Free: 1 VM with Docker Compose)
 # Set false for multi-host distributed cluster (separate VMs for LB, Gateways, Workers, Redis)
-single_instance_mode = true
+single_instance_mode = false
 
 # --- Single Instance Mode Settings (Always Free Ampere A1.Flex ARM) ---
 single_instance_shape         = "VM.Standard.A1.Flex"
@@ -44,22 +44,29 @@ single_instance_memory_in_gbs = 24   # Up to 24 free GB RAM
 single_instance_app_scale     = 4    # 4 Python game worker container replicas
 
 # --- Multi-Host Cluster Sizing (Used when single_instance_mode = false) ---
-gateway_count     = 2
-gateways_per_host = 1
-worker_count      = 2
-workers_per_host  = 2
+# Scale presets:
+# Dev / baseline: gateway_count=2, gateways_per_host=1, worker_count=2, workers_per_host=2, lb_count=1
+# 25k-50k load:   gateway_count=3, gateways_per_host=3, worker_count=5, workers_per_host=6, lb_count=2
+# 100k-150k load: gateway_count=6, gateways_per_host=3, worker_count=8, workers_per_host=6, lb_count=2-3, load_generator_count=3-4
+# 200k-300k load: gateway_count=10, gateways_per_host=3, worker_count=6, workers_per_host=6, lb_count=3-4, load_generator_count=6
+# 360k-500k load: gateway_count=14, gateways_per_host=3, worker_count=8, workers_per_host=6, lb_count=5, load_generator_count=8
+gateway_count     = 3
+gateways_per_host = 3
+worker_count      = 5
+workers_per_host  = 6
+lb_count          = 2
 
 lb_shape          = "VM.Standard.E4.Flex"
-lb_ocpus          = 2
-lb_memory_in_gbs  = 8
+lb_ocpus          = 4
+lb_memory_in_gbs  = 16
 
 gateway_shape         = "VM.Standard.E4.Flex"
 gateway_ocpus         = 4
 gateway_memory_in_gbs = 16
 
 worker_shape         = "VM.Standard.E4.Flex"
-worker_ocpus         = 4
-worker_memory_in_gbs = 16
+worker_ocpus         = 8
+worker_memory_in_gbs = 32
 
 redis_shape         = "VM.Standard.E4.Flex"
 redis_ocpus         = 2
@@ -68,14 +75,15 @@ redis_memory_in_gbs = 8
 enable_load_generator        = true
 load_generator_count         = 1
 load_generator_shape         = "VM.Standard.E4.Flex"
-load_generator_ocpus         = 4
-load_generator_memory_in_gbs = 16
+load_generator_ocpus         = 8
+load_generator_memory_in_gbs = 32
 
 # Git repository configuration
 git_repo_url = "https://github.com/imrankhan8107/skribbl-app.git"
-git_branch   = "feature/go-gateway"
+git_branch   = "master"
 
 # Performance tuning
 trace_enabled           = false
-grpc_stream_buffer_size = 1024
+grpc_stream_buffer_size = 4096
 grpc_send_queue_maxsize = 1024
+write_coalesce          = true

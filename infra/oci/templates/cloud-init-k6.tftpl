@@ -1,31 +1,27 @@
 #!/bin/bash
-set -ex
-exec > /var/log/skribbl-k6-init.log 2>&1
-echo "=== k6 Load Generator initialization started at $(date) ==="
+set -euo pipefail
 
-# Allow internal VCN communication through local iptables
-iptables -I INPUT -s 10.10.0.0/16 -j ACCEPT || true
+echo "=== Starting Load Generator initialization at $(date) ==="
 
-# 1. OS & TCP Kernel Tuning for High Concurrency
-cat << 'EOF' >> /etc/sysctl.conf
+# 1. Apply kernel TCP & socket tuning
+cat <<'EOF' > /etc/sysctl.d/99-k6-tuning.conf
 fs.file-max = 2097152
 net.core.somaxconn = 65535
-net.core.netdev_max_backlog = 65536
-net.ipv4.ip_local_port_range = 1024 65535
-net.ipv4.tcp_max_syn_backlog = 65536
-net.ipv4.tcp_fin_timeout = 15
-net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_max_syn_backlog = 65535
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
 net.ipv4.tcp_rmem = 4096 87380 16777216
 net.ipv4.tcp_wmem = 4096 65536 16777216
-vm.swappiness = 20
+net.ipv4.tcp_max_tw_buckets = 2000000
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.ip_local_port_range = 1024 65535
 EOF
-sysctl -p
+sysctl --system
 
-cat << 'EOF' >> /etc/security/limits.conf
+# Configure user file limits
+cat <<'EOF' >> /etc/security/limits.conf
 * soft nofile 131072
 * hard nofile 131072
-* soft nproc 65536
-* hard nproc 65536
 root soft nofile 131072
 root hard nofile 131072
 ubuntu soft nofile 131072
@@ -50,16 +46,13 @@ echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.i
 apt-get update -y
 apt-get install -y k6
 
-# 3. Clone Repository
-cd /home/ubuntu
-git clone -b ${git_branch} ${git_repo_url} skribbl-app
-chown -R ubuntu:ubuntu /home/ubuntu/skribbl-app
+# 3. Clone repository into ubuntu home
+su - ubuntu -c "git clone -b ${git_branch} ${git_repo_url} /home/ubuntu/skribbl-app"
 
-# Start cluster monitor agent on load generator host
-nohup python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py agent --role "load-gen-${runner_id}" --port 9101 > /var/log/skribbl-monitor.log 2>&1 &
-
+# 4. Generate /home/ubuntu/run-test.sh
 cat << 'EOF' > /home/ubuntu/run-test.sh
 #!/bin/bash
+# Usage: ./run-test.sh [VUS] [PLAYERS_PER_ROOM] [STROKE_HZ] [RAMP_SECONDS] [HOLD_SECONDS] [VU_OFFSET]
 VUS=$${1:-100}
 PLAYERS=$${2:-2}
 HZ=$${3:-20}
@@ -80,7 +73,7 @@ CLUSTER_NODES="${cluster_nodes},load-gen-${runner_id}:127.0.0.1:9101"
 
 echo "=========================================================="
 echo " Starting Skribbl In-VCN k6 Load Test (Runner $RUNNER_ID/${runner_count})"
-echo " Target LB: http://${lb_private_ip}:80"
+echo " Target LBs: ${lb_target_hosts} (Primary: ${lb_target_host}:80)"
 echo " Coord URLs: $COORD_URLS"
 echo " Gateway health targets: $HEALTH_URLS"
 echo " VUs: $VUS (VU_OFFSET: $VU_OFFSET) | Players/Room: $PLAYERS | Stroke: $${HZ}Hz | Ramp: $${RAMP}s | Hold: $${HOLD}s"
@@ -91,33 +84,32 @@ echo "=== Resetting measurement window across all cluster instances ==="
 python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py reset --nodes "$CLUSTER_NODES" || true
 echo ""
 
-# Explicitly raise this shell's FD limit before k6 (see AWS k6 template for the
-# full rationale): limits.conf only applies via PAM to login shells, so a
-# cloud-init/non-login context can inherit the 1024 default and silently cap k6
-# at ~1000 sockets — connect failures + huge RTTs at LOW CPU.
 ulimit -n 131072 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
 echo "k6 process file-descriptor limit (ulimit -n): $(ulimit -n)"
 
 cd /home/ubuntu/skribbl-app
 k6 run \
-  -e HOST=${lb_private_ip} \
+  -e HOSTS="${lb_target_hosts}" \
+  -e HOST=${lb_target_host} \
   -e PORT=80 \
   -e COORD_HOST=$COORD_HOST \
   -e COORD_HOSTS="$COORD_HOSTS" \
   -e COORD_URLS="$COORD_URLS" \
   -e COORD_PORT=$COORD_PORT \
   -e HEALTH_URLS="$HEALTH_URLS" \
+  -e TURN_DURATION=30 \
   -e VUS=$VUS \
   -e VU_OFFSET=$VU_OFFSET \
   -e PLAYERS_PER_ROOM=$PLAYERS \
   -e STROKE_HZ=$HZ \
   -e RAMP_SECONDS=$RAMP \
   -e HOLD_SECONDS=$HOLD \
+  -e CONNECT_TIMEOUT_MS=$${CONNECT_TIMEOUT_MS:-60000} \
   scripts/k6_grpc_load_test.js
 
 echo ""
-echo "=== Fetching cluster post-test resource summary ==="
-python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py summary --nodes "$CLUSTER_NODES" || true
+echo "=== Fetching Cluster Performance & Network Traffic Report ==="
+python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py report --nodes "$CLUSTER_NODES" --output /home/ubuntu/k6-cluster-metrics.json
 EOF
 
 chmod +x /home/ubuntu/run-test.sh
@@ -138,20 +130,28 @@ RUNNER_ID=${runner_id}
 DEFAULT_OFFSET=$(( (RUNNER_ID - 1) * VUS ))
 VU_OFFSET=$${6:-$${VU_OFFSET:-$DEFAULT_OFFSET}}
 
-export HOST=${lb_private_ip}
+export HOSTS="${lb_target_hosts}"
+export HOST=${lb_target_host}
 export PORT=80
-export COORD_HOST=$COORD_HOST
-export COORD_HOSTS="$COORD_HOSTS"
-export COORD_URLS="$COORD_URLS"
-export COORD_PORT=$COORD_PORT
-export HEALTH_URLS="$HEALTH_URLS"
+export COORD_HOST="${coord_host}"
+export COORD_HOSTS="${coord_hosts}"
+export COORD_URLS="${coord_urls}"
+export COORD_PORT=9100
+export HEALTH_URLS="${gateway_health_urls}"
 CLUSTER_NODES="${cluster_nodes},load-gen-${runner_id}:127.0.0.1:9101"
 
 echo "=========================================================="
 echo " Starting Skribbl In-VCN Go Load Test (Runner $RUNNER_ID/${runner_count})"
-echo " Target LB: ${lb_private_ip}:80"
+echo " Target LBs: ${lb_target_hosts} (Primary: ${lb_target_host}:80)"
+echo " Coord URLs: $COORD_URLS"
+echo " Gateway health targets: $HEALTH_URLS"
 echo " VUs: $VUS (VU_OFFSET: $VU_OFFSET) | Players/Room: $PLAYERS | Stroke: $${HZ}Hz | Ramp: $${RAMP}s | Hold: $${HOLD}s"
 echo "=========================================================="
+
+echo ""
+echo "=== Resetting measurement window across all cluster instances ==="
+python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py reset --nodes "$CLUSTER_NODES" || true
+echo ""
 
 ulimit -n 131072 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
 
@@ -169,8 +169,8 @@ fi
   -offset $VU_OFFSET
 
 echo ""
-echo "=== Fetching cluster post-test resource summary ==="
-python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py summary --nodes "$CLUSTER_NODES" || true
+echo "=== Fetching Cluster Performance & Network Traffic Report ==="
+python3 /home/ubuntu/skribbl-app/scripts/cluster_monitor.py report --nodes "$CLUSTER_NODES" --output /home/ubuntu/go-cluster-metrics.json
 EOF
 
 chmod +x /home/ubuntu/run-test-2.sh

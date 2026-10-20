@@ -18,7 +18,7 @@ output "node_ssh" {
       server = "ssh ubuntu@${oci_core_instance.single[0].public_ip}"
     } : {}
     ) : merge(
-    length(oci_core_instance.lb) > 0 ? { lb = "ssh ubuntu@${oci_core_instance.lb[0].public_ip}" } : {},
+    { for idx, inst in oci_core_instance.lb : "lb-${idx + 1}" => "ssh ubuntu@${inst.public_ip}" },
     length(oci_core_instance.redis) > 0 ? { redis = "ssh ubuntu@${oci_core_instance.redis[0].public_ip}" } : {},
     { for idx, inst in oci_core_instance.gateways : "gateway-${idx + 1}" => "ssh ubuntu@${inst.public_ip}" },
     { for idx, inst in oci_core_instance.workers : "worker-${idx + 1}" => "ssh ubuntu@${inst.public_ip}" },
@@ -30,11 +30,10 @@ output "internal_topology" {
   description = "Private IP layout within OCI VCN"
   value = {
     server_private_ip          = length(oci_core_instance.single) > 0 ? oci_core_instance.single[0].private_ip : null
-    lb_private_ip              = length(oci_core_instance.lb) > 0 ? oci_core_instance.lb[0].private_ip : null
+    lb_private_ips             = oci_core_instance.lb[*].private_ip
     redis_private_ip           = length(oci_core_instance.redis) > 0 ? oci_core_instance.redis[0].private_ip : null
     gateway_private_ips        = oci_core_instance.gateways[*].private_ip
     worker_private_ips         = oci_core_instance.workers[*].private_ip
     load_generator_private_ips = oci_core_instance.load_generator[*].private_ip
   }
 }
-

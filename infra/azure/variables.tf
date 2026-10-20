@@ -95,6 +95,12 @@ variable "workers_per_host" {
   default     = 2
 }
 
+variable "lb_count" {
+  description = "Number of dedicated Nginx Load Balancer Azure VMs behind the L4 Load Balancer"
+  type        = number
+  default     = 2
+}
+
 variable "lb_vm_size" {
   description = "Azure VM size for Nginx Load Balancer (e.g. Standard_D4as_v5 for benchmarks, Standard_B2s for dev)"
   type        = string
@@ -128,7 +134,7 @@ variable "git_repo_url" {
 variable "git_branch" {
   description = "Git branch to deploy"
   type        = string
-  default     = "feature/go-gateway"
+  default     = "master"
 }
 
 variable "enable_load_generator" {
@@ -156,13 +162,19 @@ variable "trace_enabled" {
 }
 
 variable "grpc_stream_buffer_size" {
-  description = "Gateway gRPC send queue size"
+  description = "Go Gateway outbound gRPC stream buffer capacity per worker stream (prevents room creation drops at 100k scale)"
+  type        = number
+  default     = 4096
+}
+
+variable "grpc_send_queue_maxsize" {
+  description = "Worker outbound gRPC stream send queue buffer size (prevents memory explosion at high stroke rates)"
   type        = number
   default     = 1024
 }
 
-variable "grpc_send_queue_maxsize" {
-  description = "Worker gRPC send queue max size"
-  type        = number
-  default     = 1024
+variable "write_coalesce" {
+  description = "Enable gateway writePump burst write-coalescing (default true = committed behavior)."
+  type        = bool
+  default     = true
 }

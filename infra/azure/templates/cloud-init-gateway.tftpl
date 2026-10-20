@@ -1,30 +1,33 @@
 #!/bin/bash
-set -ex
-exec > /var/log/skribbl-gateway-init.log 2>&1
-echo "=== Gateway initialization started at $(date) ==="
+set -euo pipefail
 
-# OS tuning
-sysctl -w net.core.somaxconn=65535
-echo "net.core.somaxconn=65535" >> /etc/sysctl.conf
-echo "* soft nofile 65535" >> /etc/security/limits.conf
-echo "* hard nofile 65535" >> /etc/security/limits.conf
+echo "=== Starting Go Gateway initialization at $(date) ==="
 
-# Install Docker and Git
-apt-get update -y
-apt-get install -y ca-certificates curl gnupg git
+# Apply kernel and TCP performance tuning for high-concurrency WebSocket connections
+cat <<'EOF' > /etc/sysctl.d/99-websocket-tuning.conf
+fs.file-max = 2097152
+net.core.somaxconn = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.ipv4.tcp_max_tw_buckets = 2000000
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.ip_local_port_range = 1024 65535
+EOF
+sysctl --system
 
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-apt-get update -y
-apt-get install -y docker-ce docker-ce-cli containerd.io
-
-systemctl enable docker
-systemctl start docker
+# Configure user file limits
+cat <<'EOF' >> /etc/security/limits.conf
+* soft nofile 65535
+* hard nofile 65535
+root soft nofile 65535
+root hard nofile 65535
+EOF
 
 # Clone repository
+mkdir -p /opt
 cd /opt
 git clone -b ${git_branch} ${git_repo_url} skribbl-app
 cd skribbl-app
@@ -37,11 +40,10 @@ docker build -t skribbl-gateway -f gateway/Dockerfile .
 
 mkdir -p /var/log/skribbl
 
-# Run ${gateways_per_host} Gateway containers on host network
+# Start Go Gateway Docker containers with host networking
 for i in $(seq 1 ${gateways_per_host}); do
-  OFFSET=$(( (i - 1) * 2 ))
-  DATA_PORT=$(( 9000 + OFFSET ))
-  COORD_PORT=$(( 9100 + OFFSET ))
+  DATA_PORT=$((9000 + (i - 1) * 2))
+  COORD_PORT=$((9100 + (i - 1) * 2))
   GW_ID="${gateway_id}-$i"
   echo "Launching Gateway container $GW_ID on data:$DATA_PORT, coord:$COORD_PORT..."
   docker run -d \
@@ -54,6 +56,7 @@ for i in $(seq 1 ${gateways_per_host}); do
     -e SEND_BUFFER=1024 \
     -e TRACE_ENABLED=${trace_enabled} \
     -e GRPC_STREAM_BUFFER_SIZE=${grpc_stream_buffer_size} \
+    -e WRITE_COALESCE=${write_coalesce} \
     skribbl-gateway \
     -port $DATA_PORT \
     -coord-port $COORD_PORT \

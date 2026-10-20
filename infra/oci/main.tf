@@ -395,19 +395,20 @@ resource "oci_core_instance" "gateways" {
       gateways_per_host       = var.gateways_per_host
       trace_enabled           = var.trace_enabled
       grpc_stream_buffer_size = var.grpc_stream_buffer_size
+      write_coalesce          = var.write_coalesce
     }))
   }
 
   depends_on = [oci_core_instance.redis]
 }
 
-# --- Nginx Load Balancer Instance ---
+# --- Nginx Load Balancer Instances ---
 
 resource "oci_core_instance" "lb" {
-  count               = var.single_instance_mode ? 0 : 1
+  count               = var.single_instance_mode ? 0 : var.lb_count
   compartment_id      = var.compartment_ocid
   availability_domain = local.ad
-  display_name        = "${var.app_name}-lb"
+  display_name        = var.lb_count > 1 ? "${var.app_name}-lb-${count.index + 1}" : "${var.app_name}-lb"
   shape               = var.lb_shape
 
   dynamic "shape_config" {
@@ -425,7 +426,7 @@ resource "oci_core_instance" "lb" {
 
   create_vnic_details {
     subnet_id        = oci_core_subnet.public_subnet.id
-    display_name     = "${var.app_name}-lb-vnic"
+    display_name     = var.lb_count > 1 ? "${var.app_name}-lb-${count.index + 1}-vnic" : "${var.app_name}-lb-vnic"
     assign_public_ip = true
   }
 
@@ -438,6 +439,8 @@ resource "oci_core_instance" "lb" {
       gateway_ports = [for i in range(var.gateways_per_host) : 9000 + i * 2]
       worker_ips    = oci_core_instance.workers[*].private_ip
       worker_ports  = [for i in range(var.workers_per_host) : 8000 + i]
+      is_primary    = count.index == 0
+      lb_id         = count.index + 1
       nginx_config = templatefile("${path.module}/templates/nginx.conf.tftpl", {
         gateway_ips   = oci_core_instance.gateways[*].private_ip
         gateway_ports = [for i in range(var.gateways_per_host) : 9000 + i * 2]
@@ -447,6 +450,61 @@ resource "oci_core_instance" "lb" {
   }
 
   depends_on = [oci_core_instance.gateways, oci_core_instance.workers]
+}
+
+# --- OCI L4 Network Load Balancer (NLB) ---
+
+resource "oci_network_load_balancer_network_load_balancer" "nlb" {
+  count          = var.single_instance_mode ? 0 : 1
+  compartment_id = var.compartment_ocid
+  display_name   = "${var.app_name}-nlb"
+  subnet_id      = oci_core_subnet.public_subnet.id
+  is_private     = false
+
+  freeform_tags = {
+    Application = var.app_name
+    Tier        = "l4-nlb"
+  }
+}
+
+resource "oci_network_load_balancer_backend_set" "nginx_80" {
+  count                    = var.single_instance_mode ? 0 : 1
+  name                     = "nginx-80-backend-set"
+  network_load_balancer_id = oci_network_load_balancer_network_load_balancer.nlb[0].id
+  policy                   = "FIVE_TUPLE"
+  is_preserve_source       = true
+
+  health_checker {
+    protocol = "HTTP"
+    port     = 80
+    url_path = "/nginx-health"
+  }
+}
+
+resource "oci_network_load_balancer_backend" "nginx_80" {
+  count                    = var.single_instance_mode ? 0 : var.lb_count
+  network_load_balancer_id = oci_network_load_balancer_network_load_balancer.nlb[0].id
+  backend_set_name         = oci_network_load_balancer_backend_set.nginx_80[0].name
+  port                     = 80
+  ip_address               = oci_core_instance.lb[count.index].private_ip
+}
+
+resource "oci_network_load_balancer_listener" "tcp_80" {
+  count                    = var.single_instance_mode ? 0 : 1
+  name                     = "tcp-80-listener"
+  network_load_balancer_id = oci_network_load_balancer_network_load_balancer.nlb[0].id
+  default_backend_set_name = oci_network_load_balancer_backend_set.nginx_80[0].name
+  port                     = 80
+  protocol                 = "TCP"
+}
+
+resource "oci_network_load_balancer_listener" "tcp_9000" {
+  count                    = var.single_instance_mode ? 0 : 1
+  name                     = "tcp-9000-listener"
+  network_load_balancer_id = oci_network_load_balancer_network_load_balancer.nlb[0].id
+  default_backend_set_name = oci_network_load_balancer_backend_set.nginx_80[0].name
+  port                     = 9000
+  protocol                 = "TCP"
 }
 
 # --- In-VCN k6 Load Generator Instance ---
@@ -480,13 +538,14 @@ resource "oci_core_instance" "load_generator" {
   metadata = {
     ssh_authorized_keys = var.ssh_public_key
     user_data = base64encode(templatefile("${path.module}/templates/cloud-init-k6.tftpl", {
-      git_repo_url  = var.git_repo_url
-      git_branch    = var.git_branch
-      runner_id     = count.index + 1
-      runner_count  = var.load_generator_count
-      lb_private_ip = oci_core_instance.lb[0].private_ip
-      coord_host    = oci_core_instance.gateways[0].private_ip
-      coord_hosts   = join(",", oci_core_instance.gateways[*].private_ip)
+      git_repo_url    = var.git_repo_url
+      git_branch      = var.git_branch
+      runner_id       = count.index + 1
+      runner_count    = var.load_generator_count
+      lb_target_host  = length(oci_core_instance.lb) > 0 ? oci_core_instance.lb[0].private_ip : ""
+      lb_target_hosts = join(",", oci_core_instance.lb[*].private_ip)
+      coord_host      = length(oci_core_instance.gateways) > 0 ? oci_core_instance.gateways[0].private_ip : ""
+      coord_hosts     = join(",", oci_core_instance.gateways[*].private_ip)
       coord_urls = join(",", flatten([
         for ip in oci_core_instance.gateways[*].private_ip : [
           for i in range(var.gateways_per_host) : "${ip}:${9100 + i * 2}"
@@ -498,8 +557,8 @@ resource "oci_core_instance" "load_generator" {
         ]
       ]))
       cluster_nodes = join(",", flatten([
-        ["lb:${oci_core_instance.lb[0].private_ip}:9101"],
-        ["redis:${oci_core_instance.redis[0].private_ip}:9101"],
+        [for idx, inst in oci_core_instance.lb : "lb-${idx + 1}:${inst.private_ip}:9101"],
+        length(oci_core_instance.redis) > 0 ? ["redis:${oci_core_instance.redis[0].private_ip}:9101"] : [],
         [for idx, ip in oci_core_instance.gateways[*].private_ip : "gateway-${idx + 1}:${ip}:9101"],
         [for idx, ip in oci_core_instance.workers[*].private_ip : "worker-${idx + 1}:${ip}:9101"],
       ]))
@@ -507,6 +566,7 @@ resource "oci_core_instance" "load_generator" {
   }
 
   depends_on = [
+    oci_network_load_balancer_network_load_balancer.nlb,
     oci_core_instance.lb,
     oci_core_instance.workers,
     oci_core_instance.gateways,

@@ -93,7 +93,7 @@ variable "ssh_public_key" {
 variable "single_instance_mode" {
   description = "If true, provisions a single OCI compute instance (ideal for OCI Always Free Tier) running the full stack via Docker Compose. If false, provisions the multi-host distributed cluster."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "single_instance_shape" {
@@ -141,6 +141,12 @@ variable "worker_count" {
 
 variable "workers_per_host" {
   description = "Number of Python worker Docker containers to run per worker instance"
+  type        = number
+  default     = 2
+}
+
+variable "lb_count" {
+  description = "Number of dedicated Nginx Load Balancer OCI compute instances"
   type        = number
   default     = 2
 }
@@ -230,7 +236,7 @@ variable "git_repo_url" {
 variable "git_branch" {
   description = "Git branch to deploy"
   type        = string
-  default     = "feature/go-gateway"
+  default     = "master"
 }
 
 variable "enable_load_generator" {
@@ -270,13 +276,19 @@ variable "trace_enabled" {
 }
 
 variable "grpc_stream_buffer_size" {
-  description = "Gateway gRPC send queue size"
+  description = "Go Gateway outbound gRPC stream buffer capacity per worker stream (prevents room creation drops at 100k scale)"
   type        = number
-  default     = 1024
+  default     = 4096
 }
 
 variable "grpc_send_queue_maxsize" {
   description = "Worker gRPC send queue max size"
   type        = number
   default     = 1024
+}
+
+variable "write_coalesce" {
+  description = "Enable gateway writePump burst write-coalescing (default true = committed behavior)."
+  type        = bool
+  default     = true
 }
