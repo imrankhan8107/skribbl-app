@@ -34,7 +34,7 @@ locals {
 
   filtered_images = [
     for img in local.all_images : img
-    if (local.is_arm ? length(regexall("(?i)aarch64|arm", img.display_name)) > 0 : length(regexall("(?i)aarch64|arm", img.display_name)) == 0)
+    if(local.is_arm ? length(regexall("(?i)aarch64|arm", img.display_name)) > 0 : length(regexall("(?i)aarch64|arm", img.display_name)) == 0)
   ]
 
   image_id = var.image_ocid != "" ? var.image_ocid : (

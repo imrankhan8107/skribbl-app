@@ -17,7 +17,7 @@ output "node_ssh" {
     length(oci_core_instance.single) > 0 ? {
       server = "ssh ubuntu@${oci_core_instance.single[0].public_ip}"
     } : {}
-  ) : merge(
+    ) : merge(
     length(oci_core_instance.lb) > 0 ? { lb = "ssh ubuntu@${oci_core_instance.lb[0].public_ip}" } : {},
     length(oci_core_instance.redis) > 0 ? { redis = "ssh ubuntu@${oci_core_instance.redis[0].public_ip}" } : {},
     { for idx, inst in oci_core_instance.gateways : "gateway-${idx + 1}" => "ssh ubuntu@${inst.public_ip}" },

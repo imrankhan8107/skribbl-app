@@ -17,7 +17,7 @@ output "node_ssh" {
     length(azurerm_public_ip.single) > 0 ? {
       server = "ssh ubuntu@${azurerm_public_ip.single[0].ip_address}"
     } : {}
-  ) : merge(
+    ) : merge(
     length(azurerm_public_ip.lb) > 0 ? { lb = "ssh ubuntu@${azurerm_public_ip.lb[0].ip_address}" } : {},
     length(azurerm_public_ip.redis) > 0 ? { redis = "ssh ubuntu@${azurerm_public_ip.redis[0].ip_address}" } : {},
     { for idx, pip in azurerm_public_ip.gateways : "gateway-${idx + 1}" => "ssh ubuntu@${pip.ip_address}" },

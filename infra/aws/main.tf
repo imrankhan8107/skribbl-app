@@ -463,23 +463,23 @@ resource "aws_lb_listener" "tcp_9000" {
 # --- In-VPC k6 Load Generator Instance ---
 
 resource "aws_instance" "load_generator" {
-  count                  = (!var.single_instance_mode && var.enable_load_generator) ? var.load_generator_count : 0
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.load_generator_instance_type
-  subnet_id              = aws_subnet.public.id
-  vpc_security_group_ids = [aws_security_group.cluster.id]
+  count                       = (!var.single_instance_mode && var.enable_load_generator) ? var.load_generator_count : 0
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.load_generator_instance_type
+  subnet_id                   = aws_subnet.public.id
+  vpc_security_group_ids      = [aws_security_group.cluster.id]
   key_name                    = aws_key_pair.deployer.key_name
   user_data_replace_on_change = true
 
   user_data = templatefile("${path.module}/templates/cloud-init-k6.tftpl", {
-    git_repo_url   = var.git_repo_url
-    git_branch     = var.git_branch
+    git_repo_url    = var.git_repo_url
+    git_branch      = var.git_branch
     runner_id       = count.index + 1
     runner_count    = var.load_generator_count
     lb_target_host  = length(aws_instance.lb) > 0 ? aws_instance.lb[0].private_ip : ""
     lb_target_hosts = join(",", aws_instance.lb[*].private_ip)
     coord_host      = length(aws_instance.gateways) > 0 ? aws_instance.gateways[0].private_ip : ""
-    coord_hosts    = join(",", aws_instance.gateways[*].private_ip)
+    coord_hosts     = join(",", aws_instance.gateways[*].private_ip)
     # Full host:port coord URLs for every gateway container (port = 9100 + (i*2)).
     # This distributes coordination across all containers, not just port 9100.
     coord_urls = join(",", flatten([

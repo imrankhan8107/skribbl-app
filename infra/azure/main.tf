@@ -77,106 +77,106 @@ resource "azurerm_network_security_group" "nsg" {
 
   # 2. SSH restricted strictly to allowed_cidrs
   security_rule {
-    name                        = "allow-ssh"
-    priority                    = 110
-    direction                   = "Inbound"
-    access                      = "Allow"
-    protocol                    = "Tcp"
-    source_port_range           = "*"
-    destination_port_range      = "22"
-    source_address_prefixes     = local.safe_allowed_cidrs
-    destination_address_prefix  = "*"
+    name                       = "allow-ssh"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefixes    = local.safe_allowed_cidrs
+    destination_address_prefix = "*"
   }
 
   # 3. HTTP port 80
   security_rule {
-    name                        = "allow-http"
-    priority                    = 120
-    direction                   = "Inbound"
-    access                      = "Allow"
-    protocol                    = "Tcp"
-    source_port_range           = "*"
-    destination_port_range      = "80"
-    source_address_prefixes     = local.web_allowed_cidrs
-    destination_address_prefix  = "*"
+    name                       = "allow-http"
+    priority                   = 120
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefixes    = local.web_allowed_cidrs
+    destination_address_prefix = "*"
   }
 
   # 4. HTTPS port 443
   security_rule {
-    name                        = "allow-https"
-    priority                    = 130
-    direction                   = "Inbound"
-    access                      = "Allow"
-    protocol                    = "Tcp"
-    source_port_range           = "*"
-    destination_port_range      = "443"
-    source_address_prefixes     = local.web_allowed_cidrs
-    destination_address_prefix  = "*"
+    name                       = "allow-https"
+    priority                   = 130
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefixes    = local.web_allowed_cidrs
+    destination_address_prefix = "*"
   }
 
   # 5. Direct Go Gateway data plane (9000-9020)
   security_rule {
-    name                        = "allow-gateway-data"
-    priority                    = 140
-    direction                   = "Inbound"
-    access                      = "Allow"
-    protocol                    = "Tcp"
-    source_port_range           = "*"
-    destination_port_range      = "9000-9020"
-    source_address_prefixes     = local.web_allowed_cidrs
-    destination_address_prefix  = "*"
+    name                       = "allow-gateway-data"
+    priority                   = 140
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "9000-9020"
+    source_address_prefixes    = local.web_allowed_cidrs
+    destination_address_prefix = "*"
   }
 
   # 6. Gateway Coord control plane (9100-9120)
   security_rule {
-    name                        = "allow-gateway-coord"
-    priority                    = 150
-    direction                   = "Inbound"
-    access                      = "Allow"
-    protocol                    = "Tcp"
-    source_port_range           = "*"
-    destination_port_range      = "9100-9120"
-    source_address_prefixes     = local.safe_allowed_cidrs
-    destination_address_prefix  = "*"
+    name                       = "allow-gateway-coord"
+    priority                   = 150
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "9100-9120"
+    source_address_prefixes    = local.safe_allowed_cidrs
+    destination_address_prefix = "*"
   }
 
   # 7. Log server (8080)
   security_rule {
-    name                        = "allow-log-server"
-    priority                    = 160
-    direction                   = "Inbound"
-    access                      = "Allow"
-    protocol                    = "Tcp"
-    source_port_range           = "*"
-    destination_port_range      = "8080"
-    source_address_prefixes     = local.safe_allowed_cidrs
-    destination_address_prefix  = "*"
+    name                       = "allow-log-server"
+    priority                   = 160
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "8080"
+    source_address_prefixes    = local.safe_allowed_cidrs
+    destination_address_prefix = "*"
   }
 
   # 8. Grafana dashboard (3000)
   security_rule {
-    name                        = "allow-grafana"
-    priority                    = 170
-    direction                   = "Inbound"
-    access                      = "Allow"
-    protocol                    = "Tcp"
-    source_port_range           = "*"
-    destination_port_range      = "3000"
-    source_address_prefixes     = local.safe_allowed_cidrs
-    destination_address_prefix  = "*"
+    name                       = "allow-grafana"
+    priority                   = 170
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "3000"
+    source_address_prefixes    = local.safe_allowed_cidrs
+    destination_address_prefix = "*"
   }
 
   # 9. Prometheus UI (9090)
   security_rule {
-    name                        = "allow-prometheus"
-    priority                    = 180
-    direction                   = "Inbound"
-    access                      = "Allow"
-    protocol                    = "Tcp"
-    source_port_range           = "*"
-    destination_port_range      = "9090"
-    source_address_prefixes     = local.safe_allowed_cidrs
-    destination_address_prefix  = "*"
+    name                       = "allow-prometheus"
+    priority                   = 180
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "9090"
+    source_address_prefixes    = local.safe_allowed_cidrs
+    destination_address_prefix = "*"
   }
 
   tags = {
