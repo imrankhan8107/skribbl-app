@@ -14,6 +14,7 @@ provider "azurerm" {
 
 # --- Locals ---
 locals {
+  location = var.location != "" ? var.location : var.azure_location
   effective_allowed_cidrs = distinct(compact(concat(
     var.allowed_cidrs,
     var.allowed_cidr != "" ? [var.allowed_cidr] : []
@@ -27,7 +28,7 @@ locals {
 
 resource "azurerm_resource_group" "rg" {
   name     = "${var.app_name}-rg"
-  location = var.azure_location
+  location = local.location
 
   tags = {
     Environment = "production"
