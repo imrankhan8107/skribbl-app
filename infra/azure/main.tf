@@ -211,6 +211,7 @@ resource "azurerm_network_interface" "single" {
   name                = "${var.app_name}-server-nic"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
+  depends_on          = [azurerm_subnet_network_security_group_association.subnet_assoc]
 
   ip_configuration {
     name                          = "internal"
