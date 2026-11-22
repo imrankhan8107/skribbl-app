@@ -2,11 +2,153 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Skribbl</title>
+
+    <!-- Primary Meta Tags -->
+    <title>Skribbl - Free Online Multiplayer Drawing &amp; Guessing Game</title>
+    <meta
+      name="title"
+      content="Skribbl - Free Online Multiplayer Drawing &amp; Guessing Game"
+    />
+    <meta
+      name="description"
+      content="Play Skribbl, the ultimate free online multiplayer drawing and guessing game! Create custom private rooms with friends or join public matches, sketch clues in real-time, and climb the leaderboard. No download or registration needed."
+    />
+    <meta
+      name="keywords"
+      content="skribbl, skribblio, pictionary, drawing game, draw and guess, guess the drawing, multiplayer games, doodle game, browser games, party games, free online games with friends, skribbl clone"
+    />
+    <meta name="author" content="Skribbl Team" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="theme-color" content="#6c63ff" />
+    <link rel="canonical" href="/" />
+
+    <!-- Favicon & PWA Icons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Skribbl" />
+
+    <!-- Open Graph / Facebook / Discord -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="/" />
+    <meta
+      property="og:title"
+      content="Skribbl - Free Online Multiplayer Drawing &amp; Guessing Game"
+    />
+    <meta
+      property="og:description"
+      content="Draw, guess, and laugh with friends in real-time! Create private rooms, sketch with smooth brushes, and guess words to score points in your browser."
+    />
+    <meta property="og:image" content="/og-image.svg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Skribbl - Multiplayer Drawing and Guessing Game Preview" />
+    <meta property="og:site_name" content="Skribbl" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Twitter Cards -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content="/" />
+    <meta
+      name="twitter:title"
+      content="Skribbl - Free Online Multiplayer Drawing &amp; Guessing Game"
+    />
+    <meta
+      name="twitter:description"
+      content="Draw, guess, and laugh with friends in real-time! Free multiplayer drawing game playable in any browser."
+    />
+    <meta name="twitter:image" content="/og-image.svg" />
+    <meta name="twitter:image:alt" content="Skribbl game card" />
+
+    <!-- JSON-LD Structured Data for Search Engines -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "/#website",
+            "url": "/",
+            "name": "Skribbl",
+            "description": "Free Online Multiplayer Drawing & Guessing Game",
+            "inLanguage": "en-US"
+          },
+          {
+            "@type": "VideoGame",
+            "@id": "/#game",
+            "name": "Skribbl",
+            "url": "/",
+            "description": "Free real-time multiplayer drawing and guessing game. Take turns sketching secret words and guessing drawings to score points.",
+            "genre": ["Drawing", "Multiplayer", "Party Game", "Word Game", "Casual"],
+            "gamePlatform": "Web Browser",
+            "applicationCategory": "Game",
+            "playMode": "MultiPlayer",
+            "numberOfPlayers": {
+              "@type": "QuantitativeValue",
+              "minValue": 2,
+              "maxValue": 20
+            },
+            "operatingSystem": "Any modern web browser (Chrome, Firefox, Safari, Edge)",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD",
+              "availability": "https://schema.org/InStock"
+            }
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "How do you play Skribbl?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Each round, one player is chosen as the drawer who selects a secret word and sketches it on the live canvas. The other players guess the word in the chat box. The faster you guess correctly, the more points you earn!"
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Is Skribbl free to play?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, Skribbl is 100% free to play. There are no downloads, subscriptions, or registrations required. Just pick a nickname and start playing."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can I play Skribbl with friends in a private room?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes! You can create a private room, optionally set a password, and invite friends by sharing the 6-character room code, direct join link, or QR code."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can I play Skribbl on mobile or tablet?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, Skribbl is fully responsive with touch-optimized drawing controls and works smoothly on smartphones, iPads, tablets, and desktop computers."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
+    <noscript>
+      <div style="padding: 2rem; text-align: center; font-family: sans-serif; background: #0f172a; color: #f8fafc; min-height: 100vh;">
+        <h1>Skribbl - Free Online Multiplayer Drawing &amp; Guessing Game</h1>
+        <p>Please enable JavaScript in your browser to play Skribbl with friends in real-time.</p>
+      </div>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

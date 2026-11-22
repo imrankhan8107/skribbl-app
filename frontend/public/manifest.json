@@ -1,0 +1,19 @@
+{
+  "short_name": "Skribbl",
+  "name": "Skribbl - Free Online Multiplayer Drawing & Guessing Game",
+  "description": "Play Skribbl, the ultimate real-time multiplayer drawing and guessing game. Create private rooms with friends, guess sketches, and climb the leaderboard!",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0f172a",
+  "theme_color": "#6c63ff",
+  "display": "standalone",
+  "orientation": "any",
+  "categories": ["games", "entertainment", "social"]
+}

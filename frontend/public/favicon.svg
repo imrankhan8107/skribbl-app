@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6c63ff"/>
+      <stop offset="100%" stop-color="#ff6584"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  <!-- Background rounded canvas -->
+  <rect width="64" height="64" rx="16" fill="url(#grad)" filter="url(#shadow)"/>
+  <!-- Canvas board inside -->
+  <rect x="10" y="10" width="44" height="44" rx="8" fill="#ffffff" fill-opacity="0.95"/>
+  <!-- Doodle line -->
+  <path d="M 16 38 C 22 28, 28 44, 36 32 C 40 26, 44 34, 48 30" fill="none" stroke="#6c63ff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Pencil icon floating -->
+  <g transform="translate(34, 12) rotate(45)">
+    <rect x="0" y="0" width="8" height="20" rx="1.5" fill="#f59e0b"/>
+    <polygon points="0,20 8,20 4,26" fill="#fde68a"/>
+    <polygon points="3,24 5,24 4,26" fill="#1e293b"/>
+    <rect x="0" y="-4" width="8" height="4" rx="1" fill="#ec4899"/>
+  </g>
+</svg>

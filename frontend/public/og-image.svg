@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="50%" stop-color="#1e1b4b"/>
+      <stop offset="100%" stop-color="#311042"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6c63ff"/>
+      <stop offset="50%" stop-color="#ff6584"/>
+      <stop offset="100%" stop-color="#facc15"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- Decorative doodle grid dots -->
+  <g fill="#ffffff" fill-opacity="0.05">
+    <circle cx="100" cy="80" r="3"/><circle cx="200" cy="80" r="3"/><circle cx="300" cy="80" r="3"/>
+    <circle cx="900" cy="80" r="3"/><circle cx="1000" cy="80" r="3"/><circle cx="1100" cy="80" r="3"/>
+    <circle cx="100" cy="550" r="3"/><circle cx="200" cy="550" r="3"/><circle cx="1000" cy="550" r="3"/><circle cx="1100" cy="550" r="3"/>
+  </g>
+
+  <!-- Central Canvas Card Preview -->
+  <g transform="translate(680, 110)">
+    <rect width="440" height="410" rx="20" fill="#1e293b" stroke="#6c63ff" stroke-width="2" stroke-opacity="0.5"/>
+    <!-- Simulated drawing board -->
+    <rect x="20" y="20" width="400" height="280" rx="12" fill="#0f172a"/>
+    <path d="M 50 200 C 90 120, 160 250, 220 150 C 260 90, 310 180, 370 130" fill="none" stroke="url(#accent)" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="120" cy="150" r="8" fill="#facc15"/>
+    <circle cx="280" cy="130" r="12" fill="#ff6584"/>
+    <!-- Player guess simulated chat pill -->
+    <rect x="20" y="320" width="220" height="34" rx="8" fill="#6c63ff" fill-opacity="0.2"/>
+    <text x="35" y="342" font-family="'Segoe UI', sans-serif" font-size="14" fill="#a5b4fc" font-weight="600">Alice: Is it a roller coaster?</text>
+    <rect x="20" y="362" width="250" height="34" rx="8" fill="#00b894" fill-opacity="0.2"/>
+    <text x="35" y="384" font-family="'Segoe UI', sans-serif" font-size="14" fill="#34d399" font-weight="700">Bob guessed the word! (+100)</text>
+  </g>
+
+  <!-- Left Content -->
+  <g transform="translate(80, 160)">
+    <!-- Badge -->
+    <rect width="260" height="36" rx="18" fill="#6c63ff" fill-opacity="0.2" stroke="#6c63ff" stroke-opacity="0.4"/>
+    <text x="20" y="23" font-family="'Segoe UI', sans-serif" font-size="14" fill="#a5b4fc" font-weight="700">🎨 FREE MULTIPLAYER GAME</text>
+
+    <!-- Main Title -->
+    <text x="0" y="110" font-family="'Segoe UI', system-ui, sans-serif" font-size="82" fill="#ffffff" font-weight="900" letter-spacing="-2">
+      Skribbl<tspan fill="#ff6584">.</tspan>
+    </text>
+
+    <!-- Tagline -->
+    <text x="0" y="165" font-family="'Segoe UI', sans-serif" font-size="28" fill="#e2e8f0" font-weight="600">
+      Draw, Guess &amp; Win with Friends!
+    </text>
+    <text x="0" y="205" font-family="'Segoe UI', sans-serif" font-size="18" fill="#94a3b8">
+      Play the classic Pictionary-style party game directly in your browser.
+    </text>
+
+    <!-- Feature Pills -->
+    <g transform="translate(0, 245)">
+      <rect width="165" height="40" rx="10" fill="#334155" fill-opacity="0.8"/>
+      <text x="20" y="25" font-family="'Segoe UI', sans-serif" font-size="15" fill="#f8fafc" font-weight="600">⚡ Zero Download</text>
+
+      <rect x="180" width="160" height="40" rx="10" fill="#334155" fill-opacity="0.8"/>
+      <text x="200" y="25" font-family="'Segoe UI', sans-serif" font-size="15" fill="#f8fafc" font-weight="600">🔒 Private Rooms</text>
+
+      <rect x="355" width="160" height="40" rx="10" fill="#334155" fill-opacity="0.8"/>
+      <text x="375" y="25" font-family="'Segoe UI', sans-serif" font-size="15" fill="#f8fafc" font-weight="600">📱 Mobile &amp; PC</text>
+    </g>
+  </g>
+</svg>

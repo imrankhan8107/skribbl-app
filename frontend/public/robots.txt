@@ -1,0 +1,10 @@
+# Robots.txt for Skribbl Game
+# Allow search engines to index the landing page and public content
+User-agent: *
+Allow: /
+Disallow: /lobby/
+Disallow: /game/
+Disallow: /gameover/
+
+# Sitemap location
+Sitemap: /sitemap.xml
