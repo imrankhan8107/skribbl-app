@@ -202,9 +202,39 @@ async def websocket_endpoint(websocket: WebSocket):
 # Mount static files for the built frontend
 # The frontend build output goes to frontend/dist
 static_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
-if os.path.isdir(static_dir):
-    from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse
 
+# Explicit SEO and crawler endpoints (guaranteed XML / text responses)
+@app.get("/robots.txt", include_in_schema=False)
+async def serve_robots():
+    robots_path = os.path.join(static_dir, "robots.txt")
+    if os.path.isfile(robots_path):
+        return FileResponse(robots_path, media_type="text/plain")
+    return Response(
+        content="User-agent: *\nAllow: /\nDisallow: /lobby/\nDisallow: /game/\nDisallow: /gameover/\nSitemap: http://skribbl-app.duckdns.org/sitemap.xml\n",
+        media_type="text/plain",
+    )
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+@app.get("/sitemap", include_in_schema=False)
+async def serve_sitemap():
+    sitemap_path = os.path.join(static_dir, "sitemap.xml")
+    if os.path.isfile(sitemap_path):
+        return FileResponse(sitemap_path, media_type="application/xml")
+    xml_content = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>http://skribbl-app.duckdns.org/</loc>
+    <lastmod>2026-11-22</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>"""
+    return Response(content=xml_content, media_type="application/xml")
+
+
+if os.path.isdir(static_dir):
     # Serve static assets (JS, CSS, images) directly
     app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
 
