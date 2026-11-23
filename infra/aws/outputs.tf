@@ -2,8 +2,9 @@ output "cluster_access" {
   description = "Cluster connection info and test instructions"
   value = {
     deployment_mode   = var.single_instance_mode ? "single_instance" : "multi_host distributed cluster with L4 NLB"
-    app_url           = var.single_instance_mode ? "http://${length(aws_instance.single) > 0 ? aws_instance.single[0].public_ip : ""}" : (length(aws_lb.nlb) > 0 ? "http://${aws_lb.nlb[0].dns_name}" : "")
+    app_url           = (var.enable_https && var.domain_name != "") ? "https://${var.domain_name}" : (var.domain_name != "" ? "http://${var.domain_name}" : (var.single_instance_mode ? "http://${length(aws_instance.single) > 0 ? aws_instance.single[0].public_ip : ""}" : (length(aws_lb.nlb) > 0 ? "http://${aws_lb.nlb[0].dns_name}" : "")))
     app_url_alt_port  = var.single_instance_mode ? "http://${length(aws_instance.single) > 0 ? aws_instance.single[0].public_ip : ""}:9000" : (length(aws_lb.nlb) > 0 ? "http://${aws_lb.nlb[0].dns_name}:9000" : "")
+    https_enabled     = var.enable_https
     nlb_dns_name      = length(aws_lb.nlb) > 0 ? aws_lb.nlb[0].dns_name : null
     grafana_url       = var.single_instance_mode ? "N/A" : (length(aws_instance.lb) > 0 ? "http://${aws_instance.lb[0].public_ip}:3000" : "N/A")
     prometheus_url    = var.single_instance_mode ? "N/A" : (length(aws_instance.lb) > 0 ? "http://${aws_instance.lb[0].public_ip}:9090" : "N/A")
@@ -40,7 +41,7 @@ output "internal_topology" {
 
 output "app_url" {
   description = "Primary URL to access the Skribbl game"
-  value       = var.single_instance_mode ? "http://${length(aws_instance.single) > 0 ? aws_instance.single[0].public_ip : ""}" : (length(aws_lb.nlb) > 0 ? "http://${aws_lb.nlb[0].dns_name}" : "")
+  value       = (var.enable_https && var.domain_name != "") ? "https://${var.domain_name}" : (var.domain_name != "" ? "http://${var.domain_name}" : (var.single_instance_mode ? "http://${length(aws_instance.single) > 0 ? aws_instance.single[0].public_ip : ""}" : (length(aws_lb.nlb) > 0 ? "http://${aws_lb.nlb[0].dns_name}" : "")))
 }
 
 output "nlb_dns_name" {

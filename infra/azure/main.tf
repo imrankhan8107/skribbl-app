@@ -250,8 +250,12 @@ resource "azurerm_linux_virtual_machine" "single" {
   }
 
   custom_data = base64encode(templatefile("${path.module}/templates/cloud-init-single-instance.tftpl", {
-    git_repo_url = var.git_repo_url
-    git_branch   = var.git_branch
+    git_repo_url  = var.git_repo_url
+    git_branch    = var.git_branch
+    enable_https  = var.enable_https
+    domain_name   = var.domain_name
+    certbot_email = var.certbot_email
+    duckdns_token = var.duckdns_token
   }))
 
   tags = {

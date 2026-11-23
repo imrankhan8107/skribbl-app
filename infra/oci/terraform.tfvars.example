@@ -82,6 +82,16 @@ load_generator_memory_in_gbs = 32
 git_repo_url = "https://github.com/imrankhan8107/skribbl-app.git"
 git_branch   = "master"
 
+# ==============================================================================
+# AUTOMATED HTTPS / SSL (LET'S ENCRYPT & NGINX)
+# ==============================================================================
+# Set enable_https = true to automatically set up Nginx reverse proxy with
+# Let's Encrypt SSL on ports 80/443 and HTTP->HTTPS automatic redirect.
+enable_https  = true
+domain_name   = "skribbl-app.duckdns.org"
+certbot_email = "admin@example.com" # Optional: your email for cert renewal notices
+duckdns_token = ""                  # Optional: DuckDNS token to auto-bind public IP on boot
+
 # Performance tuning
 trace_enabled           = false
 grpc_stream_buffer_size = 4096

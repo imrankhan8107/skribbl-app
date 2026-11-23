@@ -205,13 +205,21 @@ static_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 from fastapi.responses import FileResponse
 
 # Explicit SEO and crawler endpoints (guaranteed XML / text responses)
+@app.get("/google2d936dcd29dc710c.html", include_in_schema=False)
+async def serve_google_verification():
+    verification_path = os.path.join(static_dir, "google2d936dcd29dc710c.html")
+    if os.path.isfile(verification_path):
+        return FileResponse(verification_path, media_type="text/html")
+    return Response(content="google-site-verification: google2d936dcd29dc710c.html", media_type="text/html")
+
+
 @app.get("/robots.txt", include_in_schema=False)
 async def serve_robots():
     robots_path = os.path.join(static_dir, "robots.txt")
     if os.path.isfile(robots_path):
         return FileResponse(robots_path, media_type="text/plain")
     return Response(
-        content="User-agent: *\nAllow: /\nDisallow: /lobby/\nDisallow: /game/\nDisallow: /gameover/\nSitemap: http://skribbl-app.duckdns.org/sitemap.xml\n",
+        content="User-agent: *\nAllow: /\nDisallow: /lobby/\nDisallow: /game/\nDisallow: /gameover/\nSitemap: https://skribbl-app.duckdns.org/sitemap.xml\n",
         media_type="text/plain",
     )
 
@@ -225,7 +233,7 @@ async def serve_sitemap():
     xml_content = """<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>http://skribbl-app.duckdns.org/</loc>
+    <loc>https://skribbl-app.duckdns.org/</loc>
     <lastmod>2026-11-22</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>

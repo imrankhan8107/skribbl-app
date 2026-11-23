@@ -292,3 +292,30 @@ variable "write_coalesce" {
   type        = bool
   default     = true
 }
+
+# --- HTTPS & Domain Configuration ---
+variable "enable_https" {
+  description = "If true, configures Nginx reverse proxy on ports 80/443 and provisions a Let's Encrypt SSL certificate via Certbot."
+  type        = bool
+  default     = false
+}
+
+variable "domain_name" {
+  description = "Domain name for the application (e.g. skribbl-app.duckdns.org). Required if enable_https is true."
+  type        = string
+  default     = ""
+}
+
+variable "certbot_email" {
+  description = "Email address for Let's Encrypt certificate registration and renewal notices (optional)."
+  type        = string
+  default     = ""
+}
+
+variable "duckdns_token" {
+  description = "Optional DuckDNS token. If provided, cloud-init will automatically register the VM's public IP with DuckDNS on boot."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+

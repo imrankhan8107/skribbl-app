@@ -28,9 +28,9 @@ echo "root hard nofile 65535" >> /etc/security/limits.conf
 echo "ubuntu soft nofile 65535" >> /etc/security/limits.conf
 echo "ubuntu hard nofile 65535" >> /etc/security/limits.conf
 
-# 3. Install Docker, Git, and persistence tools
+# 3. Install Docker, Git, persistence tools, and utilities
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg git iptables-persistent
+apt-get install -y ca-certificates curl gnupg git iptables-persistent dnsutils
 
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -52,14 +52,114 @@ chown -R ubuntu:ubuntu /home/ubuntu/skribbl-app
 # 5. Save iptables rules
 netfilter-persistent save || true
 
-# 6. Build and run single container (FastAPI serving React frontend + WebSocket API directly)
+# 6. Build Docker image
 docker build -t skribbl-app .
-docker run -d \
-  --name skribbl \
-  --restart always \
-  -p 80:8000 \
-  -p 9000:8000 \
-  -e PORT=8000 \
-  skribbl-app
+
+ENABLE_HTTPS="${enable_https}"
+DOMAIN_NAME="${domain_name}"
+CERTBOT_EMAIL="${certbot_email}"
+DUCKDNS_TOKEN="${duckdns_token}"
+
+if [ "$ENABLE_HTTPS" = "true" ] && [ -n "$DOMAIN_NAME" ]; then
+  echo "--- Configuring Nginx reverse proxy and Let's Encrypt HTTPS for $DOMAIN_NAME ---"
+  apt-get install -y nginx certbot python3-certbot-nginx
+
+  # If DuckDNS token is provided, update DuckDNS record with this instance's public IP
+  if [ -n "$DUCKDNS_TOKEN" ]; then
+    PUBLIC_IP=$(curl -s https://api.ipify.org || curl -s https://ifconfig.me || true)
+    DUCKDNS_SUBDOMAIN=$(echo "$DOMAIN_NAME" | sed 's/\.duckdns\.org//')
+    if [ -n "$PUBLIC_IP" ] && [ -n "$DUCKDNS_SUBDOMAIN" ]; then
+      echo "Updating DuckDNS record for $DUCKDNS_SUBDOMAIN to IP $PUBLIC_IP..."
+      curl -s "https://www.duckdns.org/update?domains=$DUCKDNS_SUBDOMAIN&token=$DUCKDNS_TOKEN&ip=$PUBLIC_IP" || true
+      echo ""
+      sleep 5
+    fi
+  fi
+
+  # Run container bound to localhost:8000 and direct port 9000
+  docker run -d \
+    --name skribbl \
+    --restart always \
+    -p 127.0.0.1:8000:8000 \
+    -p 9000:8000 \
+    -e PORT=8000 \
+    skribbl-app
+
+  # Write Nginx reverse proxy configuration supporting WebSocket upgrades
+  cat <<'EOF' > /etc/nginx/sites-available/skribbl
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
+server {
+    listen 80;
+    server_name __DOMAIN_NAME__;
+
+    client_max_body_size 10M;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+}
+EOF
+
+  sed -i "s/__DOMAIN_NAME__/$DOMAIN_NAME/g" /etc/nginx/sites-available/skribbl
+
+  rm -f /etc/nginx/sites-enabled/default
+  ln -sf /etc/nginx/sites-available/skribbl /etc/nginx/sites-enabled/skribbl
+  nginx -t
+  systemctl restart nginx
+
+  # Verify DNS resolution points to this machine before issuing Let's Encrypt certificate
+  PUBLIC_IP=$(curl -s https://api.ipify.org || curl -s https://ifconfig.me || true)
+  if [ -n "$PUBLIC_IP" ]; then
+    echo "Current Public IP: $PUBLIC_IP"
+    for i in {1..20}; do
+      RESOLVED_IP=$(getent hosts "$DOMAIN_NAME" | awk '{print $1}' | head -n 1 || true)
+      if [ "$RESOLVED_IP" = "$PUBLIC_IP" ]; then
+        echo "DNS check passed: $DOMAIN_NAME resolves to $PUBLIC_IP"
+        break
+      fi
+      echo "Waiting for DNS propagation of $DOMAIN_NAME (resolved: '$RESOLVED_IP', expected: '$PUBLIC_IP', attempt $i/20)..."
+      sleep 5
+    done
+  fi
+
+  # Request Let's Encrypt SSL certificate via Certbot
+  EMAIL_FLAG=""
+  if [ -n "$CERTBOT_EMAIL" ]; then
+    EMAIL_FLAG="--email $CERTBOT_EMAIL"
+  else
+    EMAIL_FLAG="--register-unsafely-without-email"
+  fi
+
+  certbot --nginx -d "$DOMAIN_NAME" --non-interactive --agree-tos $EMAIL_FLAG --redirect || {
+    echo "Warning: Certbot initial automated issuance failed. Nginx HTTP proxy remains active."
+  }
+
+  systemctl reload nginx || true
+  systemctl enable certbot.timer || true
+  systemctl start certbot.timer || true
+
+else
+  echo "--- Running in standard HTTP single-instance mode ---"
+  docker run -d \
+    --name skribbl \
+    --restart always \
+    -p 80:8000 \
+    -p 9000:8000 \
+    -e PORT=8000 \
+    skribbl-app
+fi
 
 echo "=== Skribbl Single-Machine Deployment completed at $(date) ==="

@@ -3,8 +3,9 @@ output "cluster_access" {
   value = {
     deployment_mode   = var.single_instance_mode ? "single_instance" : "multi_host distributed cluster"
     server_public_ip  = var.single_instance_mode ? (length(azurerm_public_ip.single) > 0 ? azurerm_public_ip.single[0].ip_address : null) : (length(azurerm_public_ip.app_lb) > 0 ? azurerm_public_ip.app_lb[0].ip_address : (length(azurerm_public_ip.lb) > 0 ? azurerm_public_ip.lb[0].ip_address : null))
-    app_url           = "http://${var.single_instance_mode ? (length(azurerm_public_ip.single) > 0 ? azurerm_public_ip.single[0].ip_address : "") : (length(azurerm_public_ip.app_lb) > 0 ? azurerm_public_ip.app_lb[0].ip_address : (length(azurerm_public_ip.lb) > 0 ? azurerm_public_ip.lb[0].ip_address : ""))}"
+    app_url           = (var.enable_https && var.domain_name != "") ? "https://${var.domain_name}" : (var.domain_name != "" ? "http://${var.domain_name}" : "http://${var.single_instance_mode ? (length(azurerm_public_ip.single) > 0 ? azurerm_public_ip.single[0].ip_address : "") : (length(azurerm_public_ip.app_lb) > 0 ? azurerm_public_ip.app_lb[0].ip_address : (length(azurerm_public_ip.lb) > 0 ? azurerm_public_ip.lb[0].ip_address : ""))}")
     app_url_alt_port  = "http://${var.single_instance_mode ? (length(azurerm_public_ip.single) > 0 ? azurerm_public_ip.single[0].ip_address : "") : (length(azurerm_public_ip.app_lb) > 0 ? azurerm_public_ip.app_lb[0].ip_address : (length(azurerm_public_ip.lb) > 0 ? azurerm_public_ip.lb[0].ip_address : ""))}:9000"
+    https_enabled     = var.enable_https
     grafana_url       = var.single_instance_mode ? "N/A" : (length(azurerm_public_ip.lb) > 0 ? "http://${azurerm_public_ip.lb[0].ip_address}:3000" : "N/A")
     prometheus_url    = var.single_instance_mode ? "N/A" : (length(azurerm_public_ip.lb) > 0 ? "http://${azurerm_public_ip.lb[0].ip_address}:9090" : "N/A")
     load_generator_ip = (!var.single_instance_mode && length(azurerm_public_ip.load_generator) > 0) ? azurerm_public_ip.load_generator[0].ip_address : "N/A"

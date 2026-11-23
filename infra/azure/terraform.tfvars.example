@@ -57,6 +57,15 @@ load_generator_vm_size = "Standard_D8s_v4"
 git_repo_url = "https://github.com/imrankhan8107/skribbl-app.git"
 git_branch   = "master"
 
+# ==============================================================================
+# AUTOMATED HTTPS / SSL (LET'S ENCRYPT & NGINX)
+# ==============================================================================
+enable_https  = true
+domain_name   = "skribbl-app.duckdns.org"
+certbot_email = "admin@example.com" # Optional: your email for cert renewal notices
+duckdns_token = ""                  # Optional: DuckDNS token to auto-bind public IP on boot
+
+
 # In-VNet k6 Load Generator
 enable_load_generator = true
 load_generator_count  = 1

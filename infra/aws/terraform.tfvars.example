@@ -87,6 +87,15 @@ load_generator_instance_type = "c5a.8xlarge"
 # Verbose per-message tracing (true for dev/small runs, false for 15k+ benchmarks to avoid logger mutex contention)
 trace_enabled = false
 
+# ==============================================================================
+# AUTOMATED HTTPS / SSL (LET'S ENCRYPT & NGINX)
+# ==============================================================================
+enable_https  = true
+domain_name   = "skribbl-app.duckdns.org"
+certbot_email = "admin@example.com" # Optional: your email for cert renewal notices
+duckdns_token = ""                  # Optional: DuckDNS token to auto-bind public IP on boot
+
+
 # Worker outbound gRPC stream buffer capacity per room (prevents memory explosion during high-rate stroke fan-out)
 # Set to 8096 for 100k-120k 20Hz runs
 grpc_send_queue_maxsize = 8096

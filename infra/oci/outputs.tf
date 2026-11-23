@@ -3,8 +3,9 @@ output "cluster_access" {
   value = {
     deployment_mode   = var.single_instance_mode ? "single_instance (Always Free)" : "multi_host distributed cluster"
     server_public_ip  = var.single_instance_mode ? (length(oci_core_instance.single) > 0 ? oci_core_instance.single[0].public_ip : null) : (length(oci_core_instance.lb) > 0 ? oci_core_instance.lb[0].public_ip : null)
-    app_url           = "http://${var.single_instance_mode ? (length(oci_core_instance.single) > 0 ? oci_core_instance.single[0].public_ip : "") : (length(oci_core_instance.lb) > 0 ? oci_core_instance.lb[0].public_ip : "")}"
+    app_url           = (var.enable_https && var.domain_name != "") ? "https://${var.domain_name}" : (var.domain_name != "" ? "http://${var.domain_name}" : "http://${var.single_instance_mode ? (length(oci_core_instance.single) > 0 ? oci_core_instance.single[0].public_ip : "") : (length(oci_core_instance.lb) > 0 ? oci_core_instance.lb[0].public_ip : "")}")
     app_url_alt_port  = "http://${var.single_instance_mode ? (length(oci_core_instance.single) > 0 ? oci_core_instance.single[0].public_ip : "") : (length(oci_core_instance.lb) > 0 ? oci_core_instance.lb[0].public_ip : "")}:9000"
+    https_enabled     = var.enable_https
     grafana_url       = var.single_instance_mode ? "N/A" : (length(oci_core_instance.lb) > 0 ? "http://${oci_core_instance.lb[0].public_ip}:3000" : "N/A")
     prometheus_url    = var.single_instance_mode ? "N/A" : (length(oci_core_instance.lb) > 0 ? "http://${oci_core_instance.lb[0].public_ip}:9090" : "N/A")
     load_generator_ip = (!var.single_instance_mode && length(oci_core_instance.load_generator) > 0) ? oci_core_instance.load_generator[0].public_ip : "N/A"

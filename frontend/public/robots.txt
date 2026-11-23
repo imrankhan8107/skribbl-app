@@ -7,4 +7,4 @@ Disallow: /game/
 Disallow: /gameover/
 
 # Sitemap location
-Sitemap: http://skribbl-app.duckdns.org/sitemap.xml
+Sitemap: https://skribbl-app.duckdns.org/sitemap.xml
