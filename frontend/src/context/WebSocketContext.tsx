@@ -164,6 +164,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
         pendingSpectatorRoleRequestId: null,
         spectatorRequestsRemaining: 2,
         pendingSpectatorRoleRequests: [],
+        voicePeers: (p.voicePeers as Record<string, { muted: boolean }>) ?? state.voicePeers ?? {},
         errorMessage: null,
       };
     }

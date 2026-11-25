@@ -657,6 +657,7 @@ class RoomManager:
             "host_id": room.host_id,
             "drawer_id": room.turn.drawer_id if room.turn else None,
             "hint": room.turn.hint if room.turn else [],
+            "voice_peers": dict(getattr(room, "_voice_peers", {})),
         }
         if room.turn is not None and room.state == RoomState.PLAYING:
             elapsed = time.time() - room.turn.start_time
@@ -975,6 +976,7 @@ class RoomManager:
             "host_id": room.host_id,
             "drawer_id": room.turn.drawer_id if room.turn else None,
             "hint": room.turn.hint if room.turn else [],
+            "voice_peers": dict(getattr(room, "_voice_peers", {})),
         }
         if room.turn is not None and room.state == RoomState.PLAYING:
             elapsed = time.time() - room.turn.start_time

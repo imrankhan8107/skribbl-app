@@ -22,6 +22,7 @@ export interface VoiceChatContextValue {
   isMuted: boolean;
   voiceError: string | null;
   peerCount: number;
+  connectedCount: number;
   inputDevices: AudioDeviceOption[];
   outputDevices: AudioDeviceOption[];
   selectedInputId: string;
@@ -43,6 +44,7 @@ const VoiceChatContext = createContext<VoiceChatContextValue>({
   isMuted: false,
   voiceError: null,
   peerCount: 0,
+  connectedCount: 0,
   inputDevices: [],
   outputDevices: [],
   selectedInputId: "",
@@ -73,6 +75,7 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
   const [selectedInputId, setSelectedInputId] = useState("");
   const [selectedOutputId, setSelectedOutputId] = useState("");
   const [outputVolume, setOutputVolumeState] = useState(100);
+  const [connectedCount, setConnectedCount] = useState(0);
 
   const inVoiceRef = useRef(false);
   const isMutedRef = useRef(false);
@@ -80,7 +83,10 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
   const selectedOutputIdRef = useRef("");
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const pendingCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const audioElsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const voicePeersRef = useRef<Record<string, { muted: boolean }>>(gameState.voicePeers ?? {});
+  voicePeersRef.current = gameState.voicePeers ?? {};
   const localPlayerIdRef = useRef<string | null>(gameState.localPlayerId);
   localPlayerIdRef.current = gameState.localPlayerId;
 
@@ -141,27 +147,46 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const cleanupPeer = useCallback((peerId: string) => {
-    const pc = peersRef.current.get(peerId);
-    if (pc) {
-      try {
-        pc.close();
-      } catch {
-        /* ignore */
+  const updateConnectedCount = useCallback(() => {
+    let count = 0;
+    for (const pc of peersRef.current.values()) {
+      if (
+        pc.connectionState === "connected" ||
+        pc.iceConnectionState === "connected" ||
+        pc.iceConnectionState === "completed"
+      ) {
+        count++;
       }
-      peersRef.current.delete(peerId);
     }
-    const audio = audioElsRef.current.get(peerId);
-    if (audio) {
-      try {
-        audio.srcObject = null;
-        audio.remove();
-      } catch {
-        /* ignore */
-      }
-      audioElsRef.current.delete(peerId);
-    }
+    setConnectedCount(count);
   }, []);
+
+  const cleanupPeer = useCallback(
+    (peerId: string) => {
+      pendingCandidatesRef.current.delete(peerId);
+      const pc = peersRef.current.get(peerId);
+      if (pc) {
+        try {
+          pc.close();
+        } catch {
+          /* ignore */
+        }
+        peersRef.current.delete(peerId);
+      }
+      const audio = audioElsRef.current.get(peerId);
+      if (audio) {
+        try {
+          audio.srcObject = null;
+          audio.remove();
+        } catch {
+          /* ignore */
+        }
+        audioElsRef.current.delete(peerId);
+      }
+      updateConnectedCount();
+    },
+    [updateConnectedCount]
+  );
 
   const leaveVoice = useCallback(() => {
     inVoiceRef.current = false;
@@ -205,12 +230,12 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
       };
 
       pc.ontrack = (evt) => {
-        const [stream] = evt.streams;
-        if (!stream) return;
+        const stream = evt.streams?.[0] ?? new MediaStream([evt.track]);
         let audio = audioElsRef.current.get(peerId);
         if (!audio) {
           audio = document.createElement("audio");
           audio.autoplay = true;
+          audio.muted = false;
           audio.setAttribute("playsinline", "true");
           audio.dataset.voicePeer = peerId;
           document.body.appendChild(audio);
@@ -223,7 +248,12 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
         });
       };
 
+      pc.oniceconnectionstatechange = () => {
+        updateConnectedCount();
+      };
+
       pc.onconnectionstatechange = () => {
+        updateConnectedCount();
         if (pc.connectionState === "failed" || pc.connectionState === "closed") {
           cleanupPeer(peerId);
         }
@@ -268,7 +298,7 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
       send("voice_state", { joined: true, muted: false });
 
       const myId = localPlayerIdRef.current;
-      const existingPeers = Object.keys(gameState.voicePeers ?? {});
+      const existingPeers = Object.keys(voicePeersRef.current);
       for (const peerId of existingPeers) {
         if (!myId || peerId === myId) continue;
         const pc = createPeerConnection(peerId);
@@ -353,6 +383,19 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
     send("voice_state", { joined: true, muted: nextMuted });
   }, [send]);
 
+  const flushPendingCandidates = useCallback(async (peerId: string, pc: RTCPeerConnection) => {
+    const queued = pendingCandidatesRef.current.get(peerId);
+    if (!queued || queued.length === 0) return;
+    pendingCandidatesRef.current.delete(peerId);
+    for (const candidate of queued) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch {
+        /* ignore stale candidate */
+      }
+    }
+  }, []);
+
   useEffect(() => {
     return subscribeWebRtcSignal(async (evt: WebRtcSignalEvent) => {
       if (!inVoiceRef.current) return;
@@ -363,6 +406,7 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
         if (signal.type === "offer" && signal.sdp) {
           const pc = createPeerConnection(fromPlayerId);
           await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          await flushPendingCandidates(fromPlayerId, pc);
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           send("webrtc_signal", {
@@ -373,18 +417,23 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
           const pc = peersRef.current.get(fromPlayerId);
           if (pc) {
             await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            await flushPendingCandidates(fromPlayerId, pc);
           }
         } else if (signal.type === "candidate" && signal.candidate) {
           const pc = peersRef.current.get(fromPlayerId);
-          if (pc) {
+          if (pc && pc.remoteDescription) {
             await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+          } else {
+            const list = pendingCandidatesRef.current.get(fromPlayerId) ?? [];
+            list.push(signal.candidate);
+            pendingCandidatesRef.current.set(fromPlayerId, list);
           }
         }
       } catch {
         /* ignore transient signaling race errors */
       }
     });
-  }, [createPeerConnection, send]);
+  }, [createPeerConnection, flushPendingCandidates, send]);
 
   useEffect(() => {
     return subscribeVoiceState((evt: VoiceStateEvent) => {
@@ -409,6 +458,7 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
         isMuted,
         voiceError,
         peerCount,
+        connectedCount,
         inputDevices,
         outputDevices,
         selectedInputId,

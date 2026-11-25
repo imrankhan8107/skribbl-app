@@ -7,6 +7,7 @@ export function VoiceControls() {
     isMuted,
     voiceError,
     peerCount,
+    connectedCount,
     inputDevices,
     outputDevices,
     selectedInputId,
@@ -67,6 +68,11 @@ export function VoiceControls() {
             title={isMuted ? "Unmute microphone" : "Mute microphone"}
           >
             {isMuted ? "🔇 Unmute" : "🎙️ Mute"}
+            {peerCount > 1 && (
+              <span style={{ fontSize: "0.78rem", opacity: 0.85 }}>
+                ({connectedCount > 0 ? `${connectedCount} live` : "connecting..."})
+              </span>
+            )}
           </button>
           <button
             type="button"
