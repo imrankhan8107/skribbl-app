@@ -12,14 +12,29 @@ const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun1.l.google.com:19302" },
 ];
 
+export interface AudioDeviceOption {
+  deviceId: string;
+  label: string;
+}
+
 export interface VoiceChatContextValue {
   inVoice: boolean;
   isMuted: boolean;
   voiceError: string | null;
   peerCount: number;
+  inputDevices: AudioDeviceOption[];
+  outputDevices: AudioDeviceOption[];
+  selectedInputId: string;
+  selectedOutputId: string;
+  outputVolume: number;
+  supportsOutputSelection: boolean;
   joinVoice: () => Promise<void>;
   leaveVoice: () => void;
   toggleMute: () => void;
+  setInputDevice: (deviceId: string) => Promise<void>;
+  setOutputDevice: (deviceId: string) => Promise<void>;
+  setOutputVolume: (volume: number) => void;
+  refreshDevices: () => Promise<void>;
   clearVoiceError: () => void;
 }
 
@@ -28,24 +43,103 @@ const VoiceChatContext = createContext<VoiceChatContextValue>({
   isMuted: false,
   voiceError: null,
   peerCount: 0,
+  inputDevices: [],
+  outputDevices: [],
+  selectedInputId: "",
+  selectedOutputId: "",
+  outputVolume: 100,
+  supportsOutputSelection: false,
   joinVoice: async () => {},
   leaveVoice: () => {},
   toggleMute: () => {},
+  setInputDevice: async () => {},
+  setOutputDevice: async () => {},
+  setOutputVolume: () => {},
+  refreshDevices: async () => {},
   clearVoiceError: () => {},
 });
+
+type AudioElementWithSink = HTMLAudioElement & {
+  setSinkId?: (sinkId: string) => Promise<void>;
+};
 
 export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
   const { gameState, send } = useWebSocket();
   const [inVoice, setInVoice] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [inputDevices, setInputDevices] = useState<AudioDeviceOption[]>([]);
+  const [outputDevices, setOutputDevices] = useState<AudioDeviceOption[]>([]);
+  const [selectedInputId, setSelectedInputId] = useState("");
+  const [selectedOutputId, setSelectedOutputId] = useState("");
+  const [outputVolume, setOutputVolumeState] = useState(100);
 
   const inVoiceRef = useRef(false);
+  const isMutedRef = useRef(false);
+  const outputVolumeRef = useRef(100);
+  const selectedOutputIdRef = useRef("");
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const audioElsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const localPlayerIdRef = useRef<string | null>(gameState.localPlayerId);
   localPlayerIdRef.current = gameState.localPlayerId;
+
+  const supportsOutputSelection =
+    typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+
+  const refreshDevices = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
+      return;
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs: AudioDeviceOption[] = [];
+      const outputs: AudioDeviceOption[] = [];
+      let inIdx = 1;
+      let outIdx = 1;
+
+      for (const dev of devices) {
+        if (dev.kind === "audioinput") {
+          inputs.push({
+            deviceId: dev.deviceId,
+            label: dev.label || `Microphone ${inIdx++}`,
+          });
+        } else if (dev.kind === "audiooutput") {
+          outputs.push({
+            deviceId: dev.deviceId,
+            label: dev.label || `Speaker ${outIdx++}`,
+          });
+        }
+      }
+      setInputDevices(inputs);
+      setOutputDevices(outputs);
+    } catch {
+      /* ignore enumeration errors */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshDevices();
+    if (typeof navigator !== "undefined" && navigator.mediaDevices?.addEventListener) {
+      const handler = () => void refreshDevices();
+      navigator.mediaDevices.addEventListener("devicechange", handler);
+      return () => navigator.mediaDevices.removeEventListener("devicechange", handler);
+    }
+    return undefined;
+  }, [refreshDevices]);
+
+  const applyOutputSettingsToAudio = useCallback(async (audio: HTMLAudioElement) => {
+    audio.volume = Math.max(0, Math.min(1, outputVolumeRef.current / 100));
+    const sinkId = selectedOutputIdRef.current;
+    const sinkAudio = audio as AudioElementWithSink;
+    if (sinkId && typeof sinkAudio.setSinkId === "function") {
+      try {
+        await sinkAudio.setSinkId(sinkId);
+      } catch {
+        /* ignore unsupported sinkId errors */
+      }
+    }
+  }, []);
 
   const cleanupPeer = useCallback((peerId: string) => {
     const pc = peersRef.current.get(peerId);
@@ -71,6 +165,7 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
 
   const leaveVoice = useCallback(() => {
     inVoiceRef.current = false;
+    isMutedRef.current = false;
     setInVoice(false);
     setIsMuted(false);
 
@@ -122,6 +217,7 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
           audioElsRef.current.set(peerId, audio);
         }
         audio.srcObject = stream;
+        void applyOutputSettingsToAudio(audio);
         audio.play().catch(() => {
           /* autoplay policy handled via user click on Join Voice */
         });
@@ -135,8 +231,18 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
 
       return pc;
     },
-    [cleanupPeer, send]
+    [applyOutputSettingsToAudio, cleanupPeer, send]
   );
+
+  const getMicStream = useCallback(async (deviceId?: string) => {
+    const audioConstraints: MediaTrackConstraints = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+    };
+    return navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+  }, []);
 
   const joinVoice = useCallback(async () => {
     setVoiceError(null);
@@ -145,20 +251,22 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+      const stream = await getMicStream(selectedInputId || undefined);
       localStreamRef.current = stream;
       inVoiceRef.current = true;
+      isMutedRef.current = false;
       setInVoice(true);
       setIsMuted(false);
+
+      const activeTrack = stream.getAudioTracks()[0];
+      const activeDeviceId = activeTrack?.getSettings?.().deviceId;
+      if (activeDeviceId) {
+        setSelectedInputId(activeDeviceId);
+      }
+      await refreshDevices();
+
       send("voice_state", { joined: true, muted: false });
 
-      // Initiate offers to peers already in voice (deterministic tie-breaker by ID)
       const myId = localPlayerIdRef.current;
       const existingPeers = Object.keys(gameState.voicePeers ?? {});
       for (const peerId of existingPeers) {
@@ -174,19 +282,77 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
     } catch {
       setVoiceError("Microphone permission denied or no microphone found.");
     }
-  }, [createPeerConnection, gameState.voicePeers, send]);
+  }, [
+    createPeerConnection,
+    gameState.voicePeers,
+    getMicStream,
+    refreshDevices,
+    selectedInputId,
+    send,
+  ]);
+
+  const setInputDevice = useCallback(
+    async (deviceId: string) => {
+      setSelectedInputId(deviceId);
+      if (!inVoiceRef.current) return;
+      try {
+        const newStream = await getMicStream(deviceId || undefined);
+        const newTrack = newStream.getAudioTracks()[0];
+        if (!newTrack) return;
+        newTrack.enabled = !isMutedRef.current;
+
+        for (const pc of peersRef.current.values()) {
+          const sender = pc.getSenders().find((s) => s.track?.kind === "audio");
+          if (sender) {
+            await sender.replaceTrack(newTrack);
+          }
+        }
+        if (localStreamRef.current) {
+          localStreamRef.current.getTracks().forEach((t) => t.stop());
+        }
+        localStreamRef.current = newStream;
+      } catch {
+        setVoiceError("Failed to switch microphone device.");
+      }
+    },
+    [getMicStream]
+  );
+
+  const setOutputDevice = useCallback(async (deviceId: string) => {
+    selectedOutputIdRef.current = deviceId;
+    setSelectedOutputId(deviceId);
+    for (const audio of audioElsRef.current.values()) {
+      const sinkAudio = audio as AudioElementWithSink;
+      if (typeof sinkAudio.setSinkId === "function") {
+        try {
+          await sinkAudio.setSinkId(deviceId);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }, []);
+
+  const setOutputVolume = useCallback((volume: number) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(volume)));
+    outputVolumeRef.current = clamped;
+    setOutputVolumeState(clamped);
+    for (const audio of audioElsRef.current.values()) {
+      audio.volume = clamped / 100;
+    }
+  }, []);
 
   const toggleMute = useCallback(() => {
     if (!inVoiceRef.current || !localStreamRef.current) return;
-    const nextMuted = !isMuted;
+    const nextMuted = !isMutedRef.current;
+    isMutedRef.current = nextMuted;
     localStreamRef.current.getAudioTracks().forEach((track) => {
       track.enabled = !nextMuted;
     });
     setIsMuted(nextMuted);
     send("voice_state", { joined: true, muted: nextMuted });
-  }, [isMuted, send]);
+  }, [send]);
 
-  // Handle incoming WebRTC signaling (offer, answer, ICE candidate)
   useEffect(() => {
     return subscribeWebRtcSignal(async (evt: WebRtcSignalEvent) => {
       if (!inVoiceRef.current) return;
@@ -220,7 +386,6 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
     });
   }, [createPeerConnection, send]);
 
-  // Clean up peer connections when a peer leaves voice
   useEffect(() => {
     return subscribeVoiceState((evt: VoiceStateEvent) => {
       if (!evt.joined && evt.playerId) {
@@ -229,7 +394,6 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
     });
   }, [cleanupPeer]);
 
-  // Auto-leave voice if the user leaves the room
   useEffect(() => {
     if (!gameState.roomCode && inVoiceRef.current) {
       leaveVoice();
@@ -245,9 +409,19 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
         isMuted,
         voiceError,
         peerCount,
+        inputDevices,
+        outputDevices,
+        selectedInputId,
+        selectedOutputId,
+        outputVolume,
+        supportsOutputSelection,
         joinVoice,
         leaveVoice,
         toggleMute,
+        setInputDevice,
+        setOutputDevice,
+        setOutputVolume,
+        refreshDevices,
         clearVoiceError: () => setVoiceError(null),
       }}
     >

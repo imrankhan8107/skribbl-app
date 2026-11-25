@@ -89,8 +89,13 @@ describe("Skribbl Social, Password & Spectator E2E", () => {
     cy.get('[data-testid="preset-pack-tech"]').click();
     cy.get('[data-testid="custom-words-count"]').should("contain.text", "13");
 
-    // Verify Voice Chat controls and peer voice indicator
+    // Verify Voice Chat controls, Audio Settings popover, and peer voice indicator
     cy.get('[data-testid="voice-join-btn"]').should("contain.text", "Join Voice");
+    cy.get('[data-testid="voice-settings-btn"]').click();
+    cy.get('[data-testid="voice-settings-popover"]').should("be.visible");
+    cy.get('[data-testid="voice-input-select"]').should("be.visible");
+    cy.get('[data-testid="voice-volume-slider"]').should("be.visible");
+    cy.get('[data-testid="voice-settings-btn"]').click();
     cy.get('[data-testid="room-code"]')
       .invoke("text")
       .then((rawCode) => {
