@@ -19,7 +19,7 @@ export default function Landing() {
   const [selectedAvatarId, setSelectedAvatarId] = useState(getStoredAvatarId);
   const [joinAsSpectator, setJoinAsSpectator] = useState(false);
   const [roomPassword, setRoomPassword] = useState("");
-  const { gameState, send, dispatch } = useWebSocket();
+  const { gameState, isConnected, send, dispatch } = useWebSocket();
   const navigate = useNavigate();
 
   // Keep roomCode in sync if URL query param changes
@@ -247,6 +247,18 @@ export default function Landing() {
                 Join Room
               </button>
             </div>
+            <div
+              className="server-status-pill"
+              data-testid="server-status-pill"
+              style={{
+                marginTop: "0.75rem",
+                fontSize: "0.82rem",
+                textAlign: "center",
+                opacity: 0.85,
+              }}
+            >
+              {isConnected ? "🟢 Connected to Game Server" : "🟡 Connecting to server..."}
+            </div>
           </form>
         </div>
 
@@ -433,8 +445,8 @@ export default function Landing() {
               with friends, browser doodle game, party games online.
             </p>
             <p className="landing-footer-copyright">
-              &copy; {new Date().getFullYear()} Skribbl. All rights reserved. Play with friends
-              worldwide.
+              &copy; {new Date().getFullYear()} Skribbl &bull; v1.2. All rights reserved. Play with
+              friends worldwide.
             </p>
           </footer>
         </div>
