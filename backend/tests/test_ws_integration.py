@@ -650,3 +650,46 @@ def test_unknown_message_type(client):
         send_msg(ws, "nonexistent_type", {"data": "test"})
         msg = recv_until_type(ws, "error")
         assert msg["payload"]["code"] == "UNKNOWN_MESSAGE"
+
+
+# --- Test 16: Binary drawing frames in FastAPI single-instance mode ---
+
+def test_binary_drawing_frames_forwarded_without_disconnect(client):
+    """Binary drawing frames from the drawer must broadcast to guessers without disconnecting."""
+    with client.websocket_connect("/ws") as ws_host, \
+         client.websocket_connect("/ws") as ws_p2:
+
+        created = create_room(ws_host, "Alice")
+        room_code = created["payload"]["room_code"]
+        join_room(ws_p2, "Bob", room_code)
+        recv_until_type(ws_host, "player_list")
+
+        send_msg(ws_host, "start_game")
+        recv_until_type(ws_host, "game_started")
+        recv_until_type(ws_p2, "game_started")
+
+        # Drawer (host) selects a word
+        word_choices = recv_until_type(ws_host, "word_choices")
+        chosen_word = word_choices["payload"]["choices"][0]
+        send_msg(ws_host, "select_word", {"word": chosen_word})
+
+        recv_until_type(ws_host, "turn_started")
+        recv_until_type(ws_p2, "turn_started")
+
+        # Drawer sends a binary stroke frame (opcode 0x01, RGB 0,0,0, size 4, 1 point (100, 200))
+        binary_stroke = bytes([0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x01, 0x00, 0x64, 0x00, 0xC8])
+        ws_host.send_bytes(binary_stroke)
+
+        # Guesser must receive the exact binary frame (skip any interleaved JSON frames like ping/timer)
+        received_bytes = None
+        for _ in range(10):
+            msg = ws_p2.receive()
+            if "bytes" in msg and msg["bytes"] is not None:
+                received_bytes = msg["bytes"]
+                break
+        assert received_bytes == binary_stroke
+
+        # Both connections remain alive — guesser can guess the word successfully
+        send_msg(ws_p2, "guess", {"text": chosen_word})
+        correct = recv_until_type(ws_p2, "guess_correct")
+        assert correct["type"] == "guess_correct"

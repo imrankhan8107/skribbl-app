@@ -53,8 +53,30 @@ async def websocket_handler(websocket: WebSocket) -> None:
     heartbeat_task = start_heartbeat(websocket)
 
     try:
-        # Main message loop
-        async for raw in websocket.iter_text():
+        # Main message loop (supports both JSON text frames and binary drawing frames)
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+
+            raw_bytes = message.get("bytes")
+            if raw_bytes is not None:
+                if len(raw_bytes) > 65536:
+                    await _send_error(websocket, "MESSAGE_TOO_LARGE", "Message exceeds 64KB limit")
+                    continue
+                if player_id is None:
+                    p_info = room_manager._ws_to_player.get(websocket)
+                    if p_info:
+                        player_id = p_info["player_id"]
+                        room_code = p_info["room_code"]
+                if player_id is not None and room_code is not None:
+                    await room_manager.broadcast_binary(room_code, player_id, raw_bytes)
+                continue
+
+            raw = message.get("text")
+            if raw is None:
+                continue
+
             try:
                 # Guard against oversized messages (prevents JSON parsing DoS)
                 if len(raw) > 65536:

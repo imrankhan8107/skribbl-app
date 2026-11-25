@@ -1951,6 +1951,27 @@ class RoomManager:
             except Exception as e:
                 logger.error("Failed to publish to Redis for room %s: %s", room_code, e)
 
+    async def broadcast_binary(self, room_code: str, sender_id: str, data: bytes) -> None:
+        """Broadcast a binary drawing frame from the current drawer to other local players."""
+        room = self.rooms.get(room_code)
+        if (
+            room is None
+            or room.state != RoomState.PLAYING
+            or not room.turn
+            or room.turn.drawer_id != sender_id
+        ):
+            return
+
+        for player in room.players:
+            if player.id == sender_id:
+                continue
+            ws = player.websocket
+            if ws is not None and player.is_connected and not isinstance(ws, VirtualTransport):
+                try:
+                    await ws.send_bytes(data)
+                except Exception:
+                    pass
+
     async def handle_redis_message(self, channel: str, data: dict) -> None:
         """Handle a message received from Redis pub/sub (from another worker).
 
