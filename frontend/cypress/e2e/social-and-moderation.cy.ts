@@ -71,4 +71,22 @@ describe("Skribbl Social, Password & Spectator E2E", () => {
       cy.get('[data-testid="spectator-banner"]').should("be.visible");
     });
   });
+
+  it("imports a shared ?pack= URL into a new room and supports new themed preset chips", () => {
+    // Base64url encoding of "Naruto\nPikachu\nGoku" -> "TmFydXRvClBpa2FjaHUKR29rdQ"
+    cy.visit("/?pack=TmFydXRvClBpa2FjaHUKR29rdQ");
+    cy.wait(400);
+
+    cy.get('[data-testid="shared-pack-banner"]').should("contain.text", "3");
+    cy.get('input[placeholder="Enter your name"]').type("PackHost");
+    cy.contains("button", "Create Room").click();
+
+    cy.url().should("include", "/lobby/");
+    cy.get('[data-testid="custom-words-count"]').should("contain.text", "3");
+    cy.get('[data-testid="share-pack-btn"]').should("be.visible");
+
+    // Click the Tech preset chip to append tech words
+    cy.get('[data-testid="preset-pack-tech"]').click();
+    cy.get('[data-testid="custom-words-count"]').should("contain.text", "13");
+  });
 });

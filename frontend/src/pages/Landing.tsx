@@ -9,18 +9,46 @@ import {
   getStoredPlayerName,
   storePlayerName,
 } from "../utils/avatars";
+import {
+  decodeWordPack,
+  savePendingSharedPack,
+  loadPendingSharedPack,
+} from "../utils/wordPackCodec";
 
 export default function Landing() {
   const [searchParams] = useSearchParams();
   const roomParam = searchParams.get("room") || "";
+  const packParam = searchParams.get("pack") || "";
 
   const [playerName, setPlayerName] = useState(getStoredPlayerName);
   const [roomCode, setRoomCode] = useState(() => (roomParam ? roomParam.toUpperCase() : ""));
   const [selectedAvatarId, setSelectedAvatarId] = useState(getStoredAvatarId);
   const [joinAsSpectator, setJoinAsSpectator] = useState(false);
   const [roomPassword, setRoomPassword] = useState("");
+  const [sharedPackCount, setSharedPackCount] = useState(() => {
+    if (packParam) {
+      const decoded = decodeWordPack(packParam);
+      if (decoded.length > 0) {
+        savePendingSharedPack(decoded);
+        return decoded.length;
+      }
+    }
+    return loadPendingSharedPack().length;
+  });
   const { gameState, isConnected, send, dispatch } = useWebSocket();
   const navigate = useNavigate();
+
+  // Keep roomCode and shared pack in sync if URL query params change
+  useEffect(() => {
+    const p = searchParams.get("pack");
+    if (p) {
+      const decoded = decodeWordPack(p);
+      if (decoded.length > 0) {
+        savePendingSharedPack(decoded);
+        setSharedPackCount(decoded.length);
+      }
+    }
+  }, [searchParams]);
 
   // Keep roomCode in sync if URL query param changes
   useEffect(() => {
@@ -175,6 +203,24 @@ export default function Landing() {
 
         {/* Main Game Setup Card */}
         <div className="landing-card-wrapper">
+          {sharedPackCount > 0 && (
+            <div
+              className="shared-pack-banner"
+              data-testid="shared-pack-banner"
+              style={{
+                background: "rgba(108, 99, 255, 0.12)",
+                border: "1px solid rgba(108, 99, 255, 0.35)",
+                borderRadius: "8px",
+                padding: "8px 12px",
+                marginBottom: "12px",
+                fontSize: "0.86rem",
+                textAlign: "center",
+              }}
+            >
+              📦 Loaded <strong>{sharedPackCount}</strong> custom words from shared pack! Click{" "}
+              <strong>Create Room</strong> to play with them.
+            </div>
+          )}
           <form className="landing-game-form">
             <div>
               <label htmlFor="player-name">Player Name</label>

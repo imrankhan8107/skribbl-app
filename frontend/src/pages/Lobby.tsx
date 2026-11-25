@@ -9,18 +9,80 @@ import ProfileModal from "../components/ProfileModal";
 import VoteKickBanner from "../components/VoteKickBanner";
 import { copyToClipboard } from "../utils/clipboard";
 import { getStoredAvatarId, getStoredPlayerName } from "../utils/avatars";
+import {
+  buildShareablePackUrl,
+  clearPendingSharedPack,
+  loadPendingSharedPack,
+  parseWordList,
+} from "../utils/wordPackCodec";
 
 const PRESET_PACKS = [
+  {
+    name: "🎌 Anime",
+    words: [
+      "Naruto",
+      "Pikachu",
+      "Goku",
+      "Totoro",
+      "Pokeball",
+      "Katana",
+      "Sharingan",
+      "Titan",
+      "Ramen",
+      "Chibi",
+    ],
+  },
+  {
+    name: "🎬 Movies",
+    words: [
+      "Lightsaber",
+      "Titanic",
+      "Avatar",
+      "Batman",
+      "Spider-Man",
+      "Inception",
+      "Godzilla",
+      "Hogwarts",
+      "Matrix",
+      "Oscar",
+    ],
+  },
+  {
+    name: "💻 Tech",
+    words: [
+      "Keyboard",
+      "Firewall",
+      "Database",
+      "Server",
+      "Router",
+      "WiFi",
+      "Bluetooth",
+      "Drone",
+      "Laptop",
+      "Microchip",
+    ],
+  },
+  {
+    name: "🌍 Countries",
+    words: [
+      "Japan",
+      "Brazil",
+      "Egypt",
+      "Italy",
+      "India",
+      "France",
+      "Canada",
+      "Australia",
+      "Mexico",
+      "Greece",
+    ],
+  },
   { name: "🧙‍♂️ Fantasy", words: ["Dragon", "Wizard", "Castle", "Potion", "Unicorn", "Knight"] },
   {
     name: "🎮 Gaming",
-    words: ["Minecraft", "Pikachu", "Mario", "Fortnite", "PlayStation", "Zelda"],
+    words: ["Minecraft", "Mario", "Fortnite", "PlayStation", "Zelda", "Joystick"],
   },
-  {
-    name: "🎬 Cinema",
-    words: ["Lightsaber", "Titanic", "Avatar", "Batman", "Spider-Man", "Inception"],
-  },
-  { name: "🍕 Foodie", words: ["Sushi", "Tacos", "Croissant", "Pancakes", "Bubble Tea", "Ramen"] },
+  { name: "🍕 Foodie", words: ["Sushi", "Tacos", "Croissant", "Pancakes", "Bubble Tea", "Pizza"] },
 ];
 
 export default function Lobby() {
@@ -45,6 +107,31 @@ export default function Lobby() {
       setCustomWordsText(config.customWords.join(", "));
     }
   }, [config.customWords]);
+
+  // Auto-apply shared pack from ?pack=... URL when host enters a fresh lobby
+  useEffect(() => {
+    if (!gameState.isHost || !gameState.roomCode) return;
+    const pending = loadPendingSharedPack();
+    if (pending.length > 0 && (!config.customWords || config.customWords.length === 0)) {
+      const joined = pending.join(", ");
+      setCustomWordsText(joined);
+      send("update_settings", { custom_words: pending });
+      clearPendingSharedPack();
+      setSnackbarText(`Imported ${pending.length} words from shared pack!`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
+  }, [gameState.isHost, gameState.roomCode]);
+
+  const handleSharePackLink = async () => {
+    const words = parseWordList(customWordsText);
+    if (words.length === 0) return;
+    const url = buildShareablePackUrl(words);
+    const ok = await copyToClipboard(url);
+    setSnackbarText(ok ? "Shareable pack link copied!" : "Copy failed — try again");
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
 
   const applyCustomWords = (text: string) => {
     const words = text
@@ -417,14 +504,24 @@ export default function Lobby() {
                     {gameState.isHost && (
                       <div style={{ display: "flex", gap: "4px" }}>
                         {customWordsText && (
-                          <button
-                            type="button"
-                            className="preset-chip"
-                            onClick={handleClearCustomWords}
-                            style={{ color: "var(--color-danger)" }}
-                          >
-                            Clear
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className="preset-chip"
+                              data-testid="share-pack-btn"
+                              onClick={handleSharePackLink}
+                            >
+                              🔗 Share Pack
+                            </button>
+                            <button
+                              type="button"
+                              className="preset-chip"
+                              onClick={handleClearCustomWords}
+                              style={{ color: "var(--color-danger)" }}
+                            >
+                              Clear
+                            </button>
+                          </>
                         )}
                         <button
                           type="button"

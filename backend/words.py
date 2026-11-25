@@ -129,6 +129,50 @@ WORD_PACKS: list[dict[str, Any]] = [
             "princess", "sailor", "scientist", "singer", "soldier", "spy", "superhero",
         ],
     },
+    {
+        "id": "anime",
+        "name": "Anime & Manga",
+        "emoji": "🎌",
+        "words": [
+            "naruto", "pikachu", "goku", "totoro", "pokeball", "katana", "samurai",
+            "ramen", "shuriken", "kunai", "sharingan", "titan", "mecha", "chibi",
+            "kamehameha", "senpai", "shinigami", "oni", "kitsune", "sakura",
+            "bento", "origami", "lantern", "sumo", "dojo",
+        ],
+    },
+    {
+        "id": "movies",
+        "name": "Movies & Pop Culture",
+        "emoji": "🎬",
+        "words": [
+            "lightsaber", "titanic", "batman", "spiderman", "avatar", "clapperboard",
+            "oscar", "popcorn", "cinema", "projector", "red carpet", "stuntman",
+            "megaphone", "godzilla", "king kong", "jurassic", "hogwarts", "minions",
+            "terminator", "matrix", "pirate ship", "jedi", "cape", "mask", "trophy",
+        ],
+    },
+    {
+        "id": "tech",
+        "name": "Tech & Coding",
+        "emoji": "💻",
+        "words": [
+            "keyboard", "firewall", "database", "server", "router", "webcam",
+            "laptop", "microphone", "bluetooth", "wifi", "barcode", "qr code",
+            "joystick", "headset", "circuit", "microchip", "antenna", "satellite dish",
+            "usb", "mousepad", "monitor", "smartphone", "drone", "printer", "battery",
+        ],
+    },
+    {
+        "id": "countries",
+        "name": "Countries & Landmarks",
+        "emoji": "🌍",
+        "words": [
+            "japan", "brazil", "egypt", "italy", "india", "france", "canada",
+            "australia", "mexico", "greece", "germany", "spain", "china", "korea",
+            "eiffel tower", "pyramid", "taj mahal", "statue of liberty", "colosseum",
+            "big ben", "great wall", "mount fuji", "compass", "passport", "globe",
+        ],
+    },
 ]
 
 # Quick lookup by pack ID
