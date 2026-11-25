@@ -9,6 +9,7 @@ up the server process on exit.
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -52,16 +53,23 @@ def main() -> int:
     env.pop("ELECTRON_RUN_AS_NODE", None)
 
     print(f"Starting FastAPI backend at {BASE_URL}...")
+    log_file = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
     server = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "backend.main:app", "--host", "127.0.0.1", "--port", str(PORT)],
         cwd=ROOT_DIR,
         env=env,
-        stdout=subprocess.DEVNULL,
+        stdout=log_file,
         stderr=subprocess.STDOUT,
     )
 
     try:
-        wait_for_health()
+        try:
+            wait_for_health()
+        except Exception:
+            log_file.seek(0)
+            print("--- FastAPI startup output ---")
+            print(log_file.read())
+            raise
         print("Backend is healthy. Running Cypress E2E suite...")
         result = subprocess.run([npx_cmd, "cypress", "run"], cwd=FRONTEND_DIR, env=env)
         return result.returncode
@@ -72,6 +80,7 @@ def main() -> int:
             server.wait(timeout=5)
         except subprocess.TimeoutExpired:
             server.kill()
+        log_file.close()
 
 
 if __name__ == "__main__":

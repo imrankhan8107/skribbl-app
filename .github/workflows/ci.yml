@@ -161,17 +161,18 @@ jobs:
           cache: "npm"
           cache-dependency-path: frontend/package.json
 
-      - name: Build Frontend & Run Cypress E2E
+      - name: Install Frontend & Cypress Dependencies
         uses: cypress-io/github-action@v6
         with:
           working-directory: frontend
           build: npm run build
-          start: python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --app-dir ..
-          wait-on: http://127.0.0.1:8000/health
-          wait-on-timeout: 30
+          runTests: false
+
+      - name: Run Cypress E2E Suite
+        run: python scripts/run_e2e.py
         env:
           REDIS_URL: ""
-          PORT: "8000"
+          E2E_PORT: "8000"
 
       - name: Upload Cypress Screenshots on Failure
         uses: actions/upload-artifact@v4
