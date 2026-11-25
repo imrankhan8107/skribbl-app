@@ -87,5 +87,21 @@ else
   echo "⏭️  No backend changes — skipping backend checks"
 fi
 
+# ============================================================
+# Cypress E2E checks (if frontend or backend changed)
+# ============================================================
+if [ "$HAS_FRONTEND" -gt 0 ] || [ "$HAS_BACKEND" -gt 0 ]; then
+  if [ "${SKIP_E2E:-0}" = "1" ]; then
+    echo "⏭️  SKIP_E2E=1 set — skipping Cypress E2E suite"
+  else
+    echo "🌐 Running Cypress E2E suite..."
+    python scripts/run_e2e.py || {
+      echo "❌ Cypress E2E tests failed."
+      exit 1
+    }
+    echo "✅ Cypress E2E checks passed!"
+  fi
+fi
+
 echo ""
 echo "🎉 All pre-commit checks passed!"

@@ -52,6 +52,8 @@ roadmaps
 LEARNING_ROADMAP.md
 .kiro
 screenshots/
+frontend/cypress/screenshots/
+frontend/cypress/videos/
 
 # Binaries & local runner scripts
 *.exe
