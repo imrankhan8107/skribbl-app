@@ -250,18 +250,13 @@ jobs:
 
   deploy-oracle:
     name: Deploy to Oracle Server (CD)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [e2e-tests, docker-publish]
     if: github.ref == 'refs/heads/master' && vars.ORACLE_DEPLOY_ENABLED == 'true'
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.ORACLE_HOST }}
-          username: ${{ secrets.ORACLE_USER || 'ubuntu' }}
-          key: ${{ secrets.ORACLE_SSH_KEY }}
-          script: |
-            cd /home/ubuntu/skribbl-app
-            sudo git config --global --add safe.directory /home/ubuntu/skribbl-app || true
-            sudo git pull --ff-only origin master
-            sudo bash /home/ubuntu/skribbl-app/scripts/deploy_single_instance.sh --force
+      - name: Deploy on Oracle VM
+        run: |
+          cd /home/ubuntu/skribbl-app
+          sudo git config --global --add safe.directory /home/ubuntu/skribbl-app || true
+          sudo git pull --ff-only origin master
+          sudo bash /home/ubuntu/skribbl-app/scripts/deploy_single_instance.sh --force
