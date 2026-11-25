@@ -9,6 +9,7 @@ import type {
 } from "../types";
 import { publishDrawing, getCanvasSnapshot, getCanvasHistory } from "./drawingBus";
 import { publishReaction } from "./reactionBus";
+import { publishVoiceState, publishWebRtcSignal } from "./voiceBus";
 import { getStoredAvatarId, getStoredPlayerName, getAvatarForPlayer } from "../utils/avatars";
 import { decodeBinaryDrawEvents } from "../utils/binaryDrawing";
 
@@ -52,6 +53,7 @@ const initialGameState: GameState = {
   spectatorRequestsRemaining: 2,
   pendingSpectatorRoleRequests: [],
   activeVoteKick: null,
+  voicePeers: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -534,6 +536,12 @@ export function gameReducer(state: GameState, action: Action): GameState {
           ...(state.typingUsers || {}),
           [action.payload.playerId]: action.payload.isTyping,
         },
+      };
+
+    case "VOICE_STATE":
+      return {
+        ...state,
+        voicePeers: action.payload.voicePeers,
       };
 
     case "TICK":
@@ -1091,6 +1099,29 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
               playerName: msg.payload?.player_name,
               isTyping: Boolean(msg.payload?.is_typing),
             },
+          });
+          return;
+        }
+
+        // Handle WebRTC signaling & voice state
+        if (msg.type === "webrtc_signal") {
+          publishWebRtcSignal({
+            fromPlayerId: msg.payload?.from_player_id,
+            signal: msg.payload?.signal,
+          });
+          return;
+        }
+        if (msg.type === "voice_state") {
+          const voicePeers = (msg.payload?.voice_peers ?? {}) as Record<string, { muted: boolean }>;
+          publishVoiceState({
+            playerId: msg.payload?.player_id,
+            joined: Boolean(msg.payload?.joined),
+            muted: Boolean(msg.payload?.muted),
+            voicePeers,
+          });
+          dispatch({
+            type: "VOICE_STATE",
+            payload: { voicePeers },
           });
           return;
         }

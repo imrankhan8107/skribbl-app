@@ -7,6 +7,7 @@ import { HeaderBar } from "../components/HeaderBar";
 import QRCodeModal from "../components/QRCodeModal";
 import ProfileModal from "../components/ProfileModal";
 import VoteKickBanner from "../components/VoteKickBanner";
+import { VoiceControls } from "../components/VoiceControls";
 import { copyToClipboard } from "../utils/clipboard";
 import { getStoredAvatarId, getStoredPlayerName } from "../utils/avatars";
 import {
@@ -384,6 +385,7 @@ export default function Lobby() {
             >
               📤 Share
             </button>
+            <VoiceControls />
           </div>
         </div>
 
@@ -403,6 +405,7 @@ export default function Lobby() {
               players={gameState.players}
               isHost={gameState.isHost}
               localPlayerId={gameState.localPlayerId}
+              voicePeers={gameState.voicePeers}
               mutedPlayerIds={mutedPlayerIds}
               onToggleMute={toggleMutePlayer}
               onVoteKick={handleVoteKick}

@@ -88,5 +88,26 @@ describe("Skribbl Social, Password & Spectator E2E", () => {
     // Click the Tech preset chip to append tech words
     cy.get('[data-testid="preset-pack-tech"]').click();
     cy.get('[data-testid="custom-words-count"]').should("contain.text", "13");
+
+    // Verify Voice Chat controls and peer voice indicator
+    cy.get('[data-testid="voice-join-btn"]').should("contain.text", "Join Voice");
+    cy.get('[data-testid="room-code"]')
+      .invoke("text")
+      .then((rawCode) => {
+        const roomCode = rawCode.trim().match(/[A-Z0-9]{6}/)?.[0] ?? "";
+        cy.task("p2Connect", "ws://127.0.0.1:8000/ws");
+        cy.task("p2Send", {
+          type: "join_room",
+          payload: { name: "VoiceBuddy", room_code: roomCode },
+        });
+        cy.task("p2WaitForEvent", { type: "room_joined" });
+        cy.task("p2Send", {
+          type: "voice_state",
+          payload: { joined: true, muted: false },
+        });
+
+        cy.get('[data-testid="voice-join-btn"]').should("contain.text", "(1)");
+        cy.get('[data-testid="player-voice-badge"]').should("exist").and("contain.text", "🎙️");
+      });
   });
 });

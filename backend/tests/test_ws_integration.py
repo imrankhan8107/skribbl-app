@@ -693,3 +693,41 @@ def test_binary_drawing_frames_forwarded_without_disconnect(client):
         send_msg(ws_p2, "guess", {"text": chosen_word})
         correct = recv_until_type(ws_p2, "guess_correct")
         assert correct["type"] == "guess_correct"
+
+
+# --- Test 17: WebRTC voice state & signaling relay ---
+
+def test_webrtc_signaling_and_voice_state_relay(client):
+    """voice_state broadcasts to room and webrtc_signal relays strictly to target player."""
+    with client.websocket_connect("/ws") as ws_host, \
+         client.websocket_connect("/ws") as ws_p2:
+
+        created = create_room(ws_host, "Alice")
+        room_code = created["payload"]["room_code"]
+        host_id = created["payload"]["player_id"]
+
+        joined = join_room(ws_p2, "Bob", room_code)
+        p2_id = joined["payload"]["player_id"]
+        recv_until_type(ws_host, "player_list")
+
+        # Host joins voice
+        send_msg(ws_host, "voice_state", {"joined": True, "muted": False})
+        vs_p2 = recv_until_type(ws_p2, "voice_state")
+        assert vs_p2["payload"]["player_id"] == host_id
+        assert vs_p2["payload"]["joined"] is True
+        assert host_id in vs_p2["payload"]["voice_peers"]
+
+        # Host sends WebRTC offer to Bob
+        send_msg(ws_host, "webrtc_signal", {
+            "target_player_id": p2_id,
+            "signal": {"type": "offer", "sdp": "v=0-fake-sdp"},
+        })
+        sig_p2 = recv_until_type(ws_p2, "webrtc_signal")
+        assert sig_p2["payload"]["from_player_id"] == host_id
+        assert sig_p2["payload"]["signal"]["type"] == "offer"
+
+        # Host leaves voice
+        send_msg(ws_host, "voice_state", {"joined": False, "muted": False})
+        vs_leave = recv_until_type(ws_p2, "voice_state")
+        assert vs_leave["payload"]["joined"] is False
+        assert host_id not in vs_leave["payload"]["voice_peers"]

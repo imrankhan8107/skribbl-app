@@ -138,6 +138,7 @@ export interface GameState {
   spectatorRequestsRemaining?: number;
   pendingSpectatorRoleRequests?: SpectatorRoleRequest[];
   activeVoteKick?: ActiveVoteKick | null;
+  voicePeers?: Record<string, { muted: boolean }>;
 }
 
 export interface ChatMessage {
@@ -334,5 +335,6 @@ export type Action =
         message?: string;
       };
     }
+  | { type: "VOICE_STATE"; payload: { voicePeers: Record<string, { muted: boolean }> } }
   | { type: "TICK" }
   | { type: "RESET" };

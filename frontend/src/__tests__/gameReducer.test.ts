@@ -42,6 +42,7 @@ const initialState: GameState = {
   spectatorRequestsRemaining: 2,
   pendingSpectatorRoleRequests: [],
   activeVoteKick: null,
+  voicePeers: {},
 };
 
 // ---------------------------------------------------------------------------

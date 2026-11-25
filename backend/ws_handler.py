@@ -153,6 +153,7 @@ async def websocket_handler(websocket: WebSocket) -> None:
                             "toggle_ready", "rematch", "end_game_now", "update_profile",
                             "undo", "shape", "highlighter", "respond_join_request", "cancel_join_request",
                             "request_become_player", "respond_spectator_role_request", "cancel_spectator_role_request",
+                            "webrtc_signal", "voice_state",
                         }
                         if msg_type not in known_types:
                             await _send_error(websocket, "UNKNOWN_MESSAGE", f"Unknown message type: {msg_type}")
@@ -212,6 +213,7 @@ async def websocket_handler(websocket: WebSocket) -> None:
                             await redis_pubsub.unsubscribe_room(room_code)
                             room_manager.rooms.pop(room_code, None)
                 else:
+                    await room_manager.update_voice_state(player_id, joined=False, muted=False)
                     await room_manager.handle_disconnect(player_id, game_engine)
             except Exception as exc:
                 logger.exception("Error during disconnect handling: %s", exc)
@@ -424,10 +426,24 @@ async def _handle_local_message(
             await websocket.send_json(result)
 
     elif msg_type == "leave_room":
+        await room_manager.update_voice_state(player_id, joined=False, muted=False)
         result = await room_manager.leave_room(player_id)
         await websocket.send_json(result)
         if result.get("type") == "left_room":
             return True  # Signal that player left
+
+    elif msg_type == "webrtc_signal":
+        if isinstance(payload, dict):
+            target_id = payload.get("target_player_id", "")
+            signal = payload.get("signal")
+            if target_id and signal is not None:
+                await room_manager.relay_webrtc_signal(player_id, target_id, signal)
+
+    elif msg_type == "voice_state":
+        if isinstance(payload, dict):
+            joined = bool(payload.get("joined", False))
+            muted = bool(payload.get("muted", False))
+            await room_manager.update_voice_state(player_id, joined=joined, muted=muted)
 
     elif msg_type == "reaction":
         room = room_manager._find_room_by_player(player_id)

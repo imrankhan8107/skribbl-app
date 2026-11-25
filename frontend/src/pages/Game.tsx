@@ -7,6 +7,7 @@ import Chat from "../components/Chat";
 import PlayerList from "../components/PlayerList";
 import TimerBar from "../components/TimerBar";
 import VoteKickBanner from "../components/VoteKickBanner";
+import { VoiceControls } from "../components/VoiceControls";
 import { useGameAudio } from "../hooks/useGameAudio";
 import { HeaderBar } from "../components/HeaderBar";
 import { Confetti } from "../components/Confetti";
@@ -473,6 +474,7 @@ export default function Game() {
             </span>
           )}
           <TimerBar seconds={gameState.timerSeconds} total={gameState.config?.turnDuration ?? 80} />
+          <VoiceControls />
         </div>
 
         {/* Hint display — drawer sees the actual word */}
@@ -502,6 +504,7 @@ export default function Game() {
               players={gameState.players}
               drawerId={gameState.drawerId}
               typingUsers={gameState.typingUsers}
+              voicePeers={gameState.voicePeers}
               localPlayerId={gameState.localPlayerId}
               mutedPlayerIds={mutedPlayerIds}
               onToggleMute={toggleMutePlayer}

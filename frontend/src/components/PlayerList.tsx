@@ -7,6 +7,7 @@ interface PlayerListProps {
   localPlayerId?: string | null;
   drawerId?: string | null;
   typingUsers?: Record<string, boolean>;
+  voicePeers?: Record<string, { muted: boolean }>;
   mutedPlayerIds?: Set<string>;
   onToggleMute?: (playerId: string) => void;
   onVoteKick?: (playerId: string) => void;
@@ -27,6 +28,7 @@ export default function PlayerList({
   localPlayerId = null,
   drawerId = null,
   typingUsers,
+  voicePeers,
   mutedPlayerIds,
   onToggleMute,
   onVoteKick,
@@ -74,6 +76,16 @@ export default function PlayerList({
                 <span className="spectator-badge" data-testid="spectator-badge" title="Spectating">
                   {" "}
                   👀 Spectating
+                </span>
+              )}
+              {voicePeers?.[player.id] && (
+                <span
+                  className="player-voice-badge"
+                  data-testid="player-voice-badge"
+                  title={voicePeers[player.id].muted ? "In voice (muted)" : "In voice chat"}
+                  style={{ marginLeft: "4px" }}
+                >
+                  {voicePeers[player.id].muted ? "🔇" : "🎙️"}
                 </span>
               )}
               {isDrawing && (

@@ -1972,6 +1972,49 @@ class RoomManager:
                 except Exception:
                     pass
 
+    async def relay_webrtc_signal(self, sender_id: str, target_player_id: str, signal: Any) -> None:
+        """Relay a WebRTC signaling message (offer/answer/ICE) to a peer in the same room."""
+        room = self._find_room_by_player(sender_id)
+        if room is None or not target_player_id or target_player_id == sender_id:
+            return
+        target = room.get_player(target_player_id)
+        if target is None or not target.is_connected or target.websocket is None:
+            return
+        msg = json_dumps({
+            "type": "webrtc_signal",
+            "payload": {
+                "from_player_id": sender_id,
+                "signal": signal,
+            },
+        })
+        try:
+            await target.websocket.send_text(msg)
+        except Exception:
+            pass
+
+    async def update_voice_state(self, player_id: str, joined: bool, muted: bool) -> None:
+        """Update and broadcast a player's WebRTC voice chat participation/mute state."""
+        room = self._find_room_by_player(player_id)
+        if room is None:
+            return
+        voice_peers: dict[str, dict[str, bool]] = getattr(room, "_voice_peers", None)
+        if voice_peers is None:
+            voice_peers = {}
+            room._voice_peers = voice_peers
+        if joined:
+            voice_peers[player_id] = {"muted": bool(muted)}
+        else:
+            voice_peers.pop(player_id, None)
+        await self.broadcast(room.code, {
+            "type": "voice_state",
+            "payload": {
+                "player_id": player_id,
+                "joined": bool(joined),
+                "muted": bool(muted),
+                "voice_peers": dict(voice_peers),
+            },
+        })
+
     async def handle_redis_message(self, channel: str, data: dict) -> None:
         """Handle a message received from Redis pub/sub (from another worker).
 
