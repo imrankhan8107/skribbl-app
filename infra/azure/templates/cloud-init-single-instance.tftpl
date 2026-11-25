@@ -162,4 +162,38 @@ else
     skribbl-app
 fi
 
+# 7. Enable Continuous Deployment (auto-pull & rebuild when origin/${git_branch} updates)
+chmod +x /home/ubuntu/skribbl-app/scripts/deploy_single_instance.sh || true
+git config --global --add safe.directory /home/ubuntu/skribbl-app || true
+
+cat <<'EOF' > /etc/systemd/system/skribbl-autodeploy.service
+[Unit]
+Description=Skribbl Auto-Deploy from Git
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+Environment=GIT_BRANCH=${git_branch}
+ExecStart=/bin/bash /home/ubuntu/skribbl-app/scripts/deploy_single_instance.sh
+StandardOutput=append:/var/log/skribbl-autodeploy.log
+StandardError=append:/var/log/skribbl-autodeploy.log
+EOF
+
+cat <<'EOF' > /etc/systemd/system/skribbl-autodeploy.timer
+[Unit]
+Description=Check for Skribbl updates every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Unit=skribbl-autodeploy.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable skribbl-autodeploy.timer
+systemctl start skribbl-autodeploy.timer
+
 echo "=== Skribbl Single-Machine Deployment completed at $(date) ==="
