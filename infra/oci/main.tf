@@ -167,6 +167,46 @@ resource "oci_core_security_list" "cluster_sl" {
     }
   }
 
+  # 5b. WebRTC TURN/STUN (TCP/UDP 3478 + UDP media relay 49152-49200)
+  dynamic "ingress_security_rules" {
+    for_each = local.web_allowed_cidrs
+    content {
+      protocol    = "6"
+      source      = ingress_security_rules.value
+      description = "WebRTC TURN/STUN TCP"
+      tcp_options {
+        min = 3478
+        max = 3478
+      }
+    }
+  }
+
+  dynamic "ingress_security_rules" {
+    for_each = local.web_allowed_cidrs
+    content {
+      protocol    = "17"
+      source      = ingress_security_rules.value
+      description = "WebRTC TURN/STUN UDP"
+      udp_options {
+        min = 3478
+        max = 3478
+      }
+    }
+  }
+
+  dynamic "ingress_security_rules" {
+    for_each = local.web_allowed_cidrs
+    content {
+      protocol    = "17"
+      source      = ingress_security_rules.value
+      description = "WebRTC TURN media relay UDP"
+      udp_options {
+        min = 49152
+        max = 49200
+      }
+    }
+  }
+
   # 6. Gateway Coord control plane (9100-9120)
   dynamic "ingress_security_rules" {
     for_each = local.safe_allowed_cidrs

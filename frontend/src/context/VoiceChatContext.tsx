@@ -7,7 +7,7 @@ import {
   type WebRtcSignalEvent,
 } from "./voiceBus";
 
-const ICE_SERVERS: RTCIceServer[] = [
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ];
@@ -81,6 +81,7 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
   const isMutedRef = useRef(false);
   const outputVolumeRef = useRef(100);
   const selectedOutputIdRef = useRef("");
+  const iceServersRef = useRef<RTCIceServer[]>(DEFAULT_ICE_SERVERS);
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const pendingCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
@@ -211,7 +212,7 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
       const existing = peersRef.current.get(peerId);
       if (existing) return existing;
 
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
       peersRef.current.set(peerId, pc);
 
       if (localStreamRef.current) {
@@ -279,6 +280,33 @@ export function VoiceChatProvider({ children }: { children: React.ReactNode }) {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       setVoiceError("Voice chat requires HTTPS and a browser with microphone support.");
       return;
+    }
+    // Unlock mobile audio playback synchronously within the user tap gesture
+    try {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        if (ctx.state === "suspended") {
+          void ctx.resume();
+        }
+        setTimeout(() => void ctx.close().catch(() => {}), 500);
+      }
+    } catch {
+      /* ignore audio unlock errors */
+    }
+    // Fetch live STUN/TURN ICE servers from backend (required for mobile CGNAT)
+    try {
+      const res = await fetch("/api/ice-servers");
+      if (res.ok) {
+        const data = (await res.json()) as { iceServers?: RTCIceServer[] };
+        if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+          iceServersRef.current = data.iceServers;
+        }
+      }
+    } catch {
+      /* fall back to DEFAULT_ICE_SERVERS */
     }
     try {
       const stream = await getMicStream(selectedInputId || undefined);

@@ -8,6 +8,9 @@ iptables -I INPUT -p tcp --dport 22 -j ACCEPT || true
 iptables -I INPUT -p tcp --dport 80 -j ACCEPT || true
 iptables -I INPUT -p tcp --dport 443 -j ACCEPT || true
 iptables -I INPUT -p tcp --dport 9000 -j ACCEPT || true
+iptables -I INPUT -p tcp --dport 3478 -j ACCEPT || true
+iptables -I INPUT -p udp --dport 3478 -j ACCEPT || true
+iptables -I INPUT -p udp --dport 49152:49200 -j ACCEPT || true
 
 # 2. OS and TCP stack tuning
 sysctl -w fs.file-max=2097152

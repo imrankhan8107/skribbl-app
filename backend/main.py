@@ -193,6 +193,28 @@ async def ready_endpoint(response: Response):
     return {"status": "ready", "ready": True}
 
 
+@app.get("/api/ice-servers")
+async def ice_servers_endpoint():
+    """Return STUN and optional TURN ICE servers for WebRTC voice chat."""
+    servers: list[dict] = [
+        {"urls": "stun:stun.l.google.com:19302"},
+        {"urls": "stun:stun1.l.google.com:19302"},
+    ]
+    turn_urls_raw = os.environ.get("TURN_URLS", "").strip()
+    turn_username = os.environ.get("TURN_USERNAME", "").strip()
+    turn_credential = os.environ.get("TURN_CREDENTIAL", "").strip()
+    if turn_urls_raw:
+        urls = [u.strip() for u in turn_urls_raw.split(",") if u.strip()]
+        if urls:
+            turn_entry: dict = {"urls": urls if len(urls) > 1 else urls[0]}
+            if turn_username:
+                turn_entry["username"] = turn_username
+            if turn_credential:
+                turn_entry["credential"] = turn_credential
+            servers.append(turn_entry)
+    return {"iceServers": servers}
+
+
 # WebSocket endpoint — delegates to ws_handler for full message dispatch
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
