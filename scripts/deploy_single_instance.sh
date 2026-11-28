@@ -16,7 +16,7 @@ if [ "$LOCAL_SHA" = "$REMOTE_SHA" ] && [ "$FORCE" != "--force" ]; then
 fi
 
 echo "=== Deploying $BRANCH ($LOCAL_SHA -> $REMOTE_SHA) at $(date) ==="
-git pull --ff-only origin "$BRANCH"
+git reset --hard "origin/$BRANCH"
 
 # Ensure local iptables allow WebRTC TURN/STUN ports
 iptables -C INPUT -p tcp --dport 3478 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 3478 -j ACCEPT || true

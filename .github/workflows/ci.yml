@@ -258,5 +258,6 @@ jobs:
         run: |
           cd /home/ubuntu/skribbl-app
           sudo git config --global --add safe.directory /home/ubuntu/skribbl-app || true
-          sudo git pull --ff-only origin master
+          sudo git fetch origin master
+          sudo git reset --hard origin/master
           sudo bash /home/ubuntu/skribbl-app/scripts/deploy_single_instance.sh --force
