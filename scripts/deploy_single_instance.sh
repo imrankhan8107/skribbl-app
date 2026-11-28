@@ -22,13 +22,22 @@ git pull --ff-only origin "$BRANCH"
 iptables -C INPUT -p tcp --dport 3478 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 3478 -j ACCEPT || true
 iptables -C INPUT -p udp --dport 3478 -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 3478 -j ACCEPT || true
 iptables -C INPUT -p udp --dport 49152:49200 -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 49152:49200 -j ACCEPT || true
+netfilter-persistent save >/dev/null 2>&1 || true
 
 # Ensure self-hosted coturn TURN relay is running for mobile CGNAT WebRTC voice
 TURN_ENV_FILE="/etc/skribbl-turn.env"
-PUBLIC_IP=$(curl -fsS --max-time 5 https://api.ipify.org || curl -fsS --max-time 5 https://ifconfig.me || echo "")
+PUBLIC_IP=$(
+  curl -4 -fsS --max-time 5 https://checkip.amazonaws.com 2>/dev/null ||
+  curl -4 -fsS --max-time 5 https://api.ipify.org 2>/dev/null ||
+  getent ahostsv4 skribbl-app.duckdns.org 2>/dev/null | awk '{print $1; exit}' ||
+  echo ""
+)
+PUBLIC_IP=$(echo "$PUBLIC_IP" | tr -d '[:space:]')
+echo "Detected Public IP for TURN: '${PUBLIC_IP}'"
+
 if [ -n "$PUBLIC_IP" ]; then
   if [ ! -f "$TURN_ENV_FILE" ]; then
-    TURN_PASS=$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)
+    TURN_PASS=$(python3 -c 'import secrets; print(secrets.token_hex(12))')
     cat <<EOF > "$TURN_ENV_FILE"
 TURN_URLS=turn:${PUBLIC_IP}:3478?transport=udp,turn:${PUBLIC_IP}:3478?transport=tcp
 TURN_USERNAME=skribbl
@@ -50,6 +59,7 @@ EOF
       -n \
       --log-file=stdout \
       --listening-port=3478 \
+      --listening-ip=0.0.0.0 \
       --min-port=49152 \
       --max-port=49200 \
       --lt-cred-mech \
